@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@astrojs/starlight": "^0.38.4",
-    "astro": "^6.2.2",
+    "astro": "^7.3.3",
     "capnstruct": "workspace:*",
     "sharp": "^0.34.5",
     "zod": "^3.25.76"

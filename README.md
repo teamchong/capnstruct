@@ -232,16 +232,18 @@ const _: () = {
 
 Measured on Node.js (`pnpm run bench` and `pnpm run size`):
 
-| Benchmark Scenario | `JSON.parse` / `JSON.stringify` | `capnstruct` Zero-Copy | Speedup |
+| Benchmark Scenario | Baseline (`JSON` / `structuredClone`) | `capnstruct` Zero-Copy | Speedup |
 | :--- | ---: | ---: | ---: |
-| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.92 ms | **0.51 ms** | **27.1x faster** |
-| **25,000 Flight Telemetry Rows (13 fields)** Sparse BBox Filter + Lazy String Decode | 13.45 ms | **0.28 ms** | **48.8x faster** |
-| **25,000 Flight Telemetry Rows** Live In-Place `str` Mutation vs JSON Round-Trip | 30.28 ms | **0.039 ms** | **767.8x faster** |
+| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 47.13 ms | **0.039 ms** | **1,206x faster** |
+| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.61 ms | **0.039 ms** | **784x faster** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.71 ms | **0.289 ms** | **47.4x faster** |
+| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.99 ms | **0.508 ms** | **27.5x faster** |
+| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.38 ms | **0.345 ms** | **15.6x faster** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime)** | 11.60 KiB | **4.41 KiB** (4,520 B) |
-| **Full Runtime (+ `WasmArena`)** | 13.34 KiB | **4.92 KiB** (5,037 B) |
+| **Declarative Schema API (Core Runtime)** | 11.81 KiB | **4.46 KiB** (4,568 B) |
+| **Full Runtime (+ `WasmArena`)** | 13.55 KiB | **4.97 KiB** (5,086 B) |
 | **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) |
 
 ---

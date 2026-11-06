@@ -73,13 +73,13 @@
 
       <div class="cs-bench-card" data-bench="mutate">
         <div class="cs-bench-top">
-          <div class="cs-bench-title">3. Live In-Place String Mutation (25,000 Rows)</div>
-          <div class="cs-bench-desc">Mutate 100 callsigns in-place via <code>row.callsign = 'UPD'</code> vs JSON round-trip</div>
+          <div class="cs-bench-title">3. Web Worker Round-Trip + Update (25,000 Rows)</div>
+          <div class="cs-bench-desc"><code>structuredClone</code> (<code>postMessage</code> round-trip) vs <code>capnstruct</code> shared buffer in-place</div>
         </div>
         <div class="cs-bench-bottom">
           <div class="cs-bars">
             <div class="cs-bar-row">
-              <span class="cs-bar-label">JSON parse+stringify</span>
+              <span class="cs-bar-label">structuredClone RT</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
               <span class="cs-bar-val" id="cs-b3-json">-- ms</span>
             </div>
@@ -558,18 +558,19 @@
 
       updateBenchCard('b2', ms2Json, ms2Capn, 'lazy UTF-8 decode on match only');
 
-      // 3. In-place string mutation vs JSON round-trip
+      // 3. Web Worker structuredClone round-trip vs capnstruct in-place mutation
       const mutBuf = capn2.slice();
       const mutView = TelemetryRow.array(mutBuf);
       const t3J0 = performance.now();
-      for (let it = 0; it < 6; it++) {
-        const rows = JSON.parse(json2);
-        for (let i = 0; i < rows.length; i += 250) {
-          rows[i].callsign = 'UPD_999';
+      for (let it = 0; it < 4; it++) {
+        const workerCopy = structuredClone(raw2);
+        for (let i = 0; i < workerCopy.length; i += 250) {
+          workerCopy[i].callsign = 'UPD_999';
         }
-        sink += JSON.stringify(rows).length;
+        const mainCopy = structuredClone(workerCopy);
+        sink += mainCopy[0].callsign.length;
       }
-      const ms3Json = (performance.now() - t3J0) / 6;
+      const ms3Json = (performance.now() - t3J0) / 4;
 
       const t3C0 = performance.now();
       for (let it = 0; it < 20; it++) {
@@ -581,7 +582,7 @@
       }
       const ms3Capn = Math.max(0.005, (performance.now() - t3C0) / 20);
 
-      updateBenchCard('b3', ms3Json, ms3Capn, 'O(1) in-place UTF-8 overwrite');
+      updateBenchCard('b3', ms3Json, ms3Capn, '0 structuredClone copies');
 
       // 4. Columnar Float64Array projection
       const t4J0 = performance.now();

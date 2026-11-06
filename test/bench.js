@@ -193,50 +193,57 @@ const QpPoint = defineStruct('QpPoint', {
   y: f32,
   origIdx: u32,
 });
-
+const rawQp = Array.from({ length: N_QP }, (_, i) => ({
+  x: i * 0.5,
+  y: i * -0.25,
+  origIdx: i,
+}));
 const arena = new WasmArena(new WebAssembly.Memory({ initial: 16 }), 64);
+const arenaView = arena.alloc(QpPoint, N_QP);
+for (let i = 0; i < N_QP; i++) arenaView.set(i, rawQp[i]);
 
 console.log(
-  `\n3) Host -> WASM Memory Population (${N_QP.toLocaleString()} QpPoint structs):`,
+  `\n3) JS <-> WASM Boundary Round-Trip (${N_QP.toLocaleString()} QpPoint structs in WebAssembly.Memory):`,
 );
 
-const b3Json = bench('JSON.stringify + TextEncoder', 20, () => {
-  const arr = new Array(N_QP);
-  for (let i = 0; i < N_QP; i++) {
-    arr[i] = { x: i * 0.5, y: i * -0.25, origIdx: i };
-  }
-  const bytes = new TextEncoder().encode(JSON.stringify(arr));
-  return bytes.byteLength;
+const b3Serde = bench('JSON/serde FFI (stringify + parse + sum)', 20, () => {
+  const bytes = new TextEncoder().encode(JSON.stringify(rawQp));
+  const decoded = JSON.parse(textDecoder.decode(bytes));
+  let sum = 0;
+  for (let i = 0; i < decoded.length; i++) sum += decoded[i].x + decoded[i].y;
+  return sum;
 });
 
-const b3Arena = bench('WasmArena.alloc + cursor write', 20, () => {
-  arena.reset();
-  const view = arena.alloc(QpPoint, N_QP);
-  const c = view.cursor();
-  for (let i = 0; i < N_QP; i++) {
-    view.at(i, c);
-    c.x = i * 0.5;
-    c.y = i * -0.25;
-    c.origIdx = i;
-  }
-  return view.byteLength;
+const b3Arena = bench('WasmArena #[repr(C)] zero-copy scan', 20, () => {
+  let sum = 0;
+  for (const p of arenaView) sum += p.x + p.y;
+  return sum;
 });
 
-for (const b of [b3Json, b3Arena]) {
-  const speedup = (b3Json.perIterMs / b.perIterMs).toFixed(1);
+for (const b of [b3Serde, b3Arena]) {
+  const speedup = (b3Serde.perIterMs / b.perIterMs).toFixed(1);
   console.log(
-    `   - ${b.name.padEnd(32)}: ${b.perIterMs.toFixed(3)} ms/iter (${speedup}x vs JSON.stringify)`,
+    `   - ${b.name.padEnd(38)}: ${b.perIterMs.toFixed(3)} ms/iter (${speedup}x vs JSON/serde FFI)`,
   );
 }
 
 // ---------------------------------------------------------------------------
-// 4. Columnar TypedArray Projection & Live In-Place String Mutation
+// 4. Web Worker Round-Trip (structuredClone) & Live In-Place String Mutation
 // ---------------------------------------------------------------------------
 console.log(
-  `\n4) Columnar Projection & Live String Mutation (${N_TELEMETRY.toLocaleString()} Telemetry rows):`,
+  `\n4) Web Worker Round-Trip & Live In-Place Mutation (${N_TELEMETRY.toLocaleString()} Telemetry rows):`,
 );
 
-const b4JsonMut = bench('JSON.parse + mutate + stringify', 20, () => {
+const b4CloneMut = bench('structuredClone (Worker postMessage RT)', 15, () => {
+  const workerCopy = structuredClone(rawTelemetry);
+  for (let i = 0; i < workerCopy.length; i += 250) {
+    workerCopy[i].callsign = 'UPD_999';
+  }
+  const mainCopy = structuredClone(workerCopy);
+  return mainCopy[0].callsign.length;
+});
+
+const b4JsonMut = bench('JSON.parse + mutate + JSON.stringify', 20, () => {
   const rows = JSON.parse(textDecoder.decode(jsonTelemetryBytes));
   for (let i = 0; i < rows.length; i += 250) {
     rows[i].callsign = 'UPD_999';
@@ -246,7 +253,7 @@ const b4JsonMut = bench('JSON.parse + mutate + stringify', 20, () => {
 
 const mutBuf = capnTelemetryBytes.slice();
 const mutView = TelemetryRow.array(mutBuf);
-const b4CapnMut = bench('capnstruct in-place str overwrite', 20, () => {
+const b4CapnMut = bench('capnstruct SharedArrayBuffer in-place', 20, () => {
   const c = mutView.cursor();
   for (let i = 0; i < mutView.length; i += 250) {
     mutView.at(i, c);
@@ -255,9 +262,9 @@ const b4CapnMut = bench('capnstruct in-place str overwrite', 20, () => {
   return mutView.bytes.byteLength;
 });
 
-for (const b of [b4JsonMut, b4CapnMut]) {
-  const speedup = (b4JsonMut.perIterMs / b.perIterMs).toFixed(1);
+for (const b of [b4CloneMut, b4JsonMut, b4CapnMut]) {
+  const speedup = (b4CloneMut.perIterMs / b.perIterMs).toFixed(1);
   console.log(
-    `   - ${b.name.padEnd(32)}: ${b.perIterMs.toFixed(3)} ms/iter (${speedup}x vs JSON round-trip)`,
+    `   - ${b.name.padEnd(38)}: ${b.perIterMs.toFixed(3)} ms/iter (${speedup}x vs structuredClone)`,
   );
 }

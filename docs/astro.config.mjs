@@ -25,6 +25,7 @@ export default defineConfig({
           label: 'Start Here',
           items: [
             { label: 'Overview & Live Playground', link: '/' },
+            { label: 'Real-World Pain Points & Recipes', link: '/pain-points/' },
             { label: 'Why capnstruct?', link: '/why-capnstruct/' },
             { label: 'Getting Started', link: '/getting-started/' },
           ],

@@ -661,8 +661,8 @@ class MemView<F extends FieldRecord = FieldRecord> {
   _k(): DataView {
     const m = this._m as any;
     if (m !== null) {
-      const b = m.sync ? m.sync()._buf : m.buffer;
-      if (b !== this._d.buffer) this._d = new DataView(b);
+      const b = m._buf ? (m.memory ? m.memory.buffer : m._buf) : m.buffer;
+      if (b !== this._d.buffer) this._d = m.sync ? m.sync()._d : new DataView(b);
     }
     return this._d;
   }
@@ -1240,9 +1240,16 @@ export class StructDef<F extends FieldRecord = FieldRecord>
         configurable: true,
         get(this: StructViewBase<F>) {
           if (end > this._ws) return defVal(d, false);
-          return dk === 'primitive'
-            ? d._g(this._k(), this._o + fo)
-            : readVal(this, d, this._o + fo, false);
+          if (dk === 'primitive') {
+            const m = this._m as any;
+            if (m && m._d && m._d !== this._d) this._d = m._d;
+            try {
+              return d._g(this._d, this._o + fo);
+            } catch {
+              return d._g(this._k(), this._o + fo);
+            }
+          }
+          return readVal(this, d, this._o + fo, false);
         },
         set(this: StructViewBase<F>, v: unknown) {
           if (end > this._ws) upgradeView(this);

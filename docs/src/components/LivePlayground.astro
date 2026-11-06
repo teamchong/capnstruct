@@ -719,7 +719,7 @@
             .split(',')
             .map((s) => parseInt(s.trim(), 10))
             .filter((n) => !Number.isNaN(n) && n >= 0);
-          usersView.at(i).scores = nums;
+          usersView.at(i).set({ scores: nums });
           renderMutator(`Updated row[${i}].scores (${nums.length} u32 items)`);
         });
 

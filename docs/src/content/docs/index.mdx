@@ -83,7 +83,7 @@ const wireBytes: Uint8Array = rows.bytes;
     Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots (no `Proxy` traps), reading and writing fields directly in the underlying `DataView`.
   </Card>
   <Card title="In-Place Mutation & .push()" icon="pencil">
-    Assign `row.callsign = 'NEW'` or `row.tags = [1, 2, 3]` directly on a binary view. Shorter or equal-length values overwrite in-place in O(1); longer values append to the tail arena and compact on demand.
+    Assign `row.callsign = 'NEW'` or `row.set({ tags: [1, 2, 3] })` directly on a binary view. Shorter or equal-length values overwrite in-place in O(1); longer values append to the tail arena and compact on demand.
   </Card>
   <Card title="Columnar TypedArray Views" icon="bars">
     Call `rows.column('lat')` to extract a contiguous `Float64Array` or `Int32Array` (zero-copy when stride equals field size) or bulk-write a column via `rows.setColumn('lat', values)`.

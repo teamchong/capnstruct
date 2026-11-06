@@ -199,10 +199,24 @@ export type PlainFieldValue<D extends FieldDesc> =
             ? PlainStructValues<SF>
             : never;
 
+/** Plain JavaScript object representation of a struct schema `F`. */
 export type PlainStructValues<F extends FieldRecord> = {
   [K in keyof F]: PlainFieldValue<F[K]>;
 };
 
+/** Infers the zero-copy `StructView` type from a `StructDef`. */
+export type InferView<S extends StructDefLike<any>> =
+  S extends StructDefLike<infer F> ? StructView<F> : never;
+
+/** Infers the plain JavaScript object type (`toObject()`) from a `StructDef`. */
+export type InferPlain<S extends StructDefLike<any>> =
+  S extends StructDefLike<infer F> ? PlainStructValues<F> : never;
+
+/** Infers the input object type accepted by `pack()`, `create()`, and `push()` from a `StructDef`. */
+export type InferInput<S extends StructDefLike<any>> =
+  S extends StructDefLike<infer F> ? Partial<StructInput<F>> : never;
+
+/** Computed byte offset, size, and alignment of a single struct field. */
 export interface FieldLayout<D extends FieldDesc = FieldDesc> {
   readonly name: string;
   readonly desc: D;
@@ -211,16 +225,24 @@ export interface FieldLayout<D extends FieldDesc = FieldDesc> {
   readonly align: number;
 }
 
+/** Union of field keys in `F` whose descriptor is a fixed-width primitive (`u8`..`f64`, `bool`). */
 export type PrimitiveFieldKeys<F extends FieldRecord> = {
   [K in keyof F]: F[K] extends PrimitiveDesc<any> ? K : never;
 }[keyof F];
 
+/** Options for wrapping a binary buffer in a `StructView` or `StructArrayView`. */
 export interface ViewOptions {
+  /** Byte offset where the struct or struct table begins. */
   byteOffset?: number;
+  /** Base byte offset from which relative tail pointers (`str` / `slice`) are resolved. */
   baseOffset?: number;
+  /** Explicit number of rows when wrapping a `StructArrayView`. */
   count?: number;
+  /** Wire byte stride per struct (used for forward/backward schema evolution). */
   stride?: number;
 }
+
+/** Supported binary backing sources (`Uint8Array`, `ArrayBuffer`, `DataView`, `WebAssembly.Memory`, `WasmArena`). */
 export type BufferSourceInput =
   | ArrayBufferLike
   | ArrayBufferView
@@ -263,17 +285,30 @@ function prim<T extends PrimitiveName>(
   };
 }
 
+/** Unsigned 8-bit integer (`0..255`, 1 byte, 1-byte aligned). */
 export const u8: PrimitiveDesc<'u8'> = prim('u8', Uint8Array, (d, o) => d.getUint8(o), (d, o, v) => d.setUint8(o, +Number(v)));
+/** Signed 8-bit integer (`-128..127`, 1 byte, 1-byte aligned). */
 export const i8: PrimitiveDesc<'i8'> = prim('i8', Int8Array, (d, o) => d.getInt8(o), (d, o, v) => d.setInt8(o, +Number(v)));
+/** Little-endian unsigned 16-bit integer (`0..65535`, 2 bytes, 2-byte aligned). */
 export const u16: PrimitiveDesc<'u16'> = prim('u16', Uint16Array, (d, o) => d.getUint16(o, true), (d, o, v) => d.setUint16(o, +Number(v), true));
+/** Little-endian signed 16-bit integer (`-32768..32767`, 2 bytes, 2-byte aligned). */
 export const i16: PrimitiveDesc<'i16'> = prim('i16', Int16Array, (d, o) => d.getInt16(o, true), (d, o, v) => d.setInt16(o, +Number(v), true));
+/** Little-endian unsigned 32-bit integer (4 bytes, 4-byte aligned). */
 export const u32: PrimitiveDesc<'u32'> = prim('u32', Uint32Array, (d, o) => d.getUint32(o, true), (d, o, v) => d.setUint32(o, +Number(v), true));
+/** Little-endian signed 32-bit integer (4 bytes, 4-byte aligned). */
 export const i32: PrimitiveDesc<'i32'> = prim('i32', Int32Array, (d, o) => d.getInt32(o, true), (d, o, v) => d.setInt32(o, +Number(v), true));
+/** Little-endian unsigned 64-bit integer (`bigint`, 8 bytes, 8-byte aligned). */
 export const u64: PrimitiveDesc<'u64'> = prim('u64', BigUint64Array, (d, o) => d.getBigUint64(o, true), (d, o, v) => d.setBigUint64(o, BigInt(v), true));
+/** Little-endian signed 64-bit integer (`bigint`, 8 bytes, 8-byte aligned). */
 export const i64: PrimitiveDesc<'i64'> = prim('i64', BigInt64Array, (d, o) => d.getBigInt64(o, true), (d, o, v) => d.setBigInt64(o, BigInt(v), true));
+/** IEEE 754 32-bit float (4 bytes, 4-byte aligned). */
 export const f32: PrimitiveDesc<'f32'> = prim('f32', Float32Array, (d, o) => d.getFloat32(o, true), (d, o, v) => d.setFloat32(o, +Number(v), true));
+/** IEEE 754 64-bit float (8 bytes, 8-byte aligned). */
 export const f64: PrimitiveDesc<'f64'> = prim('f64', Float64Array, (d, o) => d.getFloat64(o, true), (d, o, v) => d.setFloat64(o, +Number(v), true));
+/** 1-byte boolean (`0` or `1`, 1-byte aligned). */
 export const bool: PrimitiveDesc<'bool'> = prim('bool', Uint8Array, (d, o) => d.getUint8(o) !== 0, (d, o, v) => d.setUint8(o, v ? 1 : 0));
+
+/** Variable-length UTF-8 string stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
 export const str: StrDesc = {
   kind: 'str',
   size: 8,
@@ -281,6 +316,7 @@ export const str: StrDesc = {
   rustType: 'CapnStr',
 };
 
+/** Fixed-length inline array `[T; N]` stored directly inside the struct body. */
 export function fixedArray<E extends FieldDesc, N extends number>(
   element: E,
   length: N,
@@ -298,8 +334,10 @@ export function fixedArray<E extends FieldDesc, N extends number>(
   };
 }
 
+/** Alias for `fixedArray(element, length)`. */
 export const array = fixedArray;
 
+/** Variable-length slice `CapnSlice<T>` stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
 export function slice<E extends FieldDesc>(element: E): SliceDesc<E> {
   return {
     kind: 'slice',
@@ -310,6 +348,7 @@ export function slice<E extends FieldDesc>(element: E): SliceDesc<E> {
   };
 }
 
+/** Alias for `slice(element)`. */
 export const list = slice;
 
 let sBuf = new ArrayBuffer(65536);
@@ -603,6 +642,7 @@ class MemView<F extends FieldRecord = FieldRecord> {
   declare _m: WebAssembly.Memory | WasmArena | null;
   /** @internal */
   declare _c?: StructView<F> | null;
+  /** @internal */
   _set(
     d: DataView,
     b: number,
@@ -625,19 +665,24 @@ class MemView<F extends FieldRecord = FieldRecord> {
     }
     return this._d;
   }
+
+  /** Underlying `ArrayBuffer` (automatically re-bound if backed by a growing `WebAssembly.Memory` or `WasmArena`). */
   get buffer(): ArrayBufferLike {
     return this._k().buffer;
   }
 
+  /** Byte offset of this view inside `buffer`. */
   get byteOffset(): number {
     return this._o;
   }
 
+  /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   get bytes(): Uint8Array {
     if (this._dirty && 'compact' in this) {
       return (this as unknown as StructArrayView<F>).compact();
     }
-    const d = this._k(), end = this._tl !== undefined ? this._tl - this._o : this.byteLength;
+    const d = this._k(),
+      end = this._tl !== undefined ? this._tl - this._o : this.byteLength;
     return new Uint8Array(d.buffer, d.byteOffset + this._o, Math.max(this.byteLength, end));
   }
 }
@@ -645,6 +690,7 @@ class MemView<F extends FieldRecord = FieldRecord> {
 export class StructViewBase<
   F extends FieldRecord = FieldRecord,
 > extends MemView<F> {
+  /** @internal */
   constructor(
     descs: PropertyDescriptorMap,
     dv: DataView,
@@ -660,27 +706,35 @@ export class StructViewBase<
     Object.defineProperties(this, descs);
     this._set(dv, base, off, mem);
   }
+
+  /** Updates a single field in-place (accepts plain JS arrays/objects for `slice`, `fixedArray`, and nested structs). */
   set<K extends keyof F>(field: K, value: FieldInput<F[K]>): this;
+  /** Updates multiple fields in-place from a partial object. */
   set(values: Partial<StructInput<F>>): this;
   set(fieldOrValues: unknown, value?: unknown): this {
     if (typeof fieldOrValues === 'string') {
-      const rec = this as unknown as Record<string, unknown>;
-      rec[fieldOrValues] = value;
+      writeVal(this as unknown as InternalStructView, this.def.fields[fieldOrValues].desc, value, this._b, this._o + this.def.fields[fieldOrValues].offset);
     } else {
-      writeVal(this, this.def, fieldOrValues, this._b, this._o);
+      writeVal(this as unknown as InternalStructView, this.def, fieldOrValues, this._b, this._o);
     }
     return this;
   }
 
+  /** Updates multiple fields in-place from a partial object. */
   declare setAll: (values: Partial<StructInput<F>>) => this;
+
+  /** Materializes this binary struct view into a plain JavaScript object. */
   toObject(): PlainStructValues<F> {
-    return readVal(this, this.def, this._o, true) as PlainStructValues<F>;
+    return readVal(this as unknown as InternalStructView, this.def, this._o, true) as PlainStructValues<F>;
   }
+
+  /** Serializes this struct view to a plain object for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>;
 }
 StructViewBase.prototype.setAll = StructViewBase.prototype.set;
 StructViewBase.prototype.toJSON = StructViewBase.prototype.toObject;
 
+/** Zero-copy view over a single binary struct with direct getter/setter properties for every field in `F`. */
 export type StructView<F extends FieldRecord = FieldRecord> =
   StructViewBase<F> & StructValues<F>;
 function normOpts(
@@ -753,6 +807,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     this._set(r.d, n.b ?? r.o, r.o, r.m);
   }
 
+  /** @internal */
   _mv(index: number, v?: StructView<F> | null): StructView<F> {
     const d = this._k(),
       o = this._o + index * this.stride;
@@ -766,11 +821,14 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     (nv as any)._a = this;
     return nv;
   }
+  /** Returns a reusable flyweight cursor positioned at `index`. */
   cursor(index = 0): StructView<F> {
     return (this._c = this._mv(index, this._c));
   }
 
+  /** Returns a `StructView<F>` at `index` (supports negative indices from the end, e.g. `rows.at(-1)`). */
   at(index: number, out?: StructView<F>): StructView<F> {
+    if (index < 0) index += this.length;
     if (index < 0 || index >= this.length) oob();
     if (out) return this._mv(index, out);
     const p = this._p ?? (this._p = []);
@@ -778,7 +836,9 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     return (p[s] = this._mv(index, p[s]));
   }
 
+  /** Writes `value` into the struct at `index` (supports negative indices from the end). */
   set(index: number, value: Partial<StructInput<F>> | StructView<F>): this {
+    if (index < 0) index += this.length;
     if (index < 0 || index >= this.length) oob();
     if (this._ws < this.def.size) this.compact();
     writeVal(
@@ -791,8 +851,8 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     return this;
   }
 
+  /** Appends one or more rows to the binary array, automatically growing capacity if needed. */
   push(...items: (Partial<StructInput<F>> | StructView<F>)[]): number {
-    if (!items.length) return this.length;
     if (this._ws < this.def.size) this.compact();
     const def = this.def, st = this.stride, need = this.length + items.length, hasVar = def._fv >= 0;
     if (need > this._cap) {
@@ -833,11 +893,16 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     if (hasVar) this._dirty = true;
     return this.length;
   }
-
+  /** Removes and returns the last row as a plain JS object (or `undefined` if empty). */
   pop(): PlainStructValues<F> | undefined {
     if (!this.length) return undefined;
     const lastIdx = --this.length,
-      val = readVal(this as unknown as InternalStructView, this.def, this._o + lastIdx * this.stride, true) as PlainStructValues<F>;
+      val = readVal(
+        this as unknown as InternalStructView,
+        this.def,
+        this._o + lastIdx * this.stride,
+        true,
+      ) as PlainStructValues<F>;
     this.byteLength = this.length * this.stride;
     if (this.def._fv >= 0) {
       this._dirty = true;
@@ -849,11 +914,13 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     return val;
   }
 
+  /** Ratio (`0..1`) of dead tail bytes to total used bytes. */
   get compactionRatio(): number {
     const used = (this._tl ?? this.byteLength) - this._b;
     return used > 0 ? Math.min(1, (this._dead ?? 0) / used) : 0;
   }
 
+  /** Re-packs only live rows and tail data into a tight `Uint8Array` and rebinds this view in-place. */
   compact(): Uint8Array {
     const packed = pack(this.def as StructDef<F>, this.toObjects() as unknown as Partial<StructInput<F>>[]),
       d = new DataView(packed.buffer, packed.byteOffset, packed.byteLength),
@@ -876,15 +943,20 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       }
     return packed;
   }
-
+  /** Extracts a `TypedArray` column for primitive `field` (zero-copy when `stride === field.size`). */
   column<K extends PrimitiveFieldKeys<F>>(
     field: K,
   ): F[K] extends PrimitiveDesc<infer P> ? TypedArrayFor<P> : never {
     const lay = this.def.fields[field];
-    if (!lay || lay.desc.kind !== 'primitive') throw new TypeError(`Field "${String(field)}" is not a primitive column`);
-    const desc = lay.desc as PrimitiveDesc, n = this.length, st = this.stride, fo = lay.offset;
+    if (!lay || lay.desc.kind !== 'primitive')
+      throw new TypeError(`Field "${String(field)}" is not a primitive column`);
+    const desc = lay.desc as PrimitiveDesc,
+      n = this.length,
+      st = this.stride,
+      fo = lay.offset;
     if (fo + desc.size > this._ws) return new desc._C(n) as any;
-    const d = this._k(), start = d.byteOffset + this._o + fo;
+    const d = this._k(),
+      start = d.byteOffset + this._o + fo;
     if (desc.type !== 'bool' && (st === desc.size || n <= 1) && start % desc.align === 0) {
       return new desc._C(d.buffer, start, n) as any;
     }
@@ -893,23 +965,32 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     return out;
   }
 
-  setColumn<K extends PrimitiveFieldKeys<F>>(field: K, values: ArrayLike<number | bigint | boolean>): this {
+  /** Bulk-writes a primitive column from `values` into `field` across all rows. */
+  setColumn<K extends PrimitiveFieldKeys<F>>(
+    field: K,
+    values: ArrayLike<number | bigint | boolean>,
+  ): this {
     const lay = this.def.fields[field];
-    if (!lay || lay.desc.kind !== 'primitive') throw new TypeError(`Field "${String(field)}" is not a primitive column`);
+    if (!lay || lay.desc.kind !== 'primitive')
+      throw new TypeError(`Field "${String(field)}" is not a primitive column`);
     if (lay.offset + lay.size > this._ws) this.compact();
-    const desc = lay.desc as PrimitiveDesc, d = this._k(), st = this.stride, n = Math.min(this.length, values.length);
+    const desc = lay.desc as PrimitiveDesc,
+      d = this._k(),
+      st = this.stride,
+      n = Math.min(this.length, values.length);
     for (let i = 0, off = this._o + lay.offset; i < n; i++, off += st) {
       desc._s(d, off, values[i] as number | bigint | boolean);
     }
     return this;
   }
 
+  /** Materializes all rows into an array of plain JavaScript objects. */
   toObjects(): PlainStructValues<F>[] {
     return Array.from(this, (c) => c.toObject());
   }
 
+  /** Serializes all rows to an array of plain objects for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>[];
-
   [Symbol.iterator](): Iterator<StructView<F>> {
     const c = this.cursor(0);
     const b = this._o;
@@ -1112,6 +1193,12 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   declare readonly schema: F;
   declare readonly fields: { readonly [K in keyof F]: FieldLayout<F[K]> };
   declare readonly fieldList: readonly FieldLayout[];
+  /** Phantom type helper: `typeof MySchema.$view` resolves to `StructView<F>`. */
+  declare readonly $view: StructView<F>;
+  /** Phantom type helper: `typeof MySchema.$plain` resolves to `PlainStructValues<F>`. */
+  declare readonly $plain: PlainStructValues<F>;
+  /** Phantom type helper: `typeof MySchema.$input` resolves to `Partial<StructInput<F>>`. */
+  declare readonly $input: Partial<StructInput<F>>;
   /** @internal */
   declare readonly _fv: number;
   /** @internal */
@@ -1121,7 +1208,6 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     off: number,
     mem: WebAssembly.Memory | WasmArena | null,
   ) => StructView<F>;
-
   constructor(name: string, schema: F) {
     if (!schema) throw new TypeError('Struct schema fields are required');
     let off = 0;
@@ -1198,15 +1284,18 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       _V: SpecializedStructView,
     });
   }
-
+  /** Returns the byte offset of `field` within the struct. */
   offsetOf<K extends keyof F>(field: K): number {
     return this.fields[field].offset;
   }
 
+  /** Allocates a single `StructView<F>` backed by a fresh buffer and optionally initializes fields. */
   create(init?: Partial<StructInput<F>>): StructView<F> {
     const v = this.view(new ArrayBuffer(this.size));
     return init !== undefined ? v.setAll(init) : v;
   }
+
+  /** Wraps a binary buffer (`Uint8Array`, `ArrayBuffer`, `DataView`, `WebAssembly.Memory`, `WasmArena`) in a zero-copy `StructView<F>`. */
   view(
     source: BufferSourceInput,
     byteOffset: number | ViewOptions | StructDefLike<any> = 0,
@@ -1216,6 +1305,7 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     return structView(this, source, byteOffset, baseOffset, wireStride);
   }
 
+  /** Wraps a binary buffer in a zero-copy `StructArrayView<F>`. */
   array(
     source: BufferSourceInput,
     byteOffset: number | ViewOptions | StructDefLike<any> = 0,
@@ -1232,15 +1322,18 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     );
   }
 
+  /** Allocates a growable `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array). */
   alloc(count: number): StructArrayView<F> {
     return this.array(new ArrayBuffer(count * this.size), 0, count);
   }
 
+  /** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
   pack(rows: readonly Partial<StructInput<F>>[]): Uint8Array {
     return pack(this, rows);
   }
 }
 
+/** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
 export function pack<F extends FieldRecord>(
   def: StructDef<F>,
   rows: readonly Partial<StructInput<F>>[],
@@ -1260,7 +1353,9 @@ export function pack<F extends FieldRecord>(
   return sU8.slice(0, end);
 }
 
+/** Compiles a declarative `#[repr(C)]` struct schema with zero-copy `StructView` and `StructArrayView` accessors. */
 export function defineStruct<F extends FieldRecord>(fields: F): StructDef<F>;
+/** Compiles a named `#[repr(C)]` struct schema (used by `toRustReprC()` codegen). */
 export function defineStruct<F extends FieldRecord>(
   name: string,
   fields: F,
@@ -1273,4 +1368,6 @@ export function defineStruct<F extends FieldRecord>(
     ? new StructDef(nameOrFields, maybeFields!)
     : new StructDef('', nameOrFields);
 }
+
+/** Alias for `defineStruct`. */
 export const struct = defineStruct;

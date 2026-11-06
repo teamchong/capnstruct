@@ -33,13 +33,15 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `def.size` / `def.stride`: Struct byte size including trailing alignment padding.
 - `def.align`: Struct byte alignment (`1`, `2`, `4`, or `8`).
 - `def.fields`: Map of field names to `{ name, desc, offset, size, align }`.
+- `typeof def.$view` / `InferView<typeof def>`: Inferred `StructView<F>` type.
+- `typeof def.$plain` / `InferPlain<typeof def>`: Inferred plain JS object type (`toObject()`).
+- `typeof def.$input` / `InferInput<typeof def>`: Inferred input object type (`pack()`, `create()`, `push()`).
 - `def.offsetOf(field)`: Returns the byte offset of `field`.
 - `def.create(init?)`: Allocates a single `StructView<F>` backed by a fresh buffer.
 - `def.alloc(count)`: Allocates a `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array).
 - `def.pack(rows)` / `pack(def, rows)`: Packs an array of plain JS objects into an 8-byte-aligned `Uint8Array`.
 - `def.view(source, optionsOrOffset?)`: Wraps a single struct in `source` without copying.
 - `def.array(source, optionsOrOffset?, count?)`: Wraps a sequence of structs in `source` without copying.
-
 ### `StructView<F>`
 
 - `<field>`: Getter and setter for every field in `F` (primitives, nested structs, `fixedArray`, `str`, and `slice`).

@@ -685,7 +685,9 @@ describe('capnstruct', () => {
       );
       expect(arr.length).toBe(2);
       expect(arr.at(0).tag).toBe('cpu');
-      expect(arr.at(1).val).toBe(2.5);
+      expect(arr.at(-1).val).toBe(2.5);
+      const lastPlain: typeof Metric.$plain = arr.at(-1).toObject();
+      expect(lastPlain.tag).toBe('mem');
 
       // Push additional items to trigger table relocation + tail preservation
       for (let i = 0; i < 10; i++) {

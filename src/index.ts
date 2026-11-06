@@ -79,6 +79,7 @@ export interface StructDefLike<F extends FieldRecord = FieldRecord> {
   readonly schema: F;
   readonly fields: { readonly [K in keyof F]: FieldLayout<F[K]> };
   readonly fieldList: readonly FieldLayout[];
+  /** @internal */
   readonly _fv: number;
   /** @internal */
   readonly _V: new (

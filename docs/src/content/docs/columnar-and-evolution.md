@@ -13,14 +13,13 @@ Every `StructArrayView` provides `.column(fieldName)` and `.setColumn(fieldName,
 import { defineStruct, u32, f64, bool } from 'capnstruct';
 
 // Case 1: Single-field struct (stride === field.size)
-// -> Returns a ZERO-COPY TypedArray sharing the exact same ArrayBuffer!
+// -> Returns a zero-copy TypedArray sharing the same ArrayBuffer
 const Sample64 = defineStruct('Sample64', { val: f64 });
 const samples = Sample64.alloc(4);
 samples.setColumn('val', [10.5, 20.5, 30.5, 40.5]);
 
 const zeroCopyCol: Float64Array = samples.column('val');
-console.log(zeroCopyCol.buffer === samples.buffer); // true (O(1) zero-copy!)
-
+console.log(zeroCopyCol.buffer === samples.buffer); // true (O(1) zero-copy)
 // Case 2: Multi-field struct (stride > field.size)
 // -> Extracts a contiguous TypedArray column across all rows in a tight C-stride loop
 const Point = defineStruct('Point', {
@@ -48,8 +47,8 @@ In distributed systems, edge Workers, and persistent storage, schemas evolve ove
 
 1. **Newer Schema Reading Older Binary Buffers**: Pass the older schema (or `{ stride: OldSchema.size }`) to `NewSchema.view(bytes, OldSchema)` or `NewSchema.array(bytes, OldSchema)`.
    - Fields present in the older wire stride are read directly from binary memory at zero cost.
-   - Newly added trailing fields beyond `wireStride` automatically return safe default values (`0`, `0n`, `false`, `""`, or empty `TypedArray` / `StructArrayView`) without reading out of bounds!
-2. **Automatic Upgrade on Mutation**: If you assign to a newly added field on a view backed by an older, narrower wire stride, `capnstruct` automatically upgrades the view/array to the full `NewSchema.size` stride in place!
+   - Newly added trailing fields beyond `wireStride` return default values (`0`, `0n`, `false`, `""`, or empty `TypedArray` / `StructArrayView`) without reading out of bounds.
+2. **Automatic Upgrade on Mutation**: If you assign to a newly added field on a view backed by an older, narrower wire stride, `capnstruct` upgrades the view/array to the full `NewSchema.size` stride in place.
 3. **Older Schema Reading Newer Binary Buffers**: Pass `NewSchema` (or `{ stride: NewSchema.size }`) to `OldSchema.array(bytes, NewSchema)` so the older code steps through rows using the newer wire stride while reading the fields it knows about.
 
 ```ts
@@ -82,7 +81,7 @@ const v2View = PointV2.array(v1Bytes, PointV1);
 console.log(v2View.at(0).toObject());
 // { x: 1.5, y: 2.5, z: 0, label: '', flags: [] }
 
-// Mutating a newly added V2 field automatically upgrades the view to full V2 stride!
+// Mutating a newly added V2 field upgrades the view to full V2 stride:
 v2View.at(0).z = 99.5;
 v2View.at(0).label = 'upgraded-in-place';
 console.log(v2View.stride); // 40 (PointV2.size)

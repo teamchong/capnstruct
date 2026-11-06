@@ -26,13 +26,13 @@ const users = User.array(
 );
 
 // Case A: Shorter or equal-length UTF-8 string / slice
-// -> Overwrites existing tail bytes in-place in O(1) with ZERO allocations!
+// -> Overwrites existing tail bytes in-place in O(1) with 0 allocations
 users.at(0).name = 'Alex';
 users.at(0).scores = [100, 200];
 
 // Case B: Longer UTF-8 string / slice
 // -> Automatically bump-allocates at the end of the tail arena (growing the
-//    backing ArrayBuffer or WasmArena if needed) and updates [relOffset, len] in place!
+//    backing ArrayBuffer or WasmArena if needed) and updates [off, len] in place
 users.at(1).name = 'Bartholomew-Christopherson';
 users.at(1).scores = [1, 2, 3, 4, 5, 6, 7, 8];
 ```
@@ -59,7 +59,7 @@ const tightWireBytes: Uint8Array = users.compact();
 console.log(users.compactionRatio); // 0
 ```
 
- Even better: accessing `users.bytes` on a dirty variable-length array **automatically compacts** the buffer so you always send a clean, zero-waste `Uint8Array` over the network.
+Accessing `users.bytes` on a dirty variable-length array **automatically compacts** the buffer so you always send a clean `Uint8Array` over the network.
 
 ---
 

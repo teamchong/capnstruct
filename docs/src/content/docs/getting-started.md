@@ -11,7 +11,7 @@ npm install capnstruct
 pnpm add capnstruct
 ```
 
-`capnstruct` has **zero runtime dependencies**, ships native ES modules + TypeScript declarations, and works in Node.js, Cloudflare Workers, Bun, Deno, and all modern browsers.
+`capnstruct` ships native ES modules + TypeScript declarations (&lt; 4.5 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
 
 ---
 
@@ -49,8 +49,8 @@ console.log(SpdSample.offsetOf('val')); // 8
 | `u64` / `i64` | `8 B` | `8 B` | `bigint` (accepts `number` on write) | `u64` / `i64` |
 | `f64` | `8 B` | `8 B` | `number` | `f64` |
 | `fixedArray(el, N)` | `N * el.size` | `el.align` | `TypedArray` (primitives) or `StructArrayView` | `[T; N]` |
-| `str` | `8 B` inline | `4 B` | `string` (UTF-8 in tail arena) | `CapnStr { rel_offset: u32, len: u32 }` |
-| `slice(el)` | `8 B` inline | `4 B` | `TypedArray` / `StructArrayView` | `CapnSlice<T> { rel_offset: u32, len: u32 }` |
+| `str` | `8 B` inline | `4 B` | `string` (UTF-8 in tail arena) | `CapnStr { off: u32, len: u32 }` |
+| `slice(el)` | `8 B` inline | `4 B` | `TypedArray` / `StructArrayView` | `CapnSlice<T> { off: u32, len: u32 }` |
 | Nested `StructDef` | `def.size` | `def.align` | `StructView<F>` | Nested `#[repr(C)]` struct |
 
 ---

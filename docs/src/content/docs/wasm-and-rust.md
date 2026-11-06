@@ -28,7 +28,7 @@ const points = arena.alloc(QpPoint, 1000);
 points.at(0).set({ x: 1.5, y: -2.5, origIdx: 7, label: 'radar-0' });
 
 // Even if WASM or JS grows WebAssembly.Memory (detaching the old ArrayBuffer),
-// existing StructView and StructArrayView instances transparently re-bind!
+// existing StructView and StructArrayView instances re-bind on access:
 wasmMemory.grow(4);
 console.log(points.at(0).x, points.at(0).label); // 1.5, 'radar-0'
 
@@ -66,16 +66,16 @@ npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CapnStr {
-    pub rel_offset: u32,
+    pub off: u32,
     pub len: u32,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CapnSlice<T> {
-    pub rel_offset: u32,
+    pub off: u32,
     pub len: u32,
-    pub _marker: core::marker::PhantomData<*const T>,
+    pub _marker: core::marker::PhantomData<T>,
 }
 
 #[repr(C)]

@@ -73,8 +73,8 @@ Measured via `pnpm run bench` and `pnpm run size`:
 | **25,000 Flight Telemetry Rows (13 fields)** Sparse BBox Filter + Lazy String Decode | 13.45 ms | **0.28 ms** | **48.8x faster** |
 | **25,000 Flight Telemetry Rows** Live In-Place `str` Mutation vs JSON Round-Trip | 30.28 ms | **0.039 ms** | **767.8x faster** |
 
-| Entrypoint | Minified | Minified + Gzip (`level: 9`) | Dependencies |
-| :--- | :---: | :---: | :---: |
-| **Declarative Schema API (Core Runtime)** | 11.60 KiB | **4.41 KiB** (4,520 B) | `0` |
-| **Full Runtime (+ `WasmArena`)** | 13.34 KiB | **4.92 KiB** (5,037 B) | `0` |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) | `0` |
+| Entrypoint | Minified | Minified + Gzip (`level: 9`) |
+| :--- | :---: | :---: |
+| **Declarative Schema API (Core Runtime)** | 11.60 KiB | **4.41 KiB** (4,520 B) |
+| **Full Runtime (+ `WasmArena`)** | 13.34 KiB | **4.92 KiB** (5,037 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) |

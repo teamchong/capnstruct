@@ -1,7 +1,7 @@
 {
   "name": "capnstruct",
   "version": "0.1.0",
-  "description": "Zero-dependency declarative #[repr(C)] flat memory structs, zero-copy views, and WebAssembly.Memory arena for JS/TS and Rust WASM.",
+  "description": "Read and mutate Uint8Array and WebAssembly.Memory buffers like plain TypeScript objects, with zero-copy TypedArray columns and C/Rust #[repr(C)] layout.",
   "license": "MIT",
   "homepage": "https://capnstruct.teamchong.net",
   "repository": {

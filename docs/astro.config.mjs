@@ -11,7 +11,7 @@ export default defineConfig({
     starlight({
       title: 'capnstruct',
       tagline:
-        'JSON-like ergonomics over zero-copy C/Rust #[repr(C)] binary buffers in < 4.5 KiB',
+        'Read and mutate Uint8Array and WebAssembly.Memory buffers like plain TypeScript objects',
       social: [
         {
           icon: 'github',

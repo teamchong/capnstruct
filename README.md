@@ -1,27 +1,24 @@
 # capnstruct
 
-Read and mutate `Uint8Array` and `WebAssembly.Memory` buffers like normal TypeScript objects—with zero `JSON.parse` step, zero per-row heap allocations, and exact C/Rust `#[repr(C)]` struct layout.
+Read and mutate `Uint8Array` and `WebAssembly.Memory` buffers like plain TypeScript objects. No `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
 
 **Live Documentation & Interactive Browser Playground:** [https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)
 
 ## Why `capnstruct`?
 
-When you pass thousands of structured records over `fetch`, a WebSocket, `postMessage` to a Web Worker, or into a Rust/C WebAssembly module:
+When you pass thousands of structured records over `fetch`, a WebSocket, `postMessage` to a Web Worker, or into WebAssembly:
 
-1. **`JSON.stringify` / `JSON.parse` is ergonomic, but expensive at scale**: Parsing 100,000 rows allocates 100,000 short-lived JS objects on the heap and eagerly decodes every UTF-8 string—even if your filter only checks two numeric fields.
-2. **Manual `DataView` / `Int32Array` offset math is fast, but painful to maintain**: Reading a binary buffer directly has zero parse cost (`dv.getFloat64(base + i * 24 + 8, true)`), but it is untyped, brittle, and gives up normal JS object assignment (`row.callsign = 'NEW'`) and `.push()` / `.pop()`.
+1. **`JSON.stringify` / `JSON.parse` is easy to write, but expensive at scale**: Parsing 100,000 rows allocates 100,000 separate JS objects on the heap and eagerly decodes every UTF-8 string—even if your loop only checks two numbers. Updating a single field requires re-serializing the entire payload.
+2. **A `Uint8Array` has zero parse cost, but is painful to use by hand**: Reading a binary buffer directly is fast (`dv.getFloat64(base + i * 24 + 8, true)`), but maintaining manual byte offsets is brittle and gives up normal property assignment (`row.callsign = 'NEW'`) and `.push()` / `.pop()`.
 
-`capnstruct` bridges the two in **< 4.5 KiB minified + gzipped**:
+`capnstruct` lets you define a schema once and work with a `Uint8Array` or `WebAssembly.Memory` buffer using ordinary JavaScript syntax (**< 4.5 KiB minified + gzipped**):
 
-- **Declarative Schema API**: Define structs once with `defineStruct({ ... })` (`u8`..`u64`, `i8`..`i64`, `f32`, `f64`, `bool`, `fixedArray`, `str`, `slice`) and get automatic C/Rust `#[repr(C)]` alignment, padding, field offsets, and full static TypeScript inference.
-- **Compiled V8 Monomorphic Accessors (No `Proxy`)**: Each `defineStruct()` compiles a specialized view class with prototype/own getters & setters and pre-allocated V8 fast-property slots so TurboFan inlines field reads directly into `DataView` loads.
-- **Zero-Allocation Flyweight Iteration**: `for (const row of view)` reuses a single flyweight cursor (`cursor._o += stride`) across millions of rows with **zero JS heap allocations**.
-- **Mutable Variable-Length `str` & `slice(T)`**: Stores compact `[u32 relOffset, u32 len]` descriptors inline and lazily decodes UTF-8 or nested slices from the tail arena. Assigning `row.callsign = 'NEW'` overwrites in-place in O(1) if it fits, or automatically bump-allocates in the backing tail/arena when longer.
-- **Growable `StructArrayView` (`.push()`, `.pop()`, `.compact()`, `.bytes`)**: Mutate and append rows to binary views like normal JS arrays, check fragmentation via `view.compactionRatio`, and strip dead tail bytes via `view.compact()`.
-- **Columnar `TypedArray` Projections & Cap'n-Style Schema Evolution**: Extract contiguous `Float64Array`/`Int32Array` columns via `view.column('field')` (zero-copy when stride matches field size) for Apache Arrow / WebGPU / SIMD interop, and safely read/upgrade older binary buffers with newer schemas.
-- **`WasmArena` Auto-Rebinding**: Bump-allocate typed struct slices inside a growable `WebAssembly.Memory`; if `memory.grow()` detaches the underlying `ArrayBuffer`, existing `StructView` and `StructArrayView` instances automatically re-bind on access.
-- **Rust `#[repr(C)]` Codegen & CLI**: Emit matching Rust `#[repr(C)] #[derive(Copy, Clone)]` structs and `core::mem::{size_of, align_of, offset_of}` compile-time layout assertions directly from your JS/TS schemas.
----
+- **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads.
+- **Zero-Allocation Flyweight Iteration**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects.
+- **In-Place `str` & `slice(T)` Mutation**: Stores 8-byte `[u32 relOffset, u32 len]` descriptors inline and decodes UTF-8 strings or nested slices on demand. Assigning `row.callsign = 'NEW'` overwrites in-place in O(1) when `newBytes <= oldBytes`, or appends to the tail arena when longer.
+- **Growable `StructArrayView` (`.push()`, `.pop()`, `.compact()`, `.bytes`)**: Append and remove rows on binary views, inspect tail fragmentation via `view.compactionRatio`, and strip dead tail bytes via `view.compact()`.
+- **Columnar `TypedArray` Projections & Schema Evolution**: Extract contiguous `Float64Array`/`Int32Array` columns via `view.column('field')` (zero-copy when stride equals field size) for Apache Arrow / WebGPU / SIMD interop, and read or upgrade older binary buffers with newer schemas.
+- **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` Codegen**: Uses standard C/Rust `#[repr(C)]` alignment, automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust structs via `capnstruct/codegen` or the `capnstruct` CLI.
 
 ## Quick Start
 
@@ -41,7 +38,7 @@ import {
   pack,
 } from 'capnstruct';
 
-// Matches Rust #[repr(C)] struct SpdSample { t: u32, _pad: u32, val: f64, id: u32, _trail: u32 }
+// Matches Rust #[repr(C)] struct SpdSample { t: u32, _pad0: [u8; 4], val: f64, id: u32, _pad1: [u8; 4] }
 export const SpdSample = defineStruct('SpdSample', {
   t: u32,     // offset 0, size 4
   val: f64,   // offset 8, size 8 (auto-aligned to 8 bytes)
@@ -241,8 +238,22 @@ Measured on Node.js (`pnpm run bench` and `pnpm run size`):
 | **25,000 Flight Telemetry Rows (13 fields)** Sparse BBox Filter + Lazy String Decode | 13.45 ms | **0.28 ms** | **48.8x faster** |
 | **25,000 Flight Telemetry Rows** Live In-Place `str` Mutation vs JSON Round-Trip | 30.28 ms | **0.039 ms** | **767.8x faster** |
 
-| Entrypoint | Minified | Minified + Gzip (`level: 9`) | Dependencies |
-| :--- | ---: | ---: | :--- |
-| **Declarative Schema API (Core Runtime)** | 11.60 KiB | **4.41 KiB** (4,520 B) | `0` |
-| **Full Runtime (+ `WasmArena`)** | 13.34 KiB | **4.92 KiB** (5,037 B) | `0` |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) | `0` |
+| Entrypoint | Minified | Minified + Gzip (`level: 9`) |
+| :--- | :---: | :---: |
+| **Declarative Schema API (Core Runtime)** | 11.60 KiB | **4.41 KiB** (4,520 B) |
+| **Full Runtime (+ `WasmArena`)** | 13.34 KiB | **4.92 KiB** (5,037 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) |
+
+---
+
+## When to Use `capnstruct` vs. Plain JS Objects
+
+`capnstruct` is not meant to replace small local UI state objects (`{ isOpen: true }`), where V8 escape analysis keeps fields in registers.
+
+| Workload | Best Fit | Reason |
+| :--- | :--- | :--- |
+| **Small local state (`{ x, y }`)** | **Plain JS Object** | V8 scalar replacement keeps fields in CPU registers with zero heap overhead. |
+| **Network / WebSocket / RPC payloads** | **`capnstruct`** | 0 ms parse step; read fields directly from the incoming `Uint8Array` and decode strings lazily. |
+| **Web Workers (`postMessage` / `SharedArrayBuffer`)** | **`capnstruct`** | Transfer or share the underlying `ArrayBuffer` in O(1) without `structuredClone` serialization. |
+| **Rust / C / Zig WebAssembly (`WebAssembly.Memory`)** | **`capnstruct`** | JS and WASM read and write the same `#[repr(C)]` bytes in linear memory with `WasmArena` auto-rebinding. |
+| **Large tables & telemetry streams (10k–10M rows)** | **`capnstruct`** | No per-row JS heap objects; avoids GC pauses and supports in-place mutation + `.column()` extraction. |

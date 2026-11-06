@@ -28,75 +28,91 @@
 
     <div id="cs-bench-results" class="cs-bench-grid">
       <div class="cs-bench-card" data-bench="scan">
-        <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (2.4 MiB)</div>
-        <div class="cs-bench-desc">Flyweight cursor <code>for (const row of view)</code> (0 heap allocs) vs <code>JSON.parse</code> + loop</div>
-        <div class="cs-bars">
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">JSON.parse + loop</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-            <span class="cs-bar-val" id="cs-b1-json">-- ms</span>
-          </div>
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">capnstruct for..of</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
-            <span class="cs-bar-val" id="cs-b1-capn">-- ms</span>
-          </div>
+        <div class="cs-bench-top">
+          <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (2.4 MiB)</div>
+          <div class="cs-bench-desc">Flyweight cursor <code>for (const row of view)</code> (0 heap allocs) vs <code>JSON.parse</code> + loop</div>
         </div>
-        <div class="cs-speedup" id="cs-b1-speedup">Click "Run Live Benchmark"</div>
+        <div class="cs-bench-bottom">
+          <div class="cs-bars">
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">JSON.parse + loop</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+              <span class="cs-bar-val" id="cs-b1-json">-- ms</span>
+            </div>
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">capnstruct for..of</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
+              <span class="cs-bar-val" id="cs-b1-capn">-- ms</span>
+            </div>
+          </div>
+          <div class="cs-speedup" id="cs-b1-speedup">Click "Run Live Benchmark"</div>
+        </div>
       </div>
 
       <div class="cs-bench-card" data-bench="bbox">
-        <div class="cs-bench-title">2. 25,000 Flight Telemetry Rows (13 Fields)</div>
-        <div class="cs-bench-desc">Sparse BBox filter (~0.4% hit rate) + lazy UTF-8 string decode only on matched rows</div>
-        <div class="cs-bars">
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">JSON.parse + filter</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-            <span class="cs-bar-val" id="cs-b2-json">-- ms</span>
-          </div>
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">capnstruct zero-copy</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
-            <span class="cs-bar-val" id="cs-b2-capn">-- ms</span>
-          </div>
+        <div class="cs-bench-top">
+          <div class="cs-bench-title">2. 25,000 Flight Telemetry Rows (13 Fields)</div>
+          <div class="cs-bench-desc">Sparse BBox filter (~0.4% hit rate) + lazy UTF-8 string decode only on matched rows</div>
         </div>
-        <div class="cs-speedup" id="cs-b2-speedup">Click "Run Live Benchmark"</div>
+        <div class="cs-bench-bottom">
+          <div class="cs-bars">
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">JSON.parse + filter</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+              <span class="cs-bar-val" id="cs-b2-json">-- ms</span>
+            </div>
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">capnstruct zero-copy</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
+              <span class="cs-bar-val" id="cs-b2-capn">-- ms</span>
+            </div>
+          </div>
+          <div class="cs-speedup" id="cs-b2-speedup">Click "Run Live Benchmark"</div>
+        </div>
       </div>
 
       <div class="cs-bench-card" data-bench="mutate">
-        <div class="cs-bench-title">3. Live In-Place String Mutation (25,000 Rows)</div>
-        <div class="cs-bench-desc">Mutate 100 callsigns in-place via <code>row.callsign = 'UPD'</code> vs JSON round-trip</div>
-        <div class="cs-bars">
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">JSON parse+stringify</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-            <span class="cs-bar-val" id="cs-b3-json">-- ms</span>
-          </div>
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">capnstruct in-place</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
-            <span class="cs-bar-val" id="cs-b3-capn">-- ms</span>
-          </div>
+        <div class="cs-bench-top">
+          <div class="cs-bench-title">3. Live In-Place String Mutation (25,000 Rows)</div>
+          <div class="cs-bench-desc">Mutate 100 callsigns in-place via <code>row.callsign = 'UPD'</code> vs JSON round-trip</div>
         </div>
-        <div class="cs-speedup" id="cs-b3-speedup">Click "Run Live Benchmark"</div>
+        <div class="cs-bench-bottom">
+          <div class="cs-bars">
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">JSON parse+stringify</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+              <span class="cs-bar-val" id="cs-b3-json">-- ms</span>
+            </div>
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">capnstruct in-place</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
+              <span class="cs-bar-val" id="cs-b3-capn">-- ms</span>
+            </div>
+          </div>
+          <div class="cs-speedup" id="cs-b3-speedup">Click "Run Live Benchmark"</div>
+        </div>
       </div>
 
       <div class="cs-bench-card" data-bench="col">
-        <div class="cs-bench-title">4. Columnar Float64Array Extraction (100,000 Rows)</div>
-        <div class="cs-bench-desc">Zero-copy <code>view.column('val')</code> for Arrow / WebGPU / SIMD vs JS array map</div>
-        <div class="cs-bars">
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">JSON array .map()</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-            <span class="cs-bar-val" id="cs-b4-json">-- ms</span>
-          </div>
-          <div class="cs-bar-row">
-            <span class="cs-bar-label">capnstruct .column()</span>
-            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 2%"></div></div>
-            <span class="cs-bar-val" id="cs-b4-capn">-- ms</span>
-          </div>
+        <div class="cs-bench-top">
+          <div class="cs-bench-title">4. Columnar Float64Array Extraction (100,000 Rows)</div>
+          <div class="cs-bench-desc">Zero-copy <code>view.column('val')</code> for Arrow / WebGPU / SIMD vs JS array map</div>
         </div>
-        <div class="cs-speedup" id="cs-b4-speedup">Click "Run Live Benchmark"</div>
+        <div class="cs-bench-bottom">
+          <div class="cs-bars">
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">JSON array .map()</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+              <span class="cs-bar-val" id="cs-b4-json">-- ms</span>
+            </div>
+            <div class="cs-bar-row">
+              <span class="cs-bar-label">capnstruct .column()</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 2%"></div></div>
+              <span class="cs-bar-val" id="cs-b4-capn">-- ms</span>
+            </div>
+          </div>
+          <div class="cs-speedup" id="cs-b4-speedup">Click "Run Live Benchmark"</div>
+        </div>
       </div>
     </div>
   </div>
@@ -261,14 +277,23 @@
   }
   .cs-bench-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
+    align-items: stretch;
+  }
+  @media (max-width: 720px) {
+    .cs-bench-grid {
+      grid-template-columns: 1fr;
+    }
   }
   .cs-bench-card {
     padding: 1rem;
     border-radius: 0.6rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
   }
   .cs-bench-title {
     font-weight: 700;

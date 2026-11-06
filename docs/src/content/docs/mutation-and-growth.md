@@ -41,7 +41,7 @@ users.at(1).scores = [1, 2, 3, 4, 5, 6, 7, 8];
 
 Each `str` or `slice(T)` field stores an 8-byte descriptor `[u32 relOffsetFromStructBase, u32 elementCount]` in the fixed struct body:
 
-1. **In-Place Overwrite ($O(1)$, 0 allocations)**: When `newByteLength <= oldByteLength`, `capnstruct` writes the new UTF-8 bytes or slice elements directly into the existing tail slot, updates `len` in the 8-byte descriptor, and records any leftover bytes (`oldByteLength - newByteLength`) in the view's dead-byte counter.
+1. **In-Place Overwrite (O(1), 0 allocations)**: When `newByteLength <= oldByteLength`, `capnstruct` writes the new UTF-8 bytes or slice elements directly into the existing tail slot, updates `len` in the 8-byte descriptor, and records any leftover bytes (`oldByteLength - newByteLength`) in the view's dead-byte counter.
 2. **Tail Arena Bump-Allocation**: When `newByteLength > oldByteLength`, `capnstruct` bump-allocates a new aligned region at the end of the tail arena (automatically doubling the backing `ArrayBuffer` or growing the `WasmArena` if capacity is exceeded), writes the new data there, and updates `[relOffset, len]` in the struct's 8-byte descriptor.
 
 ---

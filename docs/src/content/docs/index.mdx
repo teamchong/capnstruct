@@ -1,9 +1,9 @@
 ---
 title: capnstruct
-description: JSON-like ergonomics over zero-copy C/Rust #[repr(C)] binary buffers in < 4.5 KiB.
+description: Read and mutate Uint8Array and WebAssembly.Memory buffers like plain TypeScript objects.
 template: splash
 hero:
-  tagline: The new standard for structured data in JavaScript & TypeScript. Mutate strings, push/pop rows, extract zero-copy Arrow/SIMD columns, and share #[repr(C)] memory directly with WebAssembly & Rust.
+  tagline: Read and mutate a Uint8Array like a normal array of TypeScript objects. No JSON.parse step, no per-row object allocations, and no manual DataView byte-offset math.
   actions:
     - text: Get Started
       link: /getting-started/
@@ -21,29 +21,29 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 import LivePlayground from '../../components/LivePlayground.astro';
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>&lt; 4.5 KiB</strong> Minified + Gzipped (0 deps)</span>
-  <span class="cs-pill"><strong>~27x–49x Faster</strong> than JSON.parse</span>
-  <span class="cs-pill"><strong>~767x Faster</strong> In-Place String Mutation</span>
-  <span class="cs-pill"><strong>Exact C/Rust #[repr(C)]</strong> ABI + Tail Arena</span>
-  <span class="cs-pill"><strong>Zero-Copy</strong> TypedArray Columns for Arrow / WebGPU</span>
+  <span class="cs-pill"><strong>&lt; 4.5 KiB</strong> Minified + Gzipped</span>
+  <span class="cs-pill"><strong>0 ms Parse Step</strong> Direct DataView Reads</span>
+  <span class="cs-pill"><strong>In-Place Mutation</strong> Strings, Slices &amp; .push()/.pop()</span>
+  <span class="cs-pill"><strong>TypedArray Columns</strong> For Arrow / WebGPU / SIMD</span>
+  <span class="cs-pill"><strong>C / Rust #[repr(C)]</strong> Compatible Wire Layout</span>
 </div>
 
 ## Try It Live in Your Browser
 
-Run the real `capnstruct` engine in your browser right now—benchmark zero-copy iteration against `JSON.parse`, mutate variable-length strings and slices in-place while inspecting raw wire bytes, and generate `rustc`-verified `#[repr(C)]` structs:
+Benchmark zero-copy iteration against `JSON.parse` in your browser, mutate strings and slices in-place while inspecting the raw wire bytes, or generate matching Rust `#[repr(C)]` structs:
 
 <LivePlayground />
 
 ---
 
-## Why JavaScript Needed a New Data Standard
+## Why Use `capnstruct`?
 
-For years, JavaScript and TypeScript developers had to choose between two painful extremes:
+When you pass thousands of structured records over `fetch`, a WebSocket, `postMessage` to a Web Worker, or into WebAssembly:
 
-1. **Plain JS Objects & `JSON.parse` / `JSON.stringify`**: Ergonomic (`row.lat`, `row.callsign = 'NEW'`, `rows.push(...)`, `{ ...row }`), but parses every byte upfront, allocates millions of short-lived V8 heap objects, triggers GC pauses, and requires full re-serialization to cross Worker or WASM boundaries.
-2. **Manual `DataView` / `apache-arrow` / Protobuf**: Zero-copy or binary-compact, but breaks normal JS ergonomics (`dv.getFloat64(base + i * 24 + 8, true)` or `table.getChild('lat').get(i)`), produces **immutable** buffers where you cannot assign `row.name = 'new'` or `rows.push(...)`, and ships 100–150+ KiB of runtime code.
+1. **`JSON.parse` / `JSON.stringify` is easy to write, but expensive at scale:** Parsing 100,000 rows allocates 100,000 separate JS objects on the heap and eagerly decodes every UTF-8 string—even if your loop only checks two numbers. Updating a single field requires re-serializing the entire payload.
+2. **A `Uint8Array` has zero parse cost, but is painful to use by hand:** Transferring or reading a binary buffer is fast, but nobody wants to maintain manual `DataView` offset arithmetic (`dv.getFloat64(base + i * 24 + 8, true)`) or give up normal property assignment (`row.callsign = 'NEW'`) and `.push()` / `.pop()`.
 
-**`capnstruct` gives you both at once** in a **0-dependency, &lt; 4.5 KiB** runtime:
+`capnstruct` lets you define a typed schema once and work with a `Uint8Array` or `WebAssembly.Memory` buffer using ordinary JavaScript syntax:
 
 ```ts
 import { defineStruct, u32, f64, str, slice } from 'capnstruct';
@@ -66,7 +66,7 @@ rows.push(
 // 2. Zero-allocation flyweight iteration + lazy UTF-8 decoding
 for (const row of rows) {
   if (row.lat > 40) {
-    // 3. Live in-place mutation of primitives, strings, and slices!
+    // 3. In-place mutation of primitives, strings, and slices
     row.callsign = 'LHR_PRIORITY';
   }
 }
@@ -74,21 +74,21 @@ for (const row of rows) {
 // 4. Columnar TypedArray projection for Apache Arrow / WebGPU / SIMD
 const lats: Float64Array = rows.column('lat');
 
-// 5. Wire-ready Uint8Array (automatically compacts dead tail bytes if needed)
+// 5. Underlying Uint8Array ready for fetch, WebSocket, Worker, or WASM
 const wireBytes: Uint8Array = rows.bytes;
 ```
 
-<CardGrid stagger>
-  <Card title="Compiled V8 Monomorphic Accessors" icon="rocket">
-    Each `defineStruct()` compiles a specialized view class with pre-allocated V8 fast-property slots and zero `Proxy` traps. TurboFan inlines field reads directly into `DataView` loads.
+<CardGrid>
+  <Card title="Compiled Property Accessors" icon="rocket">
+    Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots (no `Proxy` traps), reading and writing fields directly in the underlying `DataView`.
   </Card>
-  <Card title="Mutable Strings, Slices & .push()/.pop()" icon="pencil">
-    Assign `row.callsign = 'NEW'` or `row.tags = [1, 2, 3]` directly on binary views. Shorter/equal values overwrite in-place in $O(1)$ with zero allocations; longer values bump-allocate in the tail arena.
+  <Card title="In-Place Mutation & .push()" icon="pencil">
+    Assign `row.callsign = 'NEW'` or `row.tags = [1, 2, 3]` directly on a binary view. Shorter or equal-length values overwrite in-place in O(1); longer values append to the tail arena and compact on demand.
   </Card>
-  <Card title="Columnar Arrow / WebGPU Projections" icon="bars">
-    Call `rows.column('lat')` to extract a contiguous `Float64Array` / `Int32Array` (zero-copy when stride equals field size) or bulk-write columns via `rows.setColumn('lat', values)`.
+  <Card title="Columnar TypedArray Views" icon="bars">
+    Call `rows.column('lat')` to extract a contiguous `Float64Array` or `Int32Array` (zero-copy when stride equals field size) or bulk-write a column via `rows.setColumn('lat', values)`.
   </Card>
-  <Card title="Exact Rust #[repr(C)] & WasmArena" icon="puzzle">
-    Matches C/Rust `#[repr(C)]` layout byte-for-byte with 8-byte `[u32 relOffset, u32 len]` tail descriptors. Auto-rebinds views when `WebAssembly.Memory.grow()` detaches buffers, and emits `rustc`-verified Rust structs.
+  <Card title="WASM & Rust #[repr(C)]" icon="puzzle">
+    Uses standard C/Rust `#[repr(C)]` struct alignment with 8-byte `[u32 relOffset, u32 len]` tail descriptors, auto-rebinds views when `WebAssembly.Memory.grow()` runs, and generates `rustc`-checked Rust structs.
   </Card>
 </CardGrid>

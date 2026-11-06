@@ -1,22 +1,22 @@
 # capnstruct
 
-Zero-dependency TypeScript/JavaScript library providing **JSON-like ergonomics over zero-copy linear binary buffers** (`Uint8Array` / `WebAssembly.Memory`) and C/Rust `#[repr(C)]` WASM structs.
+Read and mutate `Uint8Array` and `WebAssembly.Memory` buffers like normal TypeScript objects—with zero `JSON.parse` step, zero per-row heap allocations, and exact C/Rust `#[repr(C)]` struct layout.
 
 **Live Documentation & Interactive Browser Playground:** [https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)
 
 ## Why `capnstruct`?
 
-Sharing structured data between JavaScript, Web Workers, Cap'n Web zero-copy byte streams, and Rust/C WebAssembly kernels usually forces an unpleasant choice:
+When you pass thousands of structured records over `fetch`, a WebSocket, `postMessage` to a Web Worker, or into a Rust/C WebAssembly module:
 
-1. **JSON (`JSON.stringify` / `JSON.parse`)**: Ergonomic (`row.lat`, `row.callsign`, `{ ...row }`), but allocates millions of short-lived JS objects and eagerly decodes every UTF-8 string even if your filter only touches 2 numeric fields.
-2. **Manual `DataView` / `Int32Array` pointer arithmetic**: Zero-copy and fast (`dv.getFloat64(base + i * 24 + 8, true)`), but brittle, untyped, and requires manually synchronizing byte offsets and alignment padding with Rust `#[repr(C)]` structs.
+1. **`JSON.stringify` / `JSON.parse` is ergonomic, but expensive at scale**: Parsing 100,000 rows allocates 100,000 short-lived JS objects on the heap and eagerly decodes every UTF-8 string—even if your filter only checks two numeric fields.
+2. **Manual `DataView` / `Int32Array` offset math is fast, but painful to maintain**: Reading a binary buffer directly has zero parse cost (`dv.getFloat64(base + i * 24 + 8, true)`), but it is untyped, brittle, and gives up normal JS object assignment (`row.callsign = 'NEW'`) and `.push()` / `.pop()`.
 
-`capnstruct` bridges the gap in **< 4.5 KiB minified + gzipped**:
+`capnstruct` bridges the two in **< 4.5 KiB minified + gzipped**:
 
 - **Declarative Schema API**: Define structs once with `defineStruct({ ... })` (`u8`..`u64`, `i8`..`i64`, `f32`, `f64`, `bool`, `fixedArray`, `str`, `slice`) and get automatic C/Rust `#[repr(C)]` alignment, padding, field offsets, and full static TypeScript inference.
 - **Compiled V8 Monomorphic Accessors (No `Proxy`)**: Each `defineStruct()` compiles a specialized view class with prototype/own getters & setters and pre-allocated V8 fast-property slots so TurboFan inlines field reads directly into `DataView` loads.
 - **Zero-Allocation Flyweight Iteration**: `for (const row of view)` reuses a single flyweight cursor (`cursor._o += stride`) across millions of rows with **zero JS heap allocations**.
-- **Mutable Variable-Length `str` & `slice(T)`**: Stores compact `[u32 relOffset, u32 len]` descriptors inline and lazily decodes UTF-8 or nested slices from the tail arena. Assigning `row.callsign = 'NEW'` overwrites in-place in $O(1)$ if it fits, or automatically bump-allocates in the backing tail/arena when longer.
+- **Mutable Variable-Length `str` & `slice(T)`**: Stores compact `[u32 relOffset, u32 len]` descriptors inline and lazily decodes UTF-8 or nested slices from the tail arena. Assigning `row.callsign = 'NEW'` overwrites in-place in O(1) if it fits, or automatically bump-allocates in the backing tail/arena when longer.
 - **Growable `StructArrayView` (`.push()`, `.pop()`, `.compact()`, `.bytes`)**: Mutate and append rows to binary views like normal JS arrays, check fragmentation via `view.compactionRatio`, and strip dead tail bytes via `view.compact()`.
 - **Columnar `TypedArray` Projections & Cap'n-Style Schema Evolution**: Extract contiguous `Float64Array`/`Int32Array` columns via `view.column('field')` (zero-copy when stride matches field size) for Apache Arrow / WebGPU / SIMD interop, and safely read/upgrade older binary buffers with newer schemas.
 - **`WasmArena` Auto-Rebinding**: Bump-allocate typed struct slices inside a growable `WebAssembly.Memory`; if `memory.grow()` detaches the underlying `ArrayBuffer`, existing `StructView` and `StructArrayView` instances automatically re-bind on access.

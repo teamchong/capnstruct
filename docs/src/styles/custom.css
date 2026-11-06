@@ -37,3 +37,12 @@
 .cs-pill strong {
   color: var(--sl-color-accent-high);
 }
+
+.card-grid {
+  align-items: stretch;
+}
+
+.card-grid > .card {
+  height: 100%;
+  margin-top: 0 !important;
+}

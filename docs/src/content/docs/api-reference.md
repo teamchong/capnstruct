@@ -20,7 +20,7 @@ Every `capnstruct` buffer is a standard C/Rust `#[repr(C)]` flat array followed 
 
 1. **Alignment & Padding**: Each field is aligned to `field.align` (`offset = (offset + align - 1) & ~(align - 1)`). The struct's total `size` (`stride`) is rounded up to `max(field.align)`.
 2. **Relative Tail Descriptors (`str` and `slice(T)`)**: Stored inline as 8 bytes `[u32 relOffset, u32 length]` (little-endian). When `length === 0`, `relOffset` is `0`. When `length > 0`, the payload starts at `structBaseOffset + relOffset`.
-3. **Zero-Header Row Count Recovery**: For fixed-size structs, `rowCount = byteLength / def.size`. For variable-length structs packed via `pack()`, the first variable-length descriptor in row 0 points to the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in $O(1)$ without a separate framing header.
+3. **Zero-Header Row Count Recovery**: For fixed-size structs, `rowCount = byteLength / def.size`. For variable-length structs packed via `pack()`, the first variable-length descriptor in row 0 points to the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in O(1) without a separate framing header.
 
 ---
 

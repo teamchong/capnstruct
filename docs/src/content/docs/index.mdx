@@ -1,0 +1,94 @@
+---
+title: capnstruct
+description: JSON-like ergonomics over zero-copy C/Rust #[repr(C)] binary buffers in < 4.5 KiB.
+template: splash
+hero:
+  tagline: The new standard for structured data in JavaScript & TypeScript. Mutate strings, push/pop rows, extract zero-copy Arrow/SIMD columns, and share #[repr(C)] memory directly with WebAssembly & Rust.
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+    - text: Why capnstruct?
+      link: /why-capnstruct/
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/teamchong/capnstruct
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+import LivePlayground from '../../components/LivePlayground.astro';
+
+<div class="cs-badge-row">
+  <span class="cs-pill"><strong>&lt; 4.5 KiB</strong> Minified + Gzipped (0 deps)</span>
+  <span class="cs-pill"><strong>~27x–49x Faster</strong> than JSON.parse</span>
+  <span class="cs-pill"><strong>~767x Faster</strong> In-Place String Mutation</span>
+  <span class="cs-pill"><strong>Exact C/Rust #[repr(C)]</strong> ABI + Tail Arena</span>
+  <span class="cs-pill"><strong>Zero-Copy</strong> TypedArray Columns for Arrow / WebGPU</span>
+</div>
+
+## Try It Live in Your Browser
+
+Run the real `capnstruct` engine in your browser right now—benchmark zero-copy iteration against `JSON.parse`, mutate variable-length strings and slices in-place while inspecting raw wire bytes, and generate `rustc`-verified `#[repr(C)]` structs:
+
+<LivePlayground />
+
+---
+
+## Why JavaScript Needed a New Data Standard
+
+For years, JavaScript and TypeScript developers had to choose between two painful extremes:
+
+1. **Plain JS Objects & `JSON.parse` / `JSON.stringify`**: Ergonomic (`row.lat`, `row.callsign = 'NEW'`, `rows.push(...)`, `{ ...row }`), but parses every byte upfront, allocates millions of short-lived V8 heap objects, triggers GC pauses, and requires full re-serialization to cross Worker or WASM boundaries.
+2. **Manual `DataView` / `apache-arrow` / Protobuf**: Zero-copy or binary-compact, but breaks normal JS ergonomics (`dv.getFloat64(base + i * 24 + 8, true)` or `table.getChild('lat').get(i)`), produces **immutable** buffers where you cannot assign `row.name = 'new'` or `rows.push(...)`, and ships 100–150+ KiB of runtime code.
+
+**`capnstruct` gives you both at once** in a **0-dependency, &lt; 4.5 KiB** runtime:
+
+```ts
+import { defineStruct, u32, f64, str, slice } from 'capnstruct';
+
+const Telemetry = defineStruct('Telemetry', {
+  id: u32,
+  lat: f64,
+  lon: f64,
+  callsign: str,
+  tags: slice(u32),
+});
+
+// 1. Growable binary array — push & pop like a normal JS array
+const rows = Telemetry.alloc(0);
+rows.push(
+  { id: 1, lat: 37.6188, lon: -122.375, callsign: 'SFO_101', tags: [10, 20] },
+  { id: 2, lat: 51.47, lon: -0.4543, callsign: 'LHR_202', tags: [30] },
+);
+
+// 2. Zero-allocation flyweight iteration + lazy UTF-8 decoding
+for (const row of rows) {
+  if (row.lat > 40) {
+    // 3. Live in-place mutation of primitives, strings, and slices!
+    row.callsign = 'LHR_PRIORITY';
+  }
+}
+
+// 4. Columnar TypedArray projection for Apache Arrow / WebGPU / SIMD
+const lats: Float64Array = rows.column('lat');
+
+// 5. Wire-ready Uint8Array (automatically compacts dead tail bytes if needed)
+const wireBytes: Uint8Array = rows.bytes;
+```
+
+<CardGrid stagger>
+  <Card title="Compiled V8 Monomorphic Accessors" icon="rocket">
+    Each `defineStruct()` compiles a specialized view class with pre-allocated V8 fast-property slots and zero `Proxy` traps. TurboFan inlines field reads directly into `DataView` loads.
+  </Card>
+  <Card title="Mutable Strings, Slices & .push()/.pop()" icon="pencil">
+    Assign `row.callsign = 'NEW'` or `row.tags = [1, 2, 3]` directly on binary views. Shorter/equal values overwrite in-place in $O(1)$ with zero allocations; longer values bump-allocate in the tail arena.
+  </Card>
+  <Card title="Columnar Arrow / WebGPU Projections" icon="bars">
+    Call `rows.column('lat')` to extract a contiguous `Float64Array` / `Int32Array` (zero-copy when stride equals field size) or bulk-write columns via `rows.setColumn('lat', values)`.
+  </Card>
+  <Card title="Exact Rust #[repr(C)] & WasmArena" icon="puzzle">
+    Matches C/Rust `#[repr(C)]` layout byte-for-byte with 8-byte `[u32 relOffset, u32 len]` tail descriptors. Auto-rebinds views when `WebAssembly.Memory.grow()` detaches buffers, and emits `rustc`-verified Rust structs.
+  </Card>
+</CardGrid>

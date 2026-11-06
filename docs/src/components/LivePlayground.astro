@@ -1,0 +1,802 @@
+---
+---
+
+<div class="cs-playground not-content">
+  <div class="cs-tabs" role="tablist">
+    <button class="cs-tab active" data-tab="bench" role="tab" aria-selected="true">
+      1. Live Browser Benchmark
+    </button>
+    <button class="cs-tab" data-tab="mutate" role="tab" aria-selected="false">
+      2. Binary Inspector &amp; Live Mutator
+    </button>
+    <button class="cs-tab" data-tab="rust" role="tab" aria-selected="false">
+      3. Rust #[repr(C)] Codegen
+    </button>
+  </div>
+
+  <!-- TAB 1: BENCHMARK -->
+  <div class="cs-panel active" id="cs-panel-bench">
+    <div class="cs-panel-header">
+      <div>
+        <strong>Zero-Copy vs JSON.parse / JSON.stringify in Your Browser</strong>
+        <p class="cs-sub">
+          Runs real <code>capnstruct</code> binary views in your current JS engine against native <code>JSON.parse</code> / <code>JSON.stringify</code>.
+        </p>
+      </div>
+      <button id="cs-run-bench" class="cs-btn cs-btn-primary">Run Live Benchmark</button>
+    </div>
+
+    <div id="cs-bench-results" class="cs-bench-grid">
+      <div class="cs-bench-card" data-bench="scan">
+        <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (2.4 MiB)</div>
+        <div class="cs-bench-desc">Flyweight cursor <code>for (const row of view)</code> (0 heap allocs) vs <code>JSON.parse</code> + loop</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">JSON.parse + loop</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+            <span class="cs-bar-val" id="cs-b1-json">-- ms</span>
+          </div>
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">capnstruct for..of</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
+            <span class="cs-bar-val" id="cs-b1-capn">-- ms</span>
+          </div>
+        </div>
+        <div class="cs-speedup" id="cs-b1-speedup">Click "Run Live Benchmark"</div>
+      </div>
+
+      <div class="cs-bench-card" data-bench="bbox">
+        <div class="cs-bench-title">2. 25,000 Flight Telemetry Rows (13 Fields)</div>
+        <div class="cs-bench-desc">Sparse BBox filter (~0.4% hit rate) + lazy UTF-8 string decode only on matched rows</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">JSON.parse + filter</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+            <span class="cs-bar-val" id="cs-b2-json">-- ms</span>
+          </div>
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">capnstruct zero-copy</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
+            <span class="cs-bar-val" id="cs-b2-capn">-- ms</span>
+          </div>
+        </div>
+        <div class="cs-speedup" id="cs-b2-speedup">Click "Run Live Benchmark"</div>
+      </div>
+
+      <div class="cs-bench-card" data-bench="mutate">
+        <div class="cs-bench-title">3. Live In-Place String Mutation (25,000 Rows)</div>
+        <div class="cs-bench-desc">Mutate 100 callsigns in-place via <code>row.callsign = 'UPD'</code> vs JSON round-trip</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">JSON parse+stringify</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+            <span class="cs-bar-val" id="cs-b3-json">-- ms</span>
+          </div>
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">capnstruct in-place</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
+            <span class="cs-bar-val" id="cs-b3-capn">-- ms</span>
+          </div>
+        </div>
+        <div class="cs-speedup" id="cs-b3-speedup">Click "Run Live Benchmark"</div>
+      </div>
+
+      <div class="cs-bench-card" data-bench="col">
+        <div class="cs-bench-title">4. Columnar Float64Array Extraction (100,000 Rows)</div>
+        <div class="cs-bench-desc">Zero-copy <code>view.column('val')</code> for Arrow / WebGPU / SIMD vs JS array map</div>
+        <div class="cs-bars">
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">JSON array .map()</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
+            <span class="cs-bar-val" id="cs-b4-json">-- ms</span>
+          </div>
+          <div class="cs-bar-row">
+            <span class="cs-bar-label">capnstruct .column()</span>
+            <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 2%"></div></div>
+            <span class="cs-bar-val" id="cs-b4-capn">-- ms</span>
+          </div>
+        </div>
+        <div class="cs-speedup" id="cs-b4-speedup">Click "Run Live Benchmark"</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: MUTATOR & BINARY INSPECTOR -->
+  <div class="cs-panel" id="cs-panel-mutate">
+    <div class="cs-panel-header">
+      <div>
+        <strong>Interactive Binary StructArrayView Inspector</strong>
+        <p class="cs-sub">
+          Mutate strings &amp; slices in place, push/pop rows, and watch the fixed <code>#[repr(C)]</code> table and tail arena update in real time.
+        </p>
+      </div>
+      <div class="cs-actions">
+        <button id="cs-btn-push" class="cs-btn">+ Push Row (<code>.push()</code>)</button>
+        <button id="cs-btn-pop" class="cs-btn">- Pop Row (<code>.pop()</code>)</button>
+        <button id="cs-btn-compact" class="cs-btn cs-btn-primary">Compact Dead Tail (<code>.compact()</code>)</button>
+      </div>
+    </div>
+
+    <div class="cs-stats-strip">
+      <div class="cs-stat"><span>Rows (<code>.length</code>):</span> <strong id="cs-st-len">0</strong></div>
+      <div class="cs-stat"><span>Struct Stride:</span> <strong id="cs-st-stride">24 B</strong></div>
+      <div class="cs-stat"><span>Wire Bytes (<code>.bytes.byteLength</code>):</span> <strong id="cs-st-bytes">0 B</strong></div>
+      <div class="cs-stat"><span>Fragmentation (<code>.compactionRatio</code>):</span> <strong id="cs-st-frag">0.0%</strong></div>
+      <div class="cs-stat"><span>Last Action:</span> <strong id="cs-st-action">Initialized</strong></div>
+    </div>
+
+    <div class="cs-split">
+      <div class="cs-col">
+        <div class="cs-col-label">Live JS View (<code>for (const row of users)</code>) — Edit fields inline:</div>
+        <div id="cs-rows-editor" class="cs-rows-list"></div>
+      </div>
+      <div class="cs-col">
+        <div class="cs-col-label">Raw Wire Buffer Hex + ASCII Inspector (Fixed Table + Tail Arena):</div>
+        <pre id="cs-hex-view" class="cs-code-box"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: RUST CODEGEN -->
+  <div class="cs-panel" id="cs-panel-rust">
+    <div class="cs-panel-header">
+      <div>
+        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> Codegen</strong>
+        <p class="cs-sub">
+          Select a preset schema to inspect its exact C-ABI alignment, field offsets, and generated Rust <code>rustc</code> compile-time layout assertions.
+        </p>
+      </div>
+      <div class="cs-actions">
+        <select id="cs-schema-select" class="cs-select">
+          <option value="telemetry">FlightTelemetry (u32, f32, str, slice&lt;Waypoint&gt;)</option>
+          <option value="spdsample">SpdSample + OutHit (Doppler Radar WASM Kernel)</option>
+          <option value="padded">PaddedAlignment (u64 + u8 + u16 + slice&lt;i32&gt;)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="cs-split">
+      <div class="cs-col">
+        <div class="cs-col-label">TypeScript Schema &amp; Computed Offsets:</div>
+        <pre id="cs-ts-schema" class="cs-code-box"></pre>
+      </div>
+      <div class="cs-col">
+        <div class="cs-col-label">Generated Rust <code>toRustReprC([...])</code> Output:</div>
+        <pre id="cs-rust-output" class="cs-code-box"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .cs-playground {
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.75rem;
+    background: var(--sl-color-bg-nav);
+    overflow: hidden;
+    margin: 1.5rem 0 2rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  }
+  .cs-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+  }
+  .cs-tab {
+    flex: 1;
+    min-width: 180px;
+    padding: 0.8rem 1rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--sl-color-gray-2);
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .cs-tab:hover {
+    color: var(--sl-color-text);
+    background: var(--sl-color-bg-nav);
+  }
+  .cs-tab.active {
+    color: var(--sl-color-accent-high);
+    border-bottom-color: var(--sl-color-accent);
+    background: var(--sl-color-bg-nav);
+  }
+  .cs-panel {
+    display: none;
+    padding: 1.25rem;
+  }
+  .cs-panel.active {
+    display: block;
+  }
+  .cs-panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .cs-sub {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-2);
+  }
+  .cs-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .cs-btn {
+    padding: 0.45rem 0.85rem;
+    border-radius: 0.45rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .cs-btn:hover {
+    border-color: var(--sl-color-accent);
+  }
+  .cs-btn-primary {
+    background: var(--sl-color-accent);
+    color: #fff;
+    border-color: var(--sl-color-accent);
+  }
+  .cs-btn-primary:hover {
+    filter: brightness(1.1);
+  }
+  .cs-select {
+    padding: 0.45rem 0.75rem;
+    border-radius: 0.45rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    font-size: 0.84rem;
+  }
+  .cs-bench-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .cs-bench-card {
+    padding: 1rem;
+    border-radius: 0.6rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+  }
+  .cs-bench-title {
+    font-weight: 700;
+    font-size: 0.92rem;
+    margin-bottom: 0.25rem;
+  }
+  .cs-bench-desc {
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-2);
+    margin-bottom: 0.85rem;
+  }
+  .cs-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .cs-bar-row {
+    display: grid;
+    grid-template-columns: 125px 1fr 68px;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.76rem;
+  }
+  .cs-bar-label {
+    color: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+  }
+  .cs-bar-track {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(128, 128, 128, 0.16);
+    overflow: hidden;
+  }
+  .cs-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.35s ease;
+  }
+  .cs-bar-json {
+    background: #64748b;
+  }
+  .cs-bar-capn {
+    background: #10b981;
+  }
+  .cs-bar-val {
+    text-align: right;
+    font-family: var(--sl-font-mono);
+    font-weight: 600;
+  }
+  .cs-speedup {
+    margin-top: 0.75rem;
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #10b981;
+  }
+  .cs-stats-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 0.65rem 0.9rem;
+    border-radius: 0.5rem;
+    background: var(--sl-color-bg);
+    border: 1px solid var(--sl-color-hairline);
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+  }
+  .cs-split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+  }
+  .cs-col-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sl-color-gray-2);
+    margin-bottom: 0.45rem;
+  }
+  .cs-rows-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .cs-row-item {
+    padding: 0.7rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.8rem;
+  }
+  .cs-row-item input {
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.35rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg-nav);
+    color: var(--sl-color-text);
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+  }
+  .cs-code-box {
+    margin: 0;
+    padding: 0.85rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    max-height: 360px;
+    overflow: auto;
+    white-space: pre;
+  }
+</style>
+
+<script>
+  import {
+    defineStruct,
+    u8,
+    u16,
+    u32,
+    u64,
+    i32,
+    f32,
+    f64,
+    str,
+    slice,
+    fixedArray,
+    pack,
+  } from 'capnstruct';
+  import { toRustReprC } from 'capnstruct/codegen';
+
+  // Tab switching
+  const tabs = document.querySelectorAll<HTMLButtonElement>('.cs-tab');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach((t) => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      document.querySelectorAll('.cs-panel').forEach((p) => p.classList.remove('active'));
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      const target = document.getElementById(`cs-panel-${tab.dataset.tab}`);
+      if (target) target.classList.add('active');
+    });
+  });
+
+  // --- TAB 1: LIVE BENCHMARK ---
+  const SpdSample = defineStruct('SpdSample', {
+    t: u32,
+    val: f64,
+    id: u32,
+  });
+
+  const Waypoint = defineStruct('Waypoint', {
+    lat: f32,
+    lon: f32,
+  });
+
+  const TelemetryRow = defineStruct('TelemetryRow', {
+    flightId: u32,
+    squawk: u16,
+    flags: u16,
+    lat: f32,
+    lon: f32,
+    altBaro: i32,
+    groundSpeed: f32,
+    callsign: str,
+    route: str,
+    waypoints: slice(Waypoint),
+  });
+
+  function runBenchmarks() {
+    const btn = document.getElementById('cs-run-bench') as HTMLButtonElement | null;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+    }
+
+    setTimeout(() => {
+      // 1. 100k numeric scan
+      const N1 = 100_000;
+      const raw1 = Array.from({ length: N1 }, (_, i) => ({
+        t: i,
+        val: (i % 1000) * 0.25,
+        id: i & 0xff,
+      }));
+      const json1 = JSON.stringify(raw1);
+      const capn1 = SpdSample.pack(raw1);
+      const view1 = SpdSample.array(capn1);
+
+      const ITERS1 = 10;
+      let sink = 0;
+      const t1J0 = performance.now();
+      for (let it = 0; it < ITERS1; it++) {
+        const parsed = JSON.parse(json1);
+        for (let i = 0; i < parsed.length; i++) {
+          sink += parsed[i].t + parsed[i].val;
+        }
+      }
+      const ms1Json = (performance.now() - t1J0) / ITERS1;
+
+      const t1C0 = performance.now();
+      for (let it = 0; it < ITERS1; it++) {
+        for (const r of view1) {
+          sink += r.t + r.val;
+        }
+      }
+      const ms1Capn = Math.max(0.01, (performance.now() - t1C0) / ITERS1);
+
+      updateBenchCard('b1', ms1Json, ms1Capn, '0 heap allocations');
+
+      // 2. 25k Flight Telemetry sparse filter + lazy UTF-8 decode
+      const N2 = 25_000;
+      const raw2 = Array.from({ length: N2 }, (_, i) => ({
+        flightId: 10000 + i,
+        squawk: 1200 + (i % 77),
+        flags: i & 15,
+        lat: 37.0 + (i % 500) * 0.01,
+        lon: -122.0 + (i % 500) * 0.01,
+        altBaro: 32000,
+        groundSpeed: 450.5,
+        callsign: `UAL${1000 + (i % 9000)}`,
+        route: 'KSFO-KORD-KJFK-EGLL',
+        waypoints: [
+          { lat: 37.6188, lon: -122.375 },
+          { lat: 41.9742, lon: -87.9073 },
+        ],
+      }));
+      const json2 = JSON.stringify(raw2);
+      const capn2 = TelemetryRow.pack(raw2);
+
+      const ITERS2 = 8;
+      const t2J0 = performance.now();
+      for (let it = 0; it < ITERS2; it++) {
+        const rows = JSON.parse(json2);
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          if (r.lat > 41.95 && r.lon > -117.05) {
+            sink += r.callsign.length;
+          }
+        }
+      }
+      const ms2Json = (performance.now() - t2J0) / ITERS2;
+
+      const t2C0 = performance.now();
+      for (let it = 0; it < ITERS2; it++) {
+        const rows = TelemetryRow.array(capn2);
+        for (const r of rows) {
+          if (r.lat > 41.95 && r.lon > -117.05) {
+            sink += r.callsign.length;
+          }
+        }
+      }
+      const ms2Capn = Math.max(0.01, (performance.now() - t2C0) / ITERS2);
+
+      updateBenchCard('b2', ms2Json, ms2Capn, 'lazy UTF-8 decode on match only');
+
+      // 3. In-place string mutation vs JSON round-trip
+      const mutBuf = capn2.slice();
+      const mutView = TelemetryRow.array(mutBuf);
+      const t3J0 = performance.now();
+      for (let it = 0; it < 6; it++) {
+        const rows = JSON.parse(json2);
+        for (let i = 0; i < rows.length; i += 250) {
+          rows[i].callsign = 'UPD_999';
+        }
+        sink += JSON.stringify(rows).length;
+      }
+      const ms3Json = (performance.now() - t3J0) / 6;
+
+      const t3C0 = performance.now();
+      for (let it = 0; it < 20; it++) {
+        const c = mutView.cursor();
+        for (let i = 0; i < mutView.length; i += 250) {
+          mutView.at(i, c).callsign = 'UPD_999';
+        }
+        sink += mutView.bytes.byteLength;
+      }
+      const ms3Capn = Math.max(0.005, (performance.now() - t3C0) / 20);
+
+      updateBenchCard('b3', ms3Json, ms3Capn, 'O(1) in-place UTF-8 overwrite');
+
+      // 4. Columnar Float64Array projection
+      const t4J0 = performance.now();
+      for (let it = 0; it < ITERS1; it++) {
+        const rows = JSON.parse(json1);
+        const col = new Float64Array(rows.length);
+        for (let i = 0; i < rows.length; i++) col[i] = rows[i].val;
+        sink += col[0];
+      }
+      const ms4Json = (performance.now() - t4J0) / ITERS1;
+
+      const t4C0 = performance.now();
+      for (let it = 0; it < ITERS1; it++) {
+        const col = view1.column('val');
+        sink += col[0];
+      }
+      const ms4Capn = Math.max(0.005, (performance.now() - t4C0) / ITERS1);
+
+      updateBenchCard('b4', ms4Json, ms4Capn, 'contiguous Float64Array column');
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Re-Run Live Benchmark';
+      }
+      if (sink === -999999) console.log(sink);
+    }, 20);
+  }
+
+  function updateBenchCard(prefix: string, msJson: number, msCapn: number, note: string) {
+    const jsonEl = document.getElementById(`cs-${prefix}-json`);
+    const capnEl = document.getElementById(`cs-${prefix}-capn`);
+    const barEl = document.getElementById(`cs-${prefix}-bar`);
+    const speedEl = document.getElementById(`cs-${prefix}-speedup`);
+    const speedup = msJson / msCapn;
+    if (jsonEl) jsonEl.textContent = `${msJson.toFixed(2)} ms`;
+    if (capnEl) capnEl.textContent = `${msCapn.toFixed(2)} ms`;
+    if (barEl) barEl.style.width = `${Math.max(1.5, Math.min(100, (msCapn / msJson) * 100))}%`;
+    if (speedEl) speedEl.textContent = `${speedup.toFixed(1)}x faster (${note})`;
+  }
+
+  document.getElementById('cs-run-bench')?.addEventListener('click', runBenchmarks);
+
+  // --- TAB 2: LIVE BINARY MUTATOR & INSPECTOR ---
+  const User = defineStruct('User', {
+    id: u32,
+    name: str,
+    scores: slice(u32),
+  });
+
+  const initialUsers = pack(User, [
+    { id: 1, name: 'Ada Lovelace', scores: [10, 20, 30] },
+    { id: 2, name: 'Alan Turing', scores: [40, 50] },
+  ]);
+  const usersView = User.array(initialUsers);
+  let nextId = 3;
+
+  function formatHexDump(bytes: Uint8Array, rowCount: number, stride: number): string {
+    const tableBytes = rowCount * stride;
+    const lines: string[] = [];
+    lines.push(
+      `// Fixed #[repr(C)] Table: 0x0000..0x${tableBytes.toString(16).padStart(4, '0')} (${tableBytes} B) | Tail Arena: 0x${tableBytes.toString(16).padStart(4, '0')}..0x${bytes.byteLength.toString(16).padStart(4, '0')} (${Math.max(0, bytes.byteLength - tableBytes)} B)`
+    );
+    for (let off = 0; off < bytes.byteLength; off += 16) {
+      const hexParts: string[] = [];
+      let ascii = '';
+      for (let i = 0; i < 16; i++) {
+        if (off + i < bytes.byteLength) {
+          const b = bytes[off + i];
+          hexParts.push(b.toString(16).padStart(2, '0'));
+          ascii += b >= 32 && b <= 126 ? String.fromCharCode(b) : '.';
+        } else {
+          hexParts.push('  ');
+          ascii += ' ';
+        }
+      }
+      const region = off < tableBytes ? 'TBL ' : 'TAIL';
+      lines.push(
+        `${region} 0x${off.toString(16).padStart(4, '0')}: ${hexParts.slice(0, 8).join(' ')}  ${hexParts.slice(8).join(' ')}  |${ascii}|`
+      );
+    }
+    return lines.join('\n');
+  }
+
+  function renderMutator(actionLabel: string) {
+    const lenEl = document.getElementById('cs-st-len');
+    const strideEl = document.getElementById('cs-st-stride');
+    const bytesEl = document.getElementById('cs-st-bytes');
+    const fragEl = document.getElementById('cs-st-frag');
+    const actEl = document.getElementById('cs-st-action');
+    const listEl = document.getElementById('cs-rows-editor');
+    const hexEl = document.getElementById('cs-hex-view');
+
+    const rawSlice = new Uint8Array(
+      usersView.buffer,
+      usersView.byteOffset,
+      Math.max(usersView.byteLength, (usersView as any)._tl ? (usersView as any)._tl - usersView.byteOffset : usersView.byteLength)
+    );
+
+    if (lenEl) lenEl.textContent = String(usersView.length);
+    if (strideEl) strideEl.textContent = `${usersView.stride} B`;
+    if (bytesEl) bytesEl.textContent = `${rawSlice.byteLength} B`;
+    if (fragEl) fragEl.textContent = `${(usersView.compactionRatio * 100).toFixed(1)}%`;
+    if (actEl) actEl.textContent = actionLabel;
+    if (hexEl) hexEl.textContent = formatHexDump(rawSlice, usersView.length, usersView.stride);
+
+    if (listEl) {
+      listEl.innerHTML = '';
+      for (let i = 0; i < usersView.length; i++) {
+        const u = usersView.at(i);
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'cs-row-item';
+
+        const idSpan = document.createElement('span');
+        idSpan.innerHTML = `<code>#${u.id}</code>`;
+
+        const nameInput = document.createElement('input');
+        nameInput.value = u.name;
+        nameInput.title = 'Edit row.name (in-place when <= current UTF-8 length, tail-append when longer)';
+        nameInput.addEventListener('change', () => {
+          const prevLen = new TextEncoder().encode(usersView.at(i).name).byteLength;
+          const nextLen = new TextEncoder().encode(nameInput.value).byteLength;
+          usersView.at(i).name = nameInput.value;
+          renderMutator(
+            nextLen <= prevLen
+              ? `row[${i}].name overwritten in-place (0 allocs)`
+              : `row[${i}].name bump-allocated in tail arena`
+          );
+        });
+
+        const scoresInput = document.createElement('input');
+        scoresInput.value = Array.from(u.scores).join(', ');
+        scoresInput.title = 'Comma-separated u32 slice values';
+        scoresInput.addEventListener('change', () => {
+          const nums = scoresInput.value
+            .split(',')
+            .map((s) => parseInt(s.trim(), 10))
+            .filter((n) => !Number.isNaN(n) && n >= 0);
+          usersView.at(i).scores = nums;
+          renderMutator(`Updated row[${i}].scores (${nums.length} u32 items)`);
+        });
+
+        rowDiv.append(idSpan, nameInput, scoresInput);
+        listEl.appendChild(rowDiv);
+      }
+    }
+  }
+
+  document.getElementById('cs-btn-push')?.addEventListener('click', () => {
+    const id = nextId++;
+    usersView.push({ id, name: `Engineer_${id}`, scores: [id * 10, id * 20] });
+    renderMutator(`users.push({ id: ${id}, ... })`);
+  });
+
+  document.getElementById('cs-btn-pop')?.addEventListener('click', () => {
+    const popped = usersView.pop();
+    renderMutator(popped ? `users.pop() -> #${popped.id}` : 'users.pop() (empty)');
+  });
+
+  document.getElementById('cs-btn-compact')?.addEventListener('click', () => {
+    const packed = usersView.compact();
+    renderMutator(`users.compact() -> ${packed.byteLength} B tight wire buffer`);
+  });
+
+  renderMutator('Initial 2-row binary buffer');
+
+  // --- TAB 3: RUST #[repr(C)] CODEGEN ---
+  const OutHit = defineStruct('OutHit', {
+    fid: u32,
+    lat: f64,
+    lon: f64,
+    tStart: f64,
+    tEnd: f64,
+    fids: fixedArray(u32, 8),
+  });
+
+  const PaddedAlignment = defineStruct('PaddedAlignment', {
+    big: u64,
+    flag: u8,
+    code: u16,
+    samples: slice(i32),
+  });
+
+  const presets: Record<string, { ts: string; structs: any[] }> = {
+    telemetry: {
+      ts: `const Waypoint = defineStruct('Waypoint', {
+  lat: f32, // offset 0, size 4
+  lon: f32, // offset 4, size 4
+}); // size: 8, align: 4
+
+const TelemetryRow = defineStruct('TelemetryRow', {
+  flightId: u32,            // offset 0
+  squawk: u16,              // offset 4
+  flags: u16,               // offset 6
+  lat: f32,                 // offset 8
+  lon: f32,                 // offset 12
+  altBaro: i32,             // offset 16
+  groundSpeed: f32,         // offset 20
+  callsign: str,            // offset 24 ([u32 relOffset, u32 len])
+  route: str,               // offset 32 ([u32 relOffset, u32 len])
+  waypoints: slice(Waypoint)// offset 40 ([u32 relOffset, u32 len])
+}); // size: 48, align: 4`,
+      structs: [Waypoint, TelemetryRow],
+    },
+    spdsample: {
+      ts: `const SpdSample = defineStruct('SpdSample', {
+  t: u32,   // offset 0 (4B padding auto-inserted after t)
+  val: f64, // offset 8
+  id: u32,  // offset 16 (4B trailing padding to align stride to 8)
+}); // size: 24, align: 8
+
+const OutHit = defineStruct('OutHit', {
+  fid: u32,                 // offset 0 (4B padding before lat)
+  lat: f64,                 // offset 8
+  lon: f64,                 // offset 16
+  tStart: f64,              // offset 24
+  tEnd: f64,                // offset 32
+  fids: fixedArray(u32, 8), // offset 40..72
+}); // size: 72, align: 8`,
+      structs: [SpdSample, OutHit],
+    },
+    padded: {
+      ts: `const PaddedAlignment = defineStruct('PaddedAlignment', {
+  big: u64,            // offset 0, align 8
+  flag: u8,            // offset 8, align 1 (+1B pad before code)
+  code: u16,           // offset 10, align 2
+  samples: slice(i32), // offset 12, align 4 (8B CapnSlice<i32> + 4B tail pad)
+}); // size: 24, align: 8`,
+      structs: [PaddedAlignment],
+    },
+  };
+
+  function renderRustCodegen(key: string) {
+    const preset = presets[key] ?? presets.telemetry;
+    const tsEl = document.getElementById('cs-ts-schema');
+    const rsEl = document.getElementById('cs-rust-output');
+    if (tsEl) tsEl.textContent = preset.ts;
+    if (rsEl) rsEl.textContent = toRustReprC(preset.structs);
+  }
+
+  const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
+  selectEl?.addEventListener('change', () => renderRustCodegen(selectEl.value));
+  renderRustCodegen('telemetry');
+</script>

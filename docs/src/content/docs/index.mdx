@@ -21,18 +21,17 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 import LivePlayground from '../../components/LivePlayground.astro';
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>&lt; 4.8 KiB</strong> Minified + Gzipped</span>
+  <span class="cs-pill"><strong>&lt; 5.8 KiB</strong> Minified + Gzipped</span>
   <span class="cs-pill"><strong>0 ms Parse Step</strong> Direct DataView Reads</span>
-  <span class="cs-pill"><strong>In-Place Mutation</strong> Strings, Slices &amp; .push()/.pop()</span>
+  <span class="cs-pill"><strong>Queryable Binary Tables</strong> O(log N) rangeBy &amp; filterBytes</span>
+  <span class="cs-pill"><strong>Inline Types</strong> fixedStr, f16, sentinel &amp; scaled</span>
   <span class="cs-pill"><strong>Wire-Safe Bounds</strong> Pointer &amp; Amplification Defense</span>
-  <span class="cs-pill"><strong>TypedArray Columns</strong> For Arrow / WebGPU / SIMD</span>
-  <span class="cs-pill"><strong>C / Rust #[repr(C)]</strong> Compatible Wire Layout</span>
+  <span class="cs-pill"><strong>Rust / C11 / WGSL</strong> Multi-Target Codegen</span>
 </div>
 
 ## Try It Live in Your Browser
 
-Benchmark zero-copy iteration against `JSON.parse` in your browser, mutate strings and slices in-place while inspecting the raw wire bytes, or generate matching Rust `#[repr(C)]` structs:
-
+Benchmark zero-copy iteration against `JSON.parse` in your browser, mutate strings and slices in-place while inspecting the raw wire bytes, or generate matching Rust `#[repr(C)]`, C11/Zig, and WebGPU WGSL structs:
 <LivePlayground />
 
 ---
@@ -89,7 +88,7 @@ const wireBytes: Uint8Array = rows.bytes;
   <Card title="Columnar TypedArray Views" icon="bars">
     Call `rows.column('lat')` to extract a contiguous `Float64Array` or `Int32Array` (zero-copy when stride equals field size) or bulk-write a column via `rows.setColumn('lat', values)`.
   </Card>
-  <Card title="Wire-Safe & Rust #[repr(C)]" icon="puzzle">
-    Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against bounds and amplification attacks, auto-rebinds views on `WebAssembly.Memory.grow()`, and generates overflow-checked `#[repr(C)]` Rust structs.
+  <Card title="Wire-Safe & Multi-Target Codegen" icon="puzzle">
+    Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against bounds and amplification attacks, supports `O(log N)` `.rangeBy()` binary search, and generates overflow-checked Rust `#[repr(C)]`, C11/Zig `_Static_assert` headers, and WebGPU WGSL shader structs.
   </Card>
 </CardGrid>

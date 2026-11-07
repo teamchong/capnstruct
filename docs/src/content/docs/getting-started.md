@@ -11,8 +11,7 @@ npm install capnstruct
 pnpm add capnstruct
 ```
 
-`capnstruct` ships native ES modules + TypeScript declarations (&lt; 4.5 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
-
+`capnstruct` ships native ES modules + TypeScript declarations (&lt; 5.8 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
 ---
 
 ## 1. Define a Schema
@@ -44,15 +43,18 @@ console.log(SpdSample.offsetOf('val')); // 8
 | Descriptor | Size | Alignment | JS/TS Value Type | C / Rust `#[repr(C)]` Equivalent |
 | :--- | :--- | :--- | :--- | :--- |
 | `u8` / `i8` / `bool` | `1 B` | `1 B` | `number` / `boolean` | `u8` / `i8` / `bool` |
-| `u16` / `i16` | `2 B` | `2 B` | `number` | `u16` / `i16` |
+| `u16` / `i16` / `f16` | `2 B` | `2 B` | `number` (`Float16Array` for `f16`) | `u16` / `i16` / `u16` (`f16` in WGSL) |
 | `u32` / `i32` / `f32` | `4 B` | `4 B` | `number` | `u32` / `i32` / `f32` |
 | `u64` / `i64` | `8 B` | `8 B` | `bigint` (accepts `number` on write) | `u64` / `i64` |
 | `f64` | `8 B` | `8 B` | `number` | `f64` |
+| `fixedStr(N)` | `N B` inline | `1 B` | `string` (null-padded UTF-8, 0 tail indirection) | `[u8; N]` / `uint8_t[N]` |
+| `fixedBytes(N)` | `N B` inline | `1 B` | `Uint8Array` (zero-copy sub-slice) | `[u8; N]` / `uint8_t[N]` |
+| `sentinel(prim, nullVal)` / `nullable(prim, nullVal)` | `prim.size` | `prim.align` | `number \| bigint \| boolean \| null` | Same as `prim` (0 extra wire bytes) |
+| `scaled(prim, factor, { null? })` | `prim.size` | `prim.align` | `number` (or `number \| null`) | Same as `prim` (stores `Math.round(val * factor)`) |
 | `fixedArray(el, N)` | `N * el.size` | `el.align` | `TypedArray` (primitives) or `StructArrayView` | `[T; N]` |
 | `str` | `8 B` inline | `4 B` | `string` (UTF-8 in tail arena) | `CapnStr { off: u32, len: u32 }` |
 | `slice(el)` | `8 B` inline | `4 B` | `TypedArray` / `StructArrayView` | `CapnSlice<T> { off: u32, len: u32 }` |
 | Nested `StructDef` | `def.size` | `def.align` | `StructView<F>` | Nested `#[repr(C)]` struct |
-
 ---
 
 ## 2. Pack & Read Zero-Copy Binary Views
@@ -91,10 +93,9 @@ for (const row of samples) {
   sum += row.val;
 }
 
-// For zero-allocation random access in tight loops, pass an explicit cursor:
+// For zero-allocation random access in tight loops, seek on the flyweight cursor directly:
 const cursor = samples.cursor();
 for (let i = 0; i < samples.length; i++) {
-  const row = samples.at(i, cursor);
-  sum += row.t;
+  sum += cursor.seek(i).t;
 }
 ```

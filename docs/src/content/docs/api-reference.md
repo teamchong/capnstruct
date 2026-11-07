@@ -40,11 +40,22 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `def.create(init?)`: Allocates a single `StructView<F>` backed by a fresh buffer.
 - `def.alloc(count)`: Allocates a `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array).
 - `def.pack(rows)` / `pack(def, rows)`: Packs an array of plain JS objects into an 8-byte-aligned `Uint8Array`.
+- `def.concatBytes(chunks)` / `concatBytes(def, chunks)`: Concatenates multiple `StructArrayView<F>` or `Uint8Array` chunks into a single packed `Uint8Array` via bulk `memcpy` when fixed-size.
 - `def.view(source, optionsOrOffset?)`: Wraps a single struct in `source` without copying.
 - `def.array(source, optionsOrOffset?, count?)`: Wraps a sequence of structs in `source` without copying.
+
+### Inline Fixed-Length & Zero-Overhead Primitives
+
+- `f16`: 2-byte IEEE 754 half-precision float (`Float16Array` column support).
+- `fixedStr(N)`: Inline fixed-length null-padded UTF-8 string `[u8; N]` (`align: 1, size: N`) with 0 tail indirection.
+- `fixedBytes(N)`: Inline fixed-length byte array `[u8; N]` (`align: 1, size: N`) read as a zero-copy `Uint8Array`.
+- `sentinel(prim, nullValue)` / `nullable(prim, nullValue)`: Maps an inline sentinel value (e.g. `-32768` for `i16` or `NaN` for `f32`) to `null` in JS with 0 extra wire bytes.
+- `scaled(prim, factor, { null? })`: Fixed-point scaled primitive (stores `Math.round(val * factor)` in `prim`, reads `raw / factor` as `number`).
+
 ### `StructView<F>`
 
-- `<field>`: Getter and setter for every field in `F` (primitives, nested structs, `fixedArray`, `str`, and `slice`).
+- `<field>`: Getter and setter for every field in `F` (primitives, nested structs, `fixedArray`, `fixedStr`, `fixedBytes`, `str`, and `slice`).
+- `view.seek(index)` / `view.at(index)`: Repositions a flyweight cursor to row `index` in $O(1)$ (supports negative indices from the end).
 - `view.set(field, value)` / `view.set(partialObject)` / `view.setAll(partialObject)`: Updates one or more fields in place.
 - `view.toObject()` / `view.toJSON()`: Materializes a plain JS object `{ ... }`.
 - `view.compactionRatio`: Ratio (`0..1`) of dead tail bytes to total used bytes.
@@ -55,8 +66,12 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 
 - `rows.length` / `rows.stride` / `rows.byteLength` / `rows.byteOffset` / `rows.buffer`
 - `rows.at(index, cursor?)`: Returns a `StructView<F>` for `index` (uses a 256-slot ring pool or the provided `cursor`).
-- `rows.cursor(index?)`: Returns a reusable flyweight `StructView<F>`.
+- `rows.cursor(index?)`: Returns a reusable flyweight `StructView<F>` cursor (reposition via `cursor.seek(i)` or `cursor.at(i)`).
 - `for (const row of rows)`: Zero-allocation flyweight iterator.
+- `rows.subarray(begin?, end?)`: Returns a zero-copy `StructArrayView<F>` slice over `[begin, end)` in $O(1)$ without copying bytes.
+- `rows.lowerBound(field, value)` / `rows.upperBound(field, value)`: $O(\log N)$ binary search directly on a sorted primitive column (0 allocations).
+- `rows.rangeBy(field, min, max)`: Returns a zero-copy `StructArrayView<F>` slice over `min <= row[field] <= max` in $O(\log N)$.
+- `rows.filterBytes(predicate)`: Filters rows with a reusable flyweight cursor (0 per-row JS objects) and copies matching binary rows into a tight `Uint8Array`.
 - `rows.push(...items)`: Appends rows in-place, automatically growing capacity as needed.
 - `rows.pop()`: Removes and returns the last row as a plain JS object.
 - `rows.column(field)`: Extracts a `TypedArray` for primitive `field` (zero-copy when `stride === field.size`).
@@ -73,14 +88,15 @@ Measured via `pnpm run bench` and `pnpm run size`:
 
 | Benchmark Scenario | Baseline (`JSON` / `structuredClone`) | `capnstruct` Zero-Copy | Speedup |
 | :--- | :---: | :---: | :---: |
-| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 47.13 ms | **0.039 ms** | **1,206x faster** |
-| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.61 ms | **0.039 ms** | **784x faster** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.71 ms | **0.289 ms** | **47.4x faster** |
-| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.99 ms | **0.508 ms** | **27.5x faster** |
-| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.38 ms | **0.345 ms** | **15.6x faster** |
+| **Zero-Heap Time-Window Range Query** (100,000 sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.01 ms | **0.0027 ms** | **~5,115x faster** |
+| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.67 ms | **0.039 ms** | **~1,157x faster** |
+| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.21 ms | **0.039 ms** | **~774x faster** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.29 ms | **0.287 ms** | **~46.3x faster** |
+| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.77 ms | **0.536 ms** | **~25.7x faster** |
+| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.10 ms | **0.308 ms** | **~16.6x faster** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime)** | 12.43 KiB | **4.69 KiB** (4,807 B) |
-| **Full Runtime ( + `WasmArena`)** | 14.17 KiB | **5.20 KiB** (5,323 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.68 KiB | **1.14 KiB** (1,166 B) |
+| **Declarative Schema API (Core Runtime + All Primitives)** | 14.82 KiB | **5.77 KiB** (5,905 B) |
+| **Full Runtime (`+ WasmArena`)** | 16.55 KiB | **6.27 KiB** (6,424 B) |
+| **Multi-Target Codegen (`capnstruct/codegen`: Rust + C11 + WGSL)** | 7.10 KiB | **2.75 KiB** (2,819 B) |

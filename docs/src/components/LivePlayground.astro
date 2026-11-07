@@ -10,7 +10,7 @@
       2. Binary Inspector &amp; Live Mutator
     </button>
     <button class="cs-tab" data-tab="rust" role="tab" aria-selected="false">
-      3. Rust #[repr(C)] Codegen
+      3. Rust / C11 / WGSL Codegen
     </button>
   </div>
 
@@ -157,9 +157,9 @@
   <div class="cs-panel" id="cs-panel-rust">
     <div class="cs-panel-header">
       <div>
-        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> Codegen</strong>
+        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code>, C11/Zig &amp; WebGPU WGSL Codegen</strong>
         <p class="cs-sub">
-          Select a preset schema to inspect its exact C-ABI alignment, field offsets, and generated Rust <code>rustc</code> compile-time layout assertions.
+          Select a preset schema and target language to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
         </p>
       </div>
       <div class="cs-actions">
@@ -167,6 +167,11 @@
           <option value="telemetry">FlightTelemetry (u32, f32, str, slice&lt;Waypoint&gt;)</option>
           <option value="spdsample">SpdSample + OutHit (Doppler Radar WASM Kernel)</option>
           <option value="padded">PaddedAlignment (u64 + u8 + u16 + slice&lt;i32&gt;)</option>
+        </select>
+        <select id="cs-target-select" class="cs-select">
+          <option value="rust">Target: Rust #[repr(C)]</option>
+          <option value="c">Target: C11 / C++ / Zig (.h)</option>
+          <option value="wgsl">Target: WebGPU WGSL (.wgsl)</option>
         </select>
       </div>
     </div>
@@ -177,7 +182,7 @@
         <pre id="cs-ts-schema" class="cs-code-box"></pre>
       </div>
       <div class="cs-col">
-        <div class="cs-col-label">Generated Rust <code>toRustReprC([...])</code> Output:</div>
+        <div class="cs-col-label" id="cs-codegen-label">Generated Codegen Output:</div>
         <pre id="cs-rust-output" class="cs-code-box"></pre>
       </div>
     </div>
@@ -429,8 +434,7 @@
     fixedArray,
     pack,
   } from 'capnstruct';
-  import { toRustReprC } from 'capnstruct/codegen';
-
+  import { toRustReprC, toCHeader, toWgsl } from 'capnstruct/codegen';
   // Tab switching
   const tabs = document.querySelectorAll<HTMLButtonElement>('.cs-tab');
   tabs.forEach((tab) => {
@@ -818,15 +822,36 @@ const OutHit = defineStruct('OutHit', {
     },
   };
 
-  function renderRustCodegen(key: string) {
+  const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
+  const targetEl = document.getElementById('cs-target-select') as HTMLSelectElement | null;
+
+  function renderRustCodegen() {
+    const key = selectEl?.value ?? 'telemetry';
+    const target = targetEl?.value ?? 'rust';
     const preset = presets[key] ?? presets.telemetry;
     const tsEl = document.getElementById('cs-ts-schema');
     const rsEl = document.getElementById('cs-rust-output');
+    const lblEl = document.getElementById('cs-codegen-label');
     if (tsEl) tsEl.textContent = preset.ts;
-    if (rsEl) rsEl.textContent = toRustReprC(preset.structs);
+    if (lblEl) {
+      lblEl.innerHTML =
+        target === 'c'
+          ? 'Generated C11 / Zig <code>toCHeader([...])</code> Output:'
+          : target === 'wgsl'
+            ? 'Generated WebGPU WGSL <code>toWgsl([...])</code> Output:'
+            : 'Generated Rust <code>toRustReprC([...])</code> Output:';
+    }
+    if (rsEl) {
+      rsEl.textContent =
+        target === 'c'
+          ? toCHeader(preset.structs)
+          : target === 'wgsl'
+            ? toWgsl(preset.structs)
+            : toRustReprC(preset.structs);
+    }
   }
 
-  const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
-  selectEl?.addEventListener('change', () => renderRustCodegen(selectEl.value));
-  renderRustCodegen('telemetry');
+  selectEl?.addEventListener('change', renderRustCodegen);
+  targetEl?.addEventListener('change', renderRustCodegen);
+  renderRustCodegen();
 </script>

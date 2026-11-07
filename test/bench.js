@@ -256,8 +256,7 @@ const mutView = TelemetryRow.array(mutBuf);
 const b4CapnMut = bench('capnstruct SharedArrayBuffer in-place', 20, () => {
   const c = mutView.cursor();
   for (let i = 0; i < mutView.length; i += 250) {
-    mutView.at(i, c);
-    c.callsign = 'UPD_999';
+    c.seek(i).callsign = 'UPD_999';
   }
   return mutView.bytes.byteLength;
 });
@@ -266,5 +265,29 @@ for (const b of [b4CloneMut, b4JsonMut, b4CapnMut]) {
   const speedup = (b4CloneMut.perIterMs / b.perIterMs).toFixed(1);
   console.log(
     `   - ${b.name.padEnd(38)}: ${b.perIterMs.toFixed(3)} ms/iter (${speedup}x vs structuredClone)`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 5. Zero-Heap Queryable Table: Binary Search Range Slicing (.rangeBy)
+// ---------------------------------------------------------------------------
+console.log(
+  `\n5) Zero-Heap Time-Window Range Query (${N_SAMPLES.toLocaleString()} sorted SpdSample rows, 1% window):`,
+);
+
+const b5JsonFilter = bench('JSON.parse + .filter() + JSON.stringify', 20, () => {
+  const rows = JSON.parse(textDecoder.decode(jsonSamplesBytes));
+  const win = rows.filter((r) => r.id >= 50_000 && r.id <= 50_999);
+  return new TextEncoder().encode(JSON.stringify(win)).byteLength;
+});
+
+const b5CapnRange = bench('capnstruct .rangeBy("id", min, max).bytes', 20, () => {
+  return capnSamplesView.rangeBy('id', 50_000, 50_999).bytes.byteLength;
+});
+
+for (const b of [b5JsonFilter, b5CapnRange]) {
+  const speedup = (b5JsonFilter.perIterMs / b.perIterMs).toFixed(1);
+  console.log(
+    `   - ${b.name.padEnd(38)}: ${b.perIterMs.toFixed(4)} ms/iter (${speedup}x vs JSON.parse + .filter)`,
   );
 }

@@ -38,25 +38,28 @@ console.log(points.at(0).x, points.at(0).label); // 1.5, 'radar-0'
 
 ---
 
-## 2. Rust `#[repr(C)]` Codegen & CLI
+## 2. Multi-Target Codegen: Rust `#[repr(C)]`, C11/Zig Header & WebGPU WGSL
 
-`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct definitions—including overflow-checked `CapnStr::as_bytes` / `CapnSlice<T>::as_slice` accessors (`checked_add` / `checked_mul` + slice bounds assertions), explicit `_padN` alignment padding fields, and `core::mem::{size_of, align_of, offset_of!}` compile-time assertions—directly from your TypeScript schemas.
+`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct definitions (`toRustReprC`), C11/C++/Zig headers with `_Static_assert` (`toCHeader`), and WebGPU WGSL shader structs with 4-byte word bitfield unpack helpers (`toWgsl`) directly from your TypeScript schemas.
 
 ### Programmatic API
 
 ```ts
-import { toRustReprC } from 'capnstruct/codegen';
+import { toRustReprC, toCHeader, toWgsl } from 'capnstruct/codegen';
 import { SpdSample } from './schema.js';
 
 console.log(toRustReprC([SpdSample]));
+console.log(toCHeader([SpdSample]));
+console.log(toWgsl([SpdSample]));
 ```
 
 ### CLI Usage
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.h
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.wgsl
 ```
-
 ### Generated Rust Output
 
 ```rust

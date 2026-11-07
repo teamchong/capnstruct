@@ -7,22 +7,33 @@ import {
   Arena,
   array,
   bool,
+  concatBytes,
   defineStruct,
+  f16,
   f32,
   f64,
   fixedArray,
+  fixedBytes,
+  fixedStr,
+  generateC,
   generateRust,
+  generateWgsl,
   i8,
   i16,
   i32,
   i64,
   list,
+  nullable,
   pack,
+  scaled,
+  sentinel,
   slice,
   str,
   struct,
   structView,
+  toCHeader,
   toRustReprC,
+  toWgsl,
   u8,
   u16,
   u32,
@@ -900,6 +911,294 @@ describe('capnstruct', () => {
         text: 'longer string that moves to new tail tip',
         nums: [1, 2, 3, 4, 5, 6],
       });
+    });
+  });
+
+  describe('Inline Fixed-Length & Zero-Overhead Primitives (f16, fixedStr, fixedBytes, sentinel/nullable, scaled)', () => {
+    it('supports f16 half-precision floats and zero-copy Float16Array columns', () => {
+      const TfPoint = defineStruct('TfPoint', {
+        t: f16,
+        f: f16,
+      });
+      expect(TfPoint.size).toBe(4);
+      expect(TfPoint.align).toBe(2);
+
+      const arr = TfPoint.alloc(3);
+      arr.at(0).set({ t: 1.5, f: -2.25 });
+      arr.at(1).set({ t: 0, f: 65504 });
+      arr.at(2).set({ t: -0.0625, f: Infinity });
+
+      expect(arr.at(0).t).toBeCloseTo(1.5, 3);
+      expect(arr.at(0).f).toBeCloseTo(-2.25, 3);
+      expect(arr.at(1).t).toBe(0);
+      expect(arr.at(1).f).toBe(65504);
+      expect(arr.at(2).t).toBeCloseTo(-0.0625, 4);
+      expect(arr.at(2).f).toBe(Infinity);
+
+      const col = arr.column('t');
+      expect(col.length).toBe(3);
+      expect(col[0]).toBeCloseTo(1.5, 3);
+    });
+
+    it('packs fixedStr(N) and fixedBytes(N) inline with 0 tail indirection', () => {
+      const Header = defineStruct('Header', {
+        magic: fixedStr(4),
+        hex: fixedStr(6),
+        callsign: fixedStr(8),
+        raw: fixedBytes(4),
+        count: u32,
+      });
+      // 4 + 6 + 8 + 4 = 22 -> padded to 24 for u32 @ offset 24..28 -> size 28, align 4
+      expect(Header.size).toBe(28);
+      expect(Header.align).toBe(4);
+
+      const bytes = Header.pack([
+        { magic: 'RIFF', hex: 'a8b2c3', callsign: 'SFO12345678', raw: new Uint8Array([1, 2, 3, 4, 5]), count: 7 },
+        { magic: 'WAVE', hex: 'ff00', callsign: '東京', raw: [9, 8], count: 9 },
+      ]);
+      // 100% flat fixed-size table: 2 * 28 = 56 bytes (no 8-byte tail pointers!)
+      expect(bytes.byteLength).toBe(56);
+
+      const view = Header.array(bytes);
+      expect(view.length).toBe(2);
+      expect(view.at(0).magic).toBe('RIFF');
+      expect(view.at(0).hex).toBe('a8b2c3');
+      expect(view.at(0).callsign).toBe('SFO12345'); // truncated to 8 bytes
+      expect(Array.from(view.at(0).raw)).toEqual([1, 2, 3, 4]);
+      expect(view.at(0).count).toBe(7);
+
+      expect(view.at(1).magic).toBe('WAVE');
+      expect(view.at(1).hex).toBe('ff00');
+      expect(view.at(1).callsign).toBe('東京');
+      expect(Array.from(view.at(1).raw)).toEqual([9, 8, 0, 0]);
+      expect(view.at(1). toObject()).toEqual({
+        magic: 'WAVE',
+        hex: 'ff00',
+        callsign: '東京',
+        raw: [9, 8, 0, 0],
+        count: 9,
+      });
+    });
+
+    it('maps sentinel / nullable and scaled fixed-point primitives with 0 extra wire bytes', () => {
+      const AdsbPoint = defineStruct('AdsbPoint', {
+        lat: scaled(i32, 1e6),
+        lon: scaled(i32, 1e6),
+        gs: scaled(i16, 10, { null: -32768 }),
+        track: sentinel(i16, -32768),
+        rms: nullable(f32, Number.NaN),
+      });
+      expect(AdsbPoint.size).toBe(16);
+      expect(AdsbPoint.align).toBe(4);
+
+      // Default creation initializes sentinel/nullable fields to null automatically
+      const single = AdsbPoint.create({ lat: 37.774929, lon: -122.419416 });
+      expect(single.lat).toBeCloseTo(37.774929, 6);
+      expect(single.lon).toBeCloseTo(-122.419416, 6);
+      expect(single.gs).toBeNull();
+      expect(single.track).toBeNull();
+      expect(single.rms).toBeNull();
+
+      // Verify raw wire bytes hold the exact integer scaled values and -32768 / NaN sentinels
+      const dv = new DataView(single.bytes.buffer, single.bytes.byteOffset, single.bytes.byteLength);
+      expect(dv.getInt32(0, true)).toBe(37774929);
+      expect(dv.getInt32(4, true)).toBe(-122419416);
+      expect(dv.getInt16(8, true)).toBe(-32768);
+      expect(dv.getInt16(10, true)).toBe(-32768);
+      expect(Number.isNaN(dv.getFloat32(12, true))).toBe(true);
+
+      // Set non-null values and back to null
+      single.gs = 452.3;
+      single.track = 180;
+      single.rms = 1.25;
+      expect(single.gs).toBeCloseTo(452.3, 1);
+      expect(single.track).toBe(180);
+      expect(single.rms).toBeCloseTo(1.25, 4);
+
+      single.gs = null;
+      single.track = null;
+      single.rms = null;
+      expect(single.gs).toBeNull();
+      expect(single.track).toBeNull();
+      expect(single.rms).toBeNull();
+
+      // Also initializes sentinels in WasmArena.alloc / allocOne and StructDef.pack
+      const arena = new WasmArena(4096);
+      const aOne = arena.allocOne(AdsbPoint);
+      expect(aOne.gs).toBeNull();
+      expect(aOne.track).toBeNull();
+    });
+  });
+
+  describe('Cursor .seek(i) / .at(i) & Bulk memcpy Slice Assignment', () => {
+    it('repositions flyweight cursors via .seek(i) and .at(i) and bulk-copies StructArrayView / TypedArray into slices', () => {
+      const Pt = defineStruct('Pt', {
+        x: i32,
+        y: i32,
+      });
+      const Bundle = defineStruct('Bundle', {
+        id: u32,
+        pts: slice(Pt),
+        weights: slice(f32),
+      });
+
+      const ptsView = Pt.alloc(4);
+      const cur = ptsView.cursor(0);
+      for (let i = 0; i < 4; i++) {
+        cur.seek(i).set({ x: i * 10, y: i * 20 });
+      }
+      expect(cur.at(-1).x).toBe(30);
+      expect(cur.at(-1).y).toBe(60);
+
+      const f32Weights = new Float32Array([0.5, 1.5, 2.5]);
+      const packed = Bundle.pack([{ id: 9, pts: ptsView, weights: f32Weights }]);
+      const bView = Bundle.view(packed);
+      expect(bView.id).toBe(9);
+      expect(bView.pts.toObjects()).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 20 },
+        { x: 20, y: 40 },
+        { x: 30, y: 60 },
+      ]);
+      expect(Array.from(bView.weights)).toEqual([0.5, 1.5, 2.5]);
+
+      // In-place mutation of slice(Pt) from a subarray of ptsView via bulk memcpy
+      bView.pts = ptsView.subarray(1, 3);
+      expect(bView.pts.toObjects()).toEqual([
+        { x: 10, y: 20 },
+        { x: 20, y: 40 },
+      ]);
+    });
+  });
+
+  describe('Zero-Heap Queryable Table Primitives (subarray, lowerBound, upperBound, rangeBy, filterBytes, concatBytes)', () => {
+    const EventRow = defineStruct('EventRow', {
+      ts: u32,
+      val: f64,
+    });
+
+    it('performs O(log N) binary search (lowerBound, upperBound, rangeBy) and O(1) subarray slicing without copying', () => {
+      const rows = EventRow.pack([
+        { ts: 100, val: 1.0 },
+        { ts: 200, val: 2.0 },
+        { ts: 200, val: 2.5 },
+        { ts: 300, val: 3.0 },
+        { ts: 400, val: 4.0 },
+      ]);
+      const table = EventRow.array(rows);
+
+      expect(table.lowerBound('ts', 200)).toBe(1);
+      expect(table.upperBound('ts', 200)).toBe(3);
+      expect(table.lowerBound('ts', 250)).toBe(3);
+      expect(table.lowerBound('ts', 50)).toBe(0);
+      expect(table.upperBound('ts', 999)).toBe(5);
+
+      const slice200to300 = table.rangeBy('ts', 200, 300);
+      expect(slice200to300.length).toBe(3);
+      expect(slice200to300.buffer).toBe(table.buffer); // Zero-copy!
+      expect(slice200to300.toObjects()).toEqual([
+        { ts: 200, val: 2.0 },
+        { ts: 200, val: 2.5 },
+        { ts: 300, val: 3.0 },
+      ]);
+
+      // Negative indices on subarray
+      const lastTwo = table.subarray(-2);
+      expect(lastTwo.toObjects()).toEqual([
+        { ts: 300, val: 3.0 },
+        { ts: 400, val: 4.0 },
+      ]);
+    });
+
+    it('preserves baseOffset on subarray of variable-length tables and compacts cleanly', () => {
+      const LogRow = defineStruct('LogRow', {
+        ts: u32,
+        msg: str,
+      });
+      const table = LogRow.array(
+        LogRow.pack([
+          { ts: 10, msg: 'first' },
+          { ts: 20, msg: 'second-message' },
+          { ts: 30, msg: 'third' },
+        ]),
+      );
+      const mid = table.subarray(1, 2);
+      expect(mid.length).toBe(1);
+      expect(mid.at(0).ts).toBe(20);
+      expect(mid.at(0).msg).toBe('second-message');
+
+      // Accessing .bytes on a variable-length sub-slice compacts just the sub-slice rows for wire transfer
+      const wire = mid.bytes;
+      const decoded = LogRow.array(wire);
+      expect(decoded.toObjects()).toEqual([{ ts: 20, msg: 'second-message' }]);
+    });
+
+    it('filters binary rows with 0 per-row object allocations via filterBytes and merges chunks via concatBytes', () => {
+      const chunk1 = EventRow.pack([
+        { ts: 10, val: 1 },
+        { ts: 20, val: 2 },
+      ]);
+      const chunk2 = EventRow.array(
+        EventRow.pack([
+          { ts: 30, val: 3 },
+          { ts: 40, val: 4 },
+        ]),
+      );
+      const merged = EventRow.concatBytes([chunk1, chunk2]);
+      const all = EventRow.array(merged);
+      expect(all.length).toBe(4);
+
+      const filteredBytes = all.filterBytes((row) => row.ts >= 20 && row.ts <= 30);
+      const filtered = EventRow.array(filteredBytes);
+      expect(filtered.toObjects()).toEqual([
+        { ts: 20, val: 2 },
+        { ts: 30, val: 3 },
+      ]);
+      expect(concatBytes(EventRow, [filtered]).byteLength).toBe(32);
+    });
+  });
+
+  describe('Multi-Target Codegen: C11 Header (toCHeader) & WebGPU WGSL (toWgsl)', () => {
+    const ShaderParticle = defineStruct('ShaderParticle', {
+      pos: fixedArray(f32, 3),
+      vel: f16,
+      flags: u8,
+      active: bool,
+      id: u32,
+      label: str,
+    });
+
+    it('generates valid C11/C++/Zig headers with _Static_assert verified by clang/cc', () => {
+      const cCode = toCHeader([ShaderParticle], { headerGuard: 'PARTICLE_H' });
+      expect(generateC([ShaderParticle], { headerGuard: 'PARTICLE_H' })).toBe(cCode);
+      expect(cCode).toContain('#ifndef PARTICLE_H');
+      expect(cCode).toContain('typedef struct ShaderParticle {');
+      expect(cCode).toContain('_Static_assert(sizeof(ShaderParticle) == 28');
+      expect(cCode).toContain('_Static_assert(_Alignof(ShaderParticle) == 4');
+      expect(cCode).toContain('_Static_assert(offsetof(ShaderParticle, id) == 16');
+
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-c-'));
+      try {
+        const hPath = join(tmp, 'particle.h');
+        writeFileSync(hPath, cCode, 'utf8');
+        execFileSync('cc', ['-std=c11', '-fsyntax-only', '-x', 'c', hPath], { stdio: 'pipe' });
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('generates WebGPU WGSL structs with 4-byte word packing and bitfield unpack helpers', () => {
+      const wgsl = toWgsl([ShaderParticle]);
+      expect(generateWgsl([ShaderParticle])).toBe(wgsl);
+      expect(wgsl).toContain('struct ShaderParticle {');
+      expect(wgsl).toContain('pos: array<f32, 3>,');
+      expect(wgsl).toContain('_word_12: u32,');
+      expect(wgsl).toContain('id: u32,');
+      expect(wgsl).toContain('label: CapnSlice,');
+      expect(wgsl).toContain('fn ShaderParticle_vel(s: ShaderParticle) -> f32');
+      expect(wgsl).toContain('unpack2x16float(s._word_12)');
+      expect(wgsl).toContain('fn ShaderParticle_flags(s: ShaderParticle) -> u32');
+      expect(wgsl).toContain('fn ShaderParticle_active(s: ShaderParticle) -> bool');
     });
   });
 });

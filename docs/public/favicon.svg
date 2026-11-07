@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0b1329"/>
+      <stop offset="100%" stop-color="#070b16"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="cBracket" x1="10" y1="12" x2="28" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="blockGreen" x1="24" y1="14" x2="54" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle Badge -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)" stroke="url(#rim)" stroke-width="2"/>
+
+  <!-- #[repr(C)] Left Alignment Bracket -->
+  <path d="M24 13H16C13.7909 13 12 14.7909 12 17V47C12 49.2091 13.7909 51 16 51H24" stroke="url(#cBracket)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Row 0: Two 4-Byte Aligned Struct Fields (u32 + f32) -->
+  <rect x="23" y="14" width="13" height="9" rx="2.5" fill="url(#blockGreen)"/>
+  <rect x="39" y="14" width="13" height="9" rx="2.5" fill="#38bdf8"/>
+
+  <!-- Row 1: Contiguous 8-Byte Stride Block (u64 / f64) -->
+  <rect x="23" y="27.5" width="29" height="9" rx="2.5" fill="url(#blockGreen)"/>
+
+  <!-- Row 2: [u32 relOffset, u32 len] Tail Descriptor + Zero-Copy Pointer Chevron -->
+  <rect x="23" y="41" width="17" height="9" rx="2.5" fill="#0ea5e9" fill-opacity="0.9"/>
+  <path d="M45 41.5L52 45.5L45 49.5" stroke="#34d399" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

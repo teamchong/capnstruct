@@ -1,4 +1,4 @@
-# capnstruct
+# <img src="docs/public/icon.svg" width="32" height="32" align="top" alt="capnstruct icon" /> capnstruct
 
 Zero-copy `#[repr(C)]` binary structs, cyclic object graphs (`ref`), and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU. Read and mutate **single binary structs, protocol headers, cyclic AST/graph nodes, `WebAssembly.Memory` arenas, `SharedArrayBuffer` state, and binary tables** in-place with no `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
 

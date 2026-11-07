@@ -10,6 +10,17 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'capnstruct',
+      favicon: '/favicon.svg',
+      logo: {
+        src: './src/assets/logo.svg',
+        alt: 'capnstruct #[repr(C)] icon',
+      },
+      head: [
+        {
+          tag: 'link',
+          attrs: { rel: 'icon', href: '/favicon.ico', sizes: '32x32' },
+        },
+      ],
       tagline:
         'Zero-copy #[repr(C)] binary structs, views, and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU',
       social: [

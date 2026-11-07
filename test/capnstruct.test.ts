@@ -15,6 +15,7 @@ import {
   fixedArray,
   fixedBytes,
   fixedStr,
+  generateGo,
   generateRust,
   i8,
   i16,
@@ -30,6 +31,7 @@ import {
   str,
   struct,
   structView,
+  toGoStruct,
   toRustReprC,
   u8,
   u16,
@@ -601,6 +603,46 @@ describe('capnstruct', () => {
           stdio: 'pipe',
         });
         expect(readFileSync(rmetaPath).byteLength).toBeGreaterThan(0);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('generates valid Go zero-copy struct code and passes go compile-time layout assertions', () => {
+      const TelemetryPacket = defineStruct('TelemetryPacket', {
+        seq: u64,
+        callsign: str,
+        samples: slice(SpdSample),
+      });
+
+      const goCode = toGoStruct([
+        SpdSample,
+        ShardDesc,
+        PassDesc,
+        QpPoint,
+        OutHit,
+        OutShortlist,
+        IOHeader,
+        TelemetryPacket,
+      ]);
+
+      expect(generateGo).toBe(toGoStruct);
+      expect(goCode).toContain('package capnschema');
+      expect(goCode).toContain('type SpdSample struct');
+      expect(goCode).toContain('type CapnStr struct');
+      expect(goCode).toContain('type CapnSlice[T any] struct');
+      expect(goCode).toContain('unsafe.Offsetof(OutHit{}.Fids)');
+
+      // Compile with `go tool compile` to verify all compile-time Sizeof, Alignof, and Offsetof assertions pass
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-go-'));
+      try {
+        const goPath = join(tmp, 'layout_check.go');
+        const objPath = join(tmp, 'layout_check.o');
+        writeFileSync(goPath, goCode, 'utf8');
+        execFileSync('go', ['tool', 'compile', '-o', objPath, goPath], {
+          stdio: 'pipe',
+        });
+        expect(readFileSync(objPath).byteLength).toBeGreaterThan(0);
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }
@@ -1247,6 +1289,13 @@ describe('capnstruct', () => {
       expect(rust).toContain('pub struct CapnRef<T>');
       expect(rust).toContain('pub parent: CapnRef<TreeNode>');
       expect(rust).toContain('pub children: CapnSlice<TreeNode>');
+
+      // Verify Go codegen handles recursive structs and CapnRef[T] / CapnSlice[T] without infinite loops
+      const go = toGoStruct([TreeNode], { pkg: 'tree' });
+      expect(go).toContain('package tree');
+      expect(go).toContain('type CapnRef[T any] struct');
+      expect(go).toContain('Parent CapnRef[TreeNode]');
+      expect(go).toContain('Children CapnSlice[TreeNode]');
     });
   });
 });

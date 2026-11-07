@@ -11,7 +11,8 @@ npm install capnstruct
 pnpm add capnstruct
 ```
 
-`capnstruct` ships native ES modules + TypeScript declarations (&lt; 5.8 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
+`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.6 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
+
 ---
 
 ## 1. Define a Schema

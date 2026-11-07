@@ -1,13 +1,19 @@
 import {
+  type GoCodegenOptions,
   type RustCodegenOptions,
   type SchemaCollection,
+  generateGo,
   generateRust,
+  toGoStruct,
   toRustReprC,
 } from './codegen.js';
 
 export {
+  generateGo,
   generateRust,
+  toGoStruct,
   toRustReprC,
+  type GoCodegenOptions,
   type RustCodegenOptions,
   type SchemaCollection,
 };

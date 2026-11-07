@@ -80,7 +80,7 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `rows.compactionRatio`: Ratio (`0..1`) of dead tail bytes to total used bytes.
 - `rows.compact()`: Strips dead tail bytes and rebinds the view to a tight `Uint8Array`.
 - `rows.bytes`: Returns a wire-ready `Uint8Array` (automatically calling `.compact()` if dirty).
-
+- `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go tool compile`-verified Go zero-copy structs (with `CapnStr`, `CapnSlice`, `CapnRef`, and compile-time size/alignment/offset assertions).
 ---
 
 ## Data Layout > Switching JS Engines (Benchmarks & Bundle Size)
@@ -100,4 +100,4 @@ Measured via `pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3
 | :--- | :--- | :--- |
 | **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
 | **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |
+| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 5.85 KiB | **1.97 KiB** (2,013 B) |

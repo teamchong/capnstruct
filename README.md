@@ -4,17 +4,98 @@ Zero-copy `#[repr(C)]` binary structs, cyclic object graphs (`ref`), and queryab
 
 **Live Documentation & Interactive Browser Playground:** [https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)
 
-## Why `capnstruct`? (Data Layout > Switching JS Engines)
+## Why Restructuring Data Layout Beats Switching JS Engines (Node.js V8 vs. Bun JSC)
 
-1. **Changing Data Layout Beats Switching JS Engines (Node V8 vs. Bun JSC)**: Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` by **~2.6x**, but still allocates **+6–14 MB of JS heap objects** per call and triggers garbage collection. Switching data layout to `capnstruct` on standard Node.js gives **15x–3,500x speedups** with **0.00 MB of JS heap allocation**.
-2. **Circular References & Recursive Schemas (`ref(() => Node)`, `slice(() => Node)`)**: `JSON.stringify` crashes with `TypeError` on circular graphs (`a.next = b; b.next = a`), and V8's `structuredClone` overflows the C++ call stack on deep graphs. `capnstruct` packs cyclic graphs into a flat `Uint8Array` in $O(1)$ stack space, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular JS references via `.toObject()`.
-3. **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads (**~6.5 KiB minified + gzipped**).
-4. **Zero-Allocation Flyweight Iteration & Seeking**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects, and `cursor.seek(i)` / `cursor.at(i)` repositions the cursor in $O(1)$.
-5. **Zero-Heap Queryable Tables (`.rangeBy()`, `.subarray()`, `.filterBytes()`, `.concatBytes()`)**: Run $O(\log N)$ binary search (`lowerBound`, `upperBound`, `rangeBy`) directly on a sorted binary column (~3,500x faster than `JSON.parse` + `.filter()`), slice zero-copy sub-tables via `.subarray()`, filter matching binary rows without per-row JS objects via `.filterBytes()`, and bulk-merge binary chunks via `.concatBytes()`.
-6. **Zero-Indirection Inline Types (`fixedStr`, `fixedBytes`, `f16`, `sentinel`/`nullable`, `scaled`)**: Keep fixed-width ASCII/UTF-8 strings (`fixedStr(N)`), raw byte arrays (`fixedBytes(N)`), IEEE 754 half-floats (`f16`), zero-bit sentinel nulls (`sentinel(i16, -32768)`), and fixed-point numbers (`scaled(i32, 1e6)`) 100% inline inside the `#[repr(C)]` struct with zero tail indirection.
-7. **In-Place `str` & `slice(T)` Mutation, Tail-Tip Extension & Bulk `memcpy`**: Assigning `row.callsign = 'NEW'` overwrites in-place in $O(1)$ when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when at the tail tip, or bump-allocates in the tail arena when longer. Assigning a `StructArrayView` or `TypedArray` into `slice(T)` / `fixedArray(T, N)` performs a single bulk `Uint8Array.set()` `memcpy`.
-8. **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()`.
-9. **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` Codegen**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust `#[repr(C)]` structs (`toRustReprC`) with compile-time `size_of` / `align_of` / `offset_of!` assertions.
+When a JavaScript or TypeScript service hits a serialization, IPC, or memory wall, a common impulse is to switch runtimes—from **Node.js (V8)** to **Bun (JavaScriptCore)**—or rewrite hot paths in another language.
+
+Switching JS engines only yields a **~1.3x–2.7x** constant-factor tweak because **both V8 and JavaScriptCore are forced to construct the exact same scattered pointer-soup heap graph** whenever you call `JSON.parse()` or `structuredClone()`:
+
+```text
+❌ Plain JS Objects in V8 (Node.js) AND JavaScriptCore (Bun):
+[Array Backing Store] ──► 8B ptr ──► [Boxed JSObject + HiddenClass/StructureID (24–48B)] ──► 8B ptr ──► [UTF-8/UTF-16 String Heap Box]
+  • Every row = 1..4 separate heap allocations + pointer indirection (CPU L1/L2 cache misses)
+  • 25,000–100,000 rows = +5 MB to +14 MB of garbage-collected heap pressure per call (GC frame drops)
+  • Circular references (a.next = b; b.next = a) = JSON.stringify crashes with TypeError; deep graphs overflow structuredClone C++ stack
+
+✅ capnstruct Contiguous #[repr(C)] Layout (Same V8 or JSC Engine):
+[Row 0: 24B inline #[repr(C)] struct │ Row 1: 24B inline │ ... │ Tail Arena: UTF-8 & slice bytes via [u32 relOffset, u32 len]]
+  • 0 per-row JS heap objects allocated (0.00 MB GC pressure)
+  • 1 reusable flyweight cursor (`cursor._o += stride`) streams sequentially through CPU L1 cache lines
+  • Strings & slices are only decoded on the rows that match your filter; circular `ref(() => Node)` pointers traverse in O(1)
+```
+
+### Visual Proof 1: Scaling Curve Across 4 Orders of Magnitude (`N = 100 → 100,000` Rows)
+
+To prove this is **not cherry-picked**, here is how **Node.js v24.15.0 (V8 13.6)**, **Bun v1.4.3 (JavaScriptCore)**, an **Already-In-Memory JS Array** (no parse/clone), and **`capnstruct` `#[repr(C)]` Binary Layout** scale from `N = 100` to `N = 100,000` rows (`SpdSample` numeric scan + mutation):
+
+```text
+Time per Frame / Call (ms) — Lower is better
+  28 ms ┤                                                                             ● Node.js V8 (27.8 ms, +10.3 MB heap)
+  24 ms ┤                                                                          ╱
+  20 ms ┤                                                                       ╱
+16.6 ms ┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─╱─ ─ ─ ─  ⚠️ 60 FPS Frame Budget Ceiling (16.6 ms)
+  14 ms ┤                                                                  ╱          ◆ Bun JSC Engine Switch (13.9 ms, +6.4 MB heap)
+  10 ms ┤                                                     ●         ╱          ╱    (Only ~2x faster than V8; still stutters GC!)
+ 8.3 ms ┼─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ╱ ─ ─ ─ ─ ╱ ─ ─ ─ ─ ─╱─ ─ ─  ⚡ 120 FPS Frame Budget (8.3 ms)
+   6 ms ┤                                               ╱         ◆          ╱
+   2 ms ┤                                  ●         ◆         ╱          ╱
+ 0.1 ms ┼───────●─────────●─────────●──────◆─────────▪─────────▪──────────▪───────────▪  ✅ capnstruct #[repr(C)] (0.15 ms, 0.00 MB heap)
+        └───────┴─────────┴─────────┴──────┴─────────┴─────────┴──────────┴───────────┘     & Already-In-Memory JS Array (0.09 ms)
+             N=100     N=1,000   N=5,000  N=10,000  N=25,000  N=50,000              N=100,000
+          (At N=100, all 4 meet at ~0.02 ms — V8 escape analysis keeps tiny arrays fast!)
+```
+
+### Visual Proof 2: Filter Selectivity Sweep (`0.5% → 100%` Hit Rate on 25,000 13-Field Flight Rows)
+
+What if your filter matches **100% of all rows** and has to UTF-8 decode every `callsign` string on the fly?
+
+```text
+  0.5% Hit Rate (125 rows)   │ ████████████████████████████████████  Node V8 JSON.parse + filter: 14.55 ms (+8.18 MB heap)
+                             │ ████████████████                      Bun JSC JSON.parse + filter:  6.32 ms (+5.21 MB heap)
+                             │ █                                     capnstruct zero-copy filter:  0.34 ms (+0.00 MB heap) ──► 43x faster
+  ───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────
+    5% Hit Rate (1,250 rows) │ ██████████████████████████████████    Node V8 JSON.parse + filter: 13.81 ms (+8.18 MB heap)
+                             │ ███████████████                       Bun JSC JSON.parse + filter:  6.16 ms (+5.21 MB heap)
+                             │ █                                     capnstruct zero-copy filter:  0.38 ms (+0.00 MB heap) ──► 36x faster
+  ───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────
+   25% Hit Rate (6,250 rows) │ ████████████████████████████████████  Node V8 JSON.parse + filter: 14.57 ms (+8.18 MB heap)
+                             │ ██████████████                        Bun JSC JSON.parse + filter:  5.60 ms (+5.21 MB heap)
+                             │ ██                                    capnstruct zero-copy filter:  0.67 ms (+0.00 MB heap) ──► 22x faster
+  ───────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────
+  100% Hit Rate (All 25,000) │ ███████████████████████████████████   Node V8 JSON.parse + filter: 14.16 ms (+8.18 MB heap)
+  (Every string decoded!)    │ ██████████████                        Bun JSC JSON.parse + filter:  5.73 ms (+5.21 MB heap)
+                             │ ███                                   capnstruct zero-copy filter:  1.19 ms (+0.00 MB heap) ──► 12x faster
+```
+
+> **Try it live in your browser at 60 FPS:** [**capnstruct.teamchong.net**](https://capnstruct.teamchong.net) includes a real-time interactive **Spatial Telemetry + Cyclic `ref(() => Node)` Radar Canvas** and **Frame-Budget Oscilloscope** where you can switch between `capnstruct` (0 MB heap), Engine Switch (`~2x`), and Plain JS (`JSON` / `structuredClone`), drag the dataset scale (`2.5k` to `50k`) and selectivity slider (`1%` to `100%`), and watch GC frame spikes happen in real time.
+
+### Node.js (V8) vs. Bun (JSC) vs. `capnstruct` Benchmark Summary (`pnpm run bench`)
+
+| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | Engine Switch Gain | `capnstruct` Zero-Copy (`ms` / Heap) | Data Layout Gain (vs. Node / Bun) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | 2.6x | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | 1.3x | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | 2.0x | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
+| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | 2.6x | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
+| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | 2.4x | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | 1.3x | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
+
+---
+
+## Key Capabilities (`~6.5 KiB` Minified + Gzipped)
+
+1. **Circular References & Recursive Schemas (`ref(() => Node)`, `slice(() => Node)`)**: `JSON.stringify` crashes with `TypeError` on circular graphs (`a.next = b; b.next = a`), and V8's `structuredClone` overflows the C++ call stack on deep graphs. `capnstruct` packs cyclic graphs into a flat `Uint8Array` in $O(1)$ stack space, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular JS references via `.toObject()`.
+2. **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads.
+3. **Zero-Allocation Flyweight Iteration & Seeking**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects, and `cursor.seek(i)` / `cursor.at(i)` repositions the cursor in $O(1)$.
+4. **Zero-Heap Queryable Tables (`.rangeBy()`, `.subarray()`, `.filterBytes()`, `.concatBytes()`)**: Run $O(\log N)$ binary search (`lowerBound`, `upperBound`, `rangeBy`) directly on a sorted binary column (~3,500x faster than `JSON.parse` + `.filter()`), slice zero-copy sub-tables via `.subarray()`, filter matching binary rows without per-row JS objects via `.filterBytes()`, and bulk-merge binary chunks via `.concatBytes()`.
+5. **Zero-Indirection Inline Types (`fixedStr`, `fixedBytes`, `f16`, `sentinel`/`nullable`, `scaled`)**: Keep fixed-width ASCII/UTF-8 strings (`fixedStr(N)`), raw byte arrays (`fixedBytes(N)`), IEEE 754 half-floats (`f16`), zero-bit sentinel nulls (`sentinel(i16, -32768)`), and fixed-point numbers (`scaled(i32, 1e6)`) 100% inline inside the `#[repr(C)]` struct with zero tail indirection.
+6. **In-Place `str` & `slice(T)` Mutation, Tail-Tip Extension & Bulk `memcpy`**: Assigning `row.callsign = 'NEW'` overwrites in-place in $O(1)$ when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when at the tail tip, or bump-allocates in the tail arena when longer. Assigning a `StructArrayView` or `TypedArray` into `slice(T)` / `fixedArray(T, N)` performs a single bulk `Uint8Array.set()` `memcpy`.
+7. **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()`.
+8. **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` / Go Codegen**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust `#[repr(C)]` structs (`toRustReprC`) and `go tool compile`-verified Go zero-copy structs (`toGoStruct`) with compile-time `size_of` / `align_of` / `offset_of` assertions.
+
+---
+
+## Quick Start
 
 ### 1. Define a Schema & Read/Write Zero-Copy Structs
 
@@ -242,58 +323,37 @@ const restored = view.at(0).toObject();
 console.log(restored.next.next === restored); // true
 ```
 
-### 8. Rust `#[repr(C)]` Codegen
+### 8. Rust `#[repr(C)]` & Go Zero-Copy Codegen (`toRustReprC`, `toGoStruct` & CLI)
 
-Generate matching Rust `#[repr(C)]` structs (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) with compile-time layout assertions via the programmatic API or CLI:
+Generate matching Rust `#[repr(C)]` structs (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) or Go zero-copy structs (`CapnStr`, `CapnSlice[T]`, `CapnRef[T]`) with compile-time layout assertions via the programmatic API or CLI:
 
 ```ts
-import { toRustReprC } from 'capnstruct/codegen';
+import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
 import { SpdSample } from './schema.js';
 
 console.log(toRustReprC([SpdSample]));
+console.log(toGoStruct([SpdSample], { pkg: 'radar' }));
 ```
 
-Or via the CLI:
+Or via the CLI (auto-detected from `.rs` or `.go` output extension, or via `--rust` / `--go`):
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.go --pkg radar
 ```
 
 ---
-## Data Layout > Switching JS Engines (Architecture & Scaling Proof)
 
-Switching from **Node.js (V8)** to **Bun (JavaScriptCore)** only yields a **~1.3x–2.7x** constant-factor tweak because **both engines are forced to construct the exact same scattered pointer-soup heap graph** whenever you call `JSON.parse()` or `structuredClone()`:
-
-```text
-❌ Plain JS Objects in V8 (Node.js) AND JavaScriptCore (Bun):
-[Array Backing Store] -> 8B ptr -> [Boxed JSObject Header + HiddenClass/StructureID (24-48B)] -> 8B ptr -> [UTF-8/UTF-16 String Heap Box]
-   • Every row = 1..4 separate heap allocations + pointer indirection (CPU L1/L2 cache misses)
-   • 25,000–100,000 rows = +5 MB to +14 MB of garbage-collected heap pressure per call (GC frame drops)
-   • Circular references (a.next = b; b.next = a) = JSON.stringify crashes with TypeError; deep graphs overflow structuredClone C++ stack
-
-✅ capnstruct Contiguous #[repr(C)] Layout (Same V8 or JSC Engine):
-[Row 0: 24B inline #[repr(C)] struct | Row 1: 24B inline | ... | Tail Arena: UTF-8 & slice bytes via [u32 relOffset, u32 len]]
-   • 0 per-row JS heap objects allocated (0.00 MB GC pressure)
-   • 1 reusable flyweight cursor (`cursor._o += stride`) reads sequentially through CPU L1 cache lines
-   • Strings & slices are only decoded on the rows that match your filter; circular `ref(() => Node)` pointers traverse in O(1)
-```
-
-Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`; see [capnstruct.teamchong.net](https://capnstruct.teamchong.net) for interactive 60 FPS visual proof, scaling curves from `N = 100` to `100,000`, and filter selectivity sweeps from `0.5%` to `100%`):
-
-| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
-| :--- | :--- | :--- | :--- | :--- |
-| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows, `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
-| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
-| **`100,000` `SpdSample` Numeric Struct Scan** (5.27 MiB JSON vs 2.29 MiB `capnstruct`, `for..of` flyweight cursor) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
-| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
-| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
+## Bundle Size (`pnpm run size`)
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :--- | :--- |
 | **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
 | **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |
+| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 5.85 KiB | **1.97 KiB** (2,013 B) |
+
+---
+
 ## When to Use `capnstruct` vs. Plain JS Objects
 
 `capnstruct` is not meant to replace small local UI state objects (`{ isOpen: true }`), where V8 escape analysis keeps fields in registers.

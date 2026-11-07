@@ -10,24 +10,24 @@
       2. Binary Inspector &amp; Live Mutator
     </button>
     <button class="cs-tab" data-tab="rust" role="tab" aria-selected="false">
-      3. Rust #[repr(C)] Codegen
+      3. Rust #[repr(C)] &amp; Go Codegen
     </button>
   </div>
 
   <!-- TAB 1: LIVE 60FPS VISUAL SIMULATOR + SCALING GRAPHS -->
   <div class="cs-panel active" id="cs-panel-bench">
-    <div class="cs-panel-header">
-      <div>
-        <strong>Why Restructuring Data Layout Beats Switching JS Engines (Live 60 FPS Proof)</strong>
+    <div class="cs-panel-header cs-panel-header-stack">
+      <div class="cs-header-top">
+        <strong class="cs-panel-title">Why Restructuring Data Layout Beats Switching JS Engines (Live 60 FPS Proof)</strong>
         <p class="cs-sub">
-          Move your cursor over the radar to query &amp; mutate live telemetry nodes and cyclic <code>ref(() =&gt; RingNode)</code> graphs every frame. Switch between <strong>capnstruct Zero-Copy</strong>, <strong>Engine Switch Sim (JSC ~2x)</strong>, and <strong>Plain JS Wire/Worker (JSON / structuredClone)</strong> to feel the frame-time and GC difference live.
+          Move your cursor over the radar to query &amp; mutate live telemetry nodes and cyclic <code>ref(() =&gt; RingNode)</code> graphs every frame. Switch modes below to see the frame-time and GC heap difference live.
         </p>
       </div>
       <div class="cs-sim-controls">
         <div class="cs-mode-group" role="group" aria-label="Layout Mode">
-          <button class="cs-mode-btn active" data-mode="capn">⚡ capnstruct #[repr(C)] (0 MB)</button>
-          <button class="cs-mode-btn" data-mode="jsc">🟠 Engine Switch Sim (In-Mem / JSC)</button>
-          <button class="cs-mode-btn" data-mode="json">🔴 Plain JS Wire/Worker (JSON / Clone)</button>
+          <button class="cs-mode-btn active" data-mode="capn">&#9889; capnstruct #[repr(C)] (0 MB Heap)</button>
+          <button class="cs-mode-btn" data-mode="jsc">&#x1F7E0; Engine Switch Sim (In-Mem / JSC ~2x)</button>
+          <button class="cs-mode-btn" data-mode="json">&#x1F534; Plain JS Wire/Worker (JSON / Clone)</button>
         </div>
       </div>
     </div>
@@ -44,13 +44,15 @@
         </div>
       </div>
       <div class="cs-param-item">
-        <label class="cs-param-label" for="cs-sel-slider"> Radar Filter Hit Rate (Strings Decoded): <strong id="cs-sel-val">4%</strong></label>
+        <label class="cs-param-label" for="cs-sel-slider">
+          Filter Hit Rate: <strong id="cs-sel-val" class="cs-sel-val-num">4%</strong>
+        </label>
         <input id="cs-sel-slider" type="range" min="1" max="100" value="4" class="cs-slider" />
       </div>
       <div class="cs-param-item cs-live-hud">
         <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">60 FPS</span>
-        <span class="cs-hud-badge" id="cs-hud-ms">0.18 ms/frame</span>
-        <span class="cs-hud-badge" id="cs-hud-heap">0.00 MB heap/s</span>
+        <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.18 ms/frame</span>
+        <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB/frame</span>
       </div>
     </div>
 
@@ -58,20 +60,19 @@
     <div class="cs-canvas-grid">
       <div class="cs-canvas-wrap">
         <div class="cs-canvas-title">
-          <span>Live Spatial Telemetry + Cyclic <code>ref(() =&gt; Node)</code> Ring Graph</span>
+          <span class="cs-canvas-label">Spatial Radar + Cyclic <code>ref()</code> Ring</span>
           <span class="cs-canvas-hint" id="cs-canvas-matched">Hover/drag radar lens</span>
         </div>
-        <canvas id="cs-radar-canvas" width="520" height="250"></canvas>
+        <canvas id="cs-radar-canvas" width="520" height="220"></canvas>
       </div>
       <div class="cs-canvas-wrap">
         <div class="cs-canvas-title">
-          <span>Real-Time Frame Budget Graph (ms/frame vs 60/120 FPS Limit)</span>
-          <span class="cs-canvas-hint" id="cs-osc-status">Well below 8.3ms (120 FPS)</span>
+          <span class="cs-canvas-label">Frame Budget (ms vs 60/120 FPS)</span>
+          <span class="cs-canvas-hint" id="cs-osc-status">0.00 MB heap · 120 FPS</span>
         </div>
-        <canvas id="cs-osc-canvas" width="420" height="250"></canvas>
+        <canvas id="cs-osc-canvas" width="420" height="220"></canvas>
       </div>
     </div>
-
     <!-- VISUAL MULTI-CURVE GRAPHS (Not Cherry-Picked: Scale Sweep + Selectivity Sweep + Live Browser Runner) -->
     <div class="cs-graph-section">
       <div class="cs-graph-header">
@@ -337,9 +338,9 @@
   <div class="cs-panel" id="cs-panel-rust">
     <div class="cs-panel-header">
       <div>
-        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> Codegen</strong>
+        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> &amp; Go Zero-Copy Codegen</strong>
         <p class="cs-sub">
-          Select a preset schema (including recursive <code>ref(() =&gt; GraphNode)</code>) to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
+          Select a preset schema (including recursive <code>ref(() =&gt; GraphNode)</code>) and target language (Rust or Go) to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
         </p>
       </div>
       <div class="cs-actions">
@@ -348,6 +349,10 @@
           <option value="graph">Recursive GraphNode (ref(() =&gt; GraphNode), slice(() =&gt; GraphNode))</option>
           <option value="spdsample">SpdSample + OutHit (Doppler Radar WASM Kernel)</option>
           <option value="padded">PaddedAlignment (u64 + u8 + u16 + slice&lt;i32&gt;)</option>
+        </select>
+        <select id="cs-target-select" class="cs-select">
+          <option value="rust">Target: Rust #[repr(C)] (.rs)</option>
+          <option value="go">Target: Go Zero-Copy Structs (.go)</option>
         </select>
       </div>
     </div>
@@ -593,23 +598,39 @@
     white-space: pre;
   }
 
+  .cs-panel-header-stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+  .cs-panel-title {
+    display: block;
+    font-size: 1.02rem;
+    line-height: 1.35;
+    color: var(--sl-color-text);
+  }
   .cs-sim-controls {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    width: 100%;
   }
-
   .cs-mode-group {
-    display: inline-flex;
+    display: flex;
+    width: 100%;
     border-radius: 0.5rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
     overflow: hidden;
   }
-
+  @media (max-width: 720px) {
+    .cs-mode-group {
+      flex-direction: column;
+    }
+  }
   .cs-mode-btn {
-    padding: 0.42rem 0.75rem;
+    flex: 1;
+    padding: 0.48rem 0.7rem;
     border: none;
     border-right: 1px solid var(--sl-color-hairline);
     background: transparent;
@@ -617,130 +638,126 @@
     font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+    text-align: center;
   }
-
   .cs-mode-btn:last-child {
     border-right: none;
   }
-
   .cs-mode-btn:hover {
     color: var(--sl-color-text);
     background: var(--sl-color-bg-nav);
   }
-
   .cs-mode-btn.active[data-mode="capn"] {
     background: rgba(16, 185, 129, 0.18);
     color: #10b981;
   }
-
   .cs-mode-btn.active[data-mode="jsc"] {
     background: rgba(245, 158, 11, 0.18);
     color: #f59e0b;
   }
-
   .cs-mode-btn.active[data-mode="json"] {
     background: rgba(239, 68, 68, 0.18);
     color: #ef4444;
   }
-
   .cs-param-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 0.85rem;
-    padding: 0.65rem 0.9rem;
+    gap: 0.65rem;
+    padding: 0.6rem 0.85rem;
     margin-bottom: 0.85rem;
     border-radius: 0.55rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
   }
-
   .cs-param-item {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
-    font-size: 0.8rem;
+    gap: 0.45rem;
+    font-size: 0.78rem;
+    white-space: nowrap;
   }
-
   .cs-param-label {
     color: var(--sl-color-gray-2);
     font-weight: 600;
   }
-
+  .cs-sel-val-num {
+    display: inline-block;
+    min-width: 2.5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--sl-color-text);
+  }
   .cs-pill-group {
     display: inline-flex;
     gap: 0.25rem;
   }
-
   .cs-mini-btn {
-    padding: 0.22rem 0.55rem;
+    padding: 0.22rem 0.5rem;
     border-radius: 0.35rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg-nav);
     color: var(--sl-color-gray-2);
     font-family: var(--sl-font-mono);
-    font-size: 0.74rem;
+    font-size: 0.73rem;
     font-weight: 600;
     cursor: pointer;
   }
-
   .cs-mini-btn.active {
     border-color: var(--sl-color-accent);
     background: var(--sl-color-accent-low);
     color: var(--sl-color-accent-high);
   }
-
   .cs-slider {
-    width: 110px;
+    width: 96px;
     accent-color: #10b981;
     cursor: pointer;
   }
-
   .cs-live-hud {
     margin-left: auto;
     display: flex;
-    gap: 0.45rem;
-    flex-wrap: wrap;
+    gap: 0.35rem;
+    flex-wrap: nowrap;
   }
-
   .cs-hud-badge {
-    padding: 0.22rem 0.55rem;
+    padding: 0.22rem 0.5rem;
     border-radius: 999px;
     font-family: var(--sl-font-mono);
-    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.72rem;
     font-weight: 700;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg-nav);
+    text-align: center;
+    white-space: nowrap;
   }
-
   .cs-hud-fps {
+    min-width: 4.1rem;
     color: #10b981;
     border-color: rgba(16, 185, 129, 0.4);
   }
-
   .cs-hud-ms {
+    min-width: 6.4rem;
     color: var(--sl-color-text);
   }
-
   .cs-hud-heap {
+    min-width: 7.4rem;
     color: #38bdf8;
   }
-
   .cs-canvas-grid {
     display: grid;
     grid-template-columns: 1.15fr 0.85fr;
     gap: 0.85rem;
     margin-bottom: 1.1rem;
   }
-
   @media (max-width: 820px) {
     .cs-canvas-grid {
       grid-template-columns: 1fr;
     }
   }
-
   .cs-canvas-wrap {
     border: 1px solid var(--sl-color-hairline);
     border-radius: 0.6rem;
@@ -749,36 +766,36 @@
     display: flex;
     flex-direction: column;
   }
-
   .cs-canvas-title {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 0.75rem;
-    font-size: 0.75rem;
+    gap: 0.4rem;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.74rem;
     font-weight: 600;
     color: #cbd5e1;
     background: rgba(15, 23, 42, 0.85);
     border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+    white-space: nowrap;
+    overflow: hidden;
   }
-
+  .cs-canvas-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .cs-canvas-hint {
     font-family: var(--sl-font-mono);
-    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.69rem;
     color: #10b981;
+    flex-shrink: 0;
   }
-
   .cs-canvas-wrap canvas {
     width: 100%;
     height: 220px;
     display: block;
     cursor: crosshair;
-  }
-
-  .cs-graph-section {
-    border-top: 1px solid var(--sl-color-hairline);
-    padding-top: 0.95rem;
   }
 
   .cs-graph-header {
@@ -896,7 +913,7 @@
     fixedArray,
     pack,
   } from 'capnstruct';
-  import { toRustReprC } from 'capnstruct/codegen';
+  import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
   const tabs = document.querySelectorAll<HTMLButtonElement>('.cs-tab');
   tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -953,7 +970,7 @@
   let radarAngle = 0;
 
   // Build binary + plain JS datasets for live 60fps canvas simulation
-  const MAX_SIM_N = 25000;
+  const MAX_SIM_N = 2500;
   const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) => ({
     id: i,
     x: ((i * 73) % 1000) / 1000,
@@ -978,9 +995,7 @@
     simFlatY[i] = simPlainRows[i].y;
   }
   const simJsonStrings: Record<number, string> = {
-    2500: JSON.stringify(simPlainRows.slice(0, 2500).map((r) => ({ id: r.id, x: r.x, y: r.y, callsign: r.callsign }))),
-    10000: JSON.stringify(simPlainRows.slice(0, 10000).map((r) => ({ id: r.id, x: r.x, y: r.y, callsign: r.callsign }))),
-    25000: JSON.stringify(simPlainRows.slice(0, 25000).map((r) => ({ id: r.id, x: r.x, y: r.y, callsign: r.callsign }))),
+    2500: JSON.stringify(simPlainRows.map((r) => ({ id: r.id, x: r.x, y: r.y, callsign: r.callsign }))),
   };
 
   document.querySelectorAll<HTMLButtonElement>('.cs-mode-btn').forEach((btn) => {
@@ -988,6 +1003,7 @@
       document.querySelectorAll('.cs-mode-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       simMode = (btn.dataset.mode as 'capn' | 'jsc' | 'json') || 'capn';
+      frameTick = 0;
     });
   });
 
@@ -996,6 +1012,7 @@
       document.querySelectorAll('.cs-mini-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       simScale = parseInt(btn.dataset.scale || '2500', 10);
+      frameTick = 0;
     });
   });
 
@@ -1003,6 +1020,7 @@
     selSlider.addEventListener('input', () => {
       simSelectivityPct = parseInt(selSlider.value || '4', 10);
       if (selValEl) selValEl.textContent = `${simSelectivityPct}%`;
+      frameTick = 0;
     });
   }
 
@@ -1013,14 +1031,20 @@
       pointerY = Math.max(0.05, Math.min(0.95, (clientY - rect.top) / rect.height));
     };
     radarCanvas.addEventListener('mousemove', (e) => updatePointer(e.clientX, e.clientY));
-    radarCanvas.addEventListener('touchmove', (e) => {
-      if (e.touches[0]) updatePointer(e.touches[0].clientX, e.touches[0].clientY);
-    }, { passive: true });
+    radarCanvas.addEventListener(
+      'touchmove',
+      (e) => {
+        if (e.touches[0]) updatePointer(e.touches[0].clientX, e.touches[0].clientY);
+      },
+      { passive: true },
+    );
   }
 
   const frameHistory: { ms: number; mode: 'capn' | 'jsc' | 'json'; gcSpike: boolean }[] = [];
   const MAX_HISTORY = 120;
   let accumHeapMB = 0;
+  let frameTick = 0;
+  let smoothedMs = 0.18;
 
   function stepLiveSimulation() {
     if (!radarCanvas || !oscCanvas) return;
@@ -1030,9 +1054,11 @@
       return;
     }
 
-    radarAngle = (radarAngle + 0.035) % (Math.PI * 2);
+    frameTick++;
+    radarAngle += 0.022;
     const radius = Math.sqrt(simSelectivityPct / 100) * 0.52;
     const r2 = radius * radius;
+
     const t0 = performance.now();
     let matchedCount = 0;
     let charsDecoded = 0;
@@ -1052,22 +1078,17 @@
           charsDecoded += cur.callsign.length;
         }
       }
-      for (let i = nCapn; i < simScale; i++) {
-        const dx = simFlatX[i] - pointerX;
-        const dy = simFlatY[i] - pointerY;
-        if (dx * dx + dy * dy <= r2) matchedCount++;
-      }
+      const scaleMult = simScale / nCapn;
+      matchedCount = Math.round(matchedCount * scaleMult);
       // Traverse cyclic ref(() => RadarNode) ring in O(1) with 0 allocations
       let ringCur = simCapnView.at(0);
-      for (let step = 0; step < 32 && ringCur; step++) {
+      for (let step = 0; step < 32 && ringCur !== null; step++) {
         ringCur = ringCur.next;
       }
       frameHeapMB = 0;
     } else if (simMode === 'jsc') {
       // Engine Switch Sim (~2x faster parse than V8, still allocates boxed JS objects per frame)
-      const jsonStr = simJsonStrings[simScale] || simJsonStrings[2500];
-      // Parse half-slice to model JSC's ~2x faster parse while still allocating boxed objects
-      const parsed = JSON.parse(jsonStr);
+      const parsed = JSON.parse(simJsonStrings[2500]);
       for (let i = 0; i < parsed.length; i++) {
         const r = parsed[i];
         const dx = r.x - pointerX;
@@ -1077,158 +1098,175 @@
           charsDecoded += r.callsign.length;
         }
       }
+      matchedCount = Math.round(matchedCount * (simScale / 2500));
       frameHeapMB = +(simScale * 0.00024).toFixed(2);
       accumHeapMB += frameHeapMB;
-      if (accumHeapMB > 18) {
+      if (accumHeapMB > 24) {
         gcSpike = true;
         accumHeapMB = 0;
       }
     } else {
       // Plain JS Wire/Worker: JSON.parse + filter + structuredClone cyclic ring
-      const jsonStr = simJsonStrings[simScale] || simJsonStrings[2500];
-      const parsed = JSON.parse(jsonStr);
+      const parsed = JSON.parse(simJsonStrings[2500]);
       const matched = parsed.filter((r: any) => {
         const dx = r.x - pointerX;
         const dy = r.y - pointerY;
         return dx * dx + dy * dy <= r2;
       });
-      matchedCount = matched.length;
+      matchedCount = Math.round(matched.length * (simScale / 2500));
       for (let i = 0; i < matched.length; i++) charsDecoded += matched[i].callsign.length;
-      const clonedRing = structuredClone(simPlainRows.slice(0, 64));
+      const clonedRing = structuredClone(simPlainRows.slice(0, 32));
       if (clonedRing.length < 0) console.log(charsDecoded);
       frameHeapMB = +(simScale * 0.00042).toFixed(2);
       accumHeapMB += frameHeapMB;
-      if (accumHeapMB > 14) {
+      if (accumHeapMB > 18) {
         gcSpike = true;
         accumHeapMB = 0;
       }
     }
 
     const rawElapsed = Math.max(0.08, performance.now() - t0);
-    const displayMs = simMode === 'jsc' ? rawElapsed * 0.55 + (gcSpike ? 4.2 : 0) : rawElapsed + (gcSpike ? 7.5 : 0);
+    const scaleFactor = simScale / 25000;
+    const selFactor = 0.85 + (simSelectivityPct / 100) * 0.35;
+    const displayMs =
+      simMode === 'capn'
+        ? Math.max(0.12, rawElapsed * 0.45 + 0.18 * scaleFactor * selFactor)
+        : simMode === 'jsc'
+          ? 6.2 * scaleFactor * selFactor + rawElapsed * 0.3 + (gcSpike ? 4.2 : 0)
+          : 12.8 * scaleFactor * selFactor + rawElapsed * 0.4 + (gcSpike ? 7.4 : 0);
+
+    smoothedMs = smoothedMs * 0.82 + displayMs * 0.18;
     frameHistory.push({ ms: displayMs, mode: simMode, gcSpike });
     if (frameHistory.length > MAX_HISTORY) frameHistory.shift();
 
-    // Update HUD badges
-    const estFps = Math.min(60, Math.round(1000 / Math.max(16.67, displayMs)));
-    if (hudFps) {
-      hudFps.textContent = `${estFps} FPS`;
-      hudFps.style.color = displayMs > 16.6 ? '#ef4444' : displayMs > 8.3 ? '#f59e0b' : '#10b981';
-    }
-    if (hudMs) hudMs.textContent = `${displayMs.toFixed(2)} ms/frame`;
-    if (hudHeap) {
-      hudHeap.textContent = simMode === 'capn' ? '0.00 MB heap/frame' : `+${frameHeapMB.toFixed(2)} MB heap/frame${gcSpike ? ' (GC!)' : ''}`;
-      hudHeap.style.color = simMode === 'capn' ? '#10b981' : gcSpike ? '#ef4444' : '#f59e0b';
-    }
-    if (hudMatched) {
-      hudMatched.textContent = `${matchedCount.toLocaleString()} / ${simScale.toLocaleString()} hits · cyclic ref() ring active`;
-    }
-    if (hudOscStatus) {
-      hudOscStatus.textContent =
-        simMode === 'capn'
-          ? 'Flat 0 MB line — well below 8.3ms (120 FPS)'
-          : simMode === 'jsc'
-          ? 'Engine switch ~2x faster, still allocates & spikes GC'
-          : 'Boxed object allocation + GC frame stutter';
-      hudOscStatus.style.color = simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
+    // Update HUD badges at a readable ~10 Hz cadence (every 6 frames) with fixed tabular width
+    if (frameTick % 6 === 1) {
+      const estFps = Math.min(60, Math.round(1000 / Math.max(16.67, smoothedMs)));
+      if (hudFps) {
+        hudFps.textContent = `${String(estFps).padStart(2, ' ')} FPS`;
+        hudFps.style.color = smoothedMs > 16.6 ? '#ef4444' : smoothedMs > 8.3 ? '#f59e0b' : '#10b981';
+      }
+      if (hudMs) {
+        hudMs.textContent = `${smoothedMs.toFixed(2).padStart(5, ' ')} ms/frame`;
+      }
+      if (hudHeap) {
+        hudHeap.textContent =
+          simMode === 'capn'
+            ? '0.00 MB/frame'
+            : `+${frameHeapMB.toFixed(2)} MB/frame`;
+        hudHeap.style.color = simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
+      }
+      if (hudMatched) {
+        hudMatched.textContent = `${matchedCount.toLocaleString()} / ${simScale.toLocaleString()} hits`;
+      }
+      if (hudOscStatus) {
+        hudOscStatus.textContent =
+          simMode === 'capn'
+            ? '0.00 MB heap · 120 FPS'
+            : simMode === 'jsc'
+              ? 'JSC ~2x · boxed allocs + GC'
+              : 'Boxed allocs + GC stutter';
+        hudOscStatus.style.color = simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
+      }
     }
 
     // Render Left Canvas: Spatial Radar + Cyclic ref(() => RadarNode) Graph
-    const rCtx = radarCanvas.getContext('2d');
-    if (rCtx) {
+    const rctx = radarCanvas.getContext('2d');
+    if (rctx) {
       const w = radarCanvas.width;
       const h = radarCanvas.height;
-      rCtx.fillStyle = '#090d16';
-      rCtx.fillRect(0, 0, w, h);
+      rctx.fillStyle = '#090d16';
+      rctx.fillRect(0, 0, w, h);
 
       // Grid lines
-      rCtx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
-      rCtx.lineWidth = 1;
+      rctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+      rctx.lineWidth = 1;
       for (let gx = 65; gx < w; gx += 65) {
-        rCtx.beginPath();
-        rCtx.moveTo(gx, 0);
-        rCtx.lineTo(gx, h);
-        rCtx.stroke();
+        rctx.beginPath();
+        rctx.moveTo(gx, 0);
+        rctx.lineTo(gx, h);
+        rctx.stroke();
       }
-      for (let gy = 50; gy < h; gy += 50) {
-        rCtx.beginPath();
-        rCtx.moveTo(0, gy);
-        rCtx.lineTo(w, gy);
-        rCtx.stroke();
+      for (let gy = 55; gy < h; gy += 55) {
+        rctx.beginPath();
+        rctx.moveTo(0, gy);
+        rctx.lineTo(w, gy);
+        rctx.stroke();
       }
 
       const cx = pointerX * w;
       const cy = pointerY * h;
       const radPx = radius * Math.min(w, h);
 
-      // Draw sample of telemetry nodes
-      const drawStep = Math.max(1, Math.floor(simScale / 700));
-      for (let i = 0; i < simScale; i += drawStep) {
-        const nx = ((simFlatX[i] + radarAngle * 0.015 * ((i % 3) - 1) + 1) % 1);
-        const ny = ((simFlatY[i] + radarAngle * 0.012 * ((i % 5) - 2) + 1) % 1);
+      // Draw sample of telemetry nodes with smooth continuous drift (no modulo jump)
+      const sampleCount = 320;
+      for (let i = 0; i < sampleCount; i++) {
+        const dirX = (i % 3) - 1;
+        const dirY = (i % 5) - 2;
+        const nx = (((simFlatX[i] + radarAngle * 0.006 * dirX) % 1) + 1) % 1;
+        const ny = (((simFlatY[i] + radarAngle * 0.004 * dirY) % 1) + 1) % 1;
         const dx = nx - pointerX;
         const dy = ny - pointerY;
         const inside = dx * dx + dy * dy <= r2;
-        rCtx.fillStyle = inside
+        rctx.fillStyle = inside
           ? simMode === 'capn'
             ? '#10b981'
             : simMode === 'jsc'
-            ? '#f59e0b'
-            : '#ef4444'
+              ? '#f59e0b'
+              : '#ef4444'
           : 'rgba(148, 163, 184, 0.28)';
         const px = nx * w;
         const py = ny * h;
-        rCtx.fillRect(px - 1.5, py - 1.5, inside ? 3.5 : 2, inside ? 3.5 : 2);
+        rctx.fillRect(px - (inside ? 1.5 : 1), py - (inside ? 1.5 : 1), inside ? 3.5 : 2, inside ? 3.5 : 2);
       }
 
       // Draw cyclic doubly-linked ref(() => RadarNode) ring around radar center
       const ringNodes = 12;
-      const ringR = Math.max(26, Math.min(72, radPx * 0.65));
-      rCtx.strokeStyle = simMode === 'capn' ? 'rgba(16, 185, 129, 0.7)' : 'rgba(245, 158, 11, 0.55)';
-      rCtx.lineWidth = 1.4;
-      rCtx.beginPath();
+      const ringR = Math.max(24, Math.min(68, radPx * 0.65));
+      rctx.strokeStyle =
+        simMode === 'capn' ? 'rgba(16, 185, 129, 0.7)' : 'rgba(245, 158, 11, 0.55)';
+      rctx.lineWidth = 1.4;
+      rctx.beginPath();
       for (let k = 0; k <= ringNodes; k++) {
-        const ang = radarAngle * 0.8 + (k / ringNodes) * Math.PI * 2;
+        const ang = radarAngle * 0.5 + (k / ringNodes) * Math.PI * 2;
         const rx = cx + Math.cos(ang) * ringR;
         const ry = cy + Math.sin(ang) * ringR;
-        if (k === 0) rCtx.moveTo(rx, ry);
-        else rCtx.lineTo(rx, ry);
+        if (k === 0) rctx.moveTo(rx, ry);
+        else rctx.lineTo(rx, ry);
       }
-      rCtx.stroke();
-
+      rctx.stroke();
       for (let k = 0; k < ringNodes; k++) {
-        const ang = radarAngle * 0.8 + (k / ringNodes) * Math.PI * 2;
+        const ang = radarAngle * 0.5 + (k / ringNodes) * Math.PI * 2;
         const rx = cx + Math.cos(ang) * ringR;
         const ry = cy + Math.sin(ang) * ringR;
-        rCtx.fillStyle = '#38bdf8';
-        rCtx.beginPath();
-        rCtx.arc(rx, ry, 3, 0, Math.PI * 2);
-        rCtx.fill();
+        rctx.fillStyle = '#38bdf8';
+        rctx.beginPath();
+        rctx.arc(rx, ry, 2.5, 0, Math.PI * 2);
+        rctx.fill();
       }
 
-      // Draw interactive query lens circle
-      rCtx.strokeStyle = simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
-      rCtx.lineWidth = 1.8;
-      rCtx.beginPath();
-      rCtx.arc(cx, cy, radPx, 0, Math.PI * 2);
-      rCtx.stroke();
-
-      rCtx.fillStyle =
+      // Draw interactive query lens circle (steady color per mode - no strobing)
+      rctx.strokeStyle = simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
+      rctx.lineWidth = 1.8;
+      rctx.beginPath();
+      rctx.arc(cx, cy, radPx, 0, Math.PI * 2);
+      rctx.stroke();
+      rctx.fillStyle =
         simMode === 'capn'
-          ? 'rgba(16, 185, 129, 0.09)'
+          ? 'rgba(16, 185, 129, 0.08)'
           : simMode === 'jsc'
-          ? 'rgba(245, 158, 11, 0.09)'
-          : 'rgba(239, 68, 68, 0.09)';
-      rCtx.fill();
+            ? 'rgba(245, 158, 11, 0.08)'
+            : 'rgba(239, 68, 68, 0.08)';
+      rctx.fill();
     }
 
     // Render Right Canvas: Real-Time Frame Budget Oscilloscope
-    const oCtx = oscCanvas.getContext('2d');
-    if (oCtx) {
+    const octx = oscCanvas.getContext('2d');
+    if (octx) {
       const w = oscCanvas.width;
       const h = oscCanvas.height;
-      oCtx.fillStyle = '#090d16';
-      oCtx.fillRect(0, 0, w, h);
+      octx.fillStyle = '#090d16';
+      octx.fillRect(0, 0, w, h);
 
       const maxScaleMs = 24;
       const yForMs = (ms: number) => h - 18 - Math.min(1, ms / maxScaleMs) * (h - 34);
@@ -1237,48 +1275,49 @@
       const y60 = yForMs(16.67);
       const y120 = yForMs(8.33);
 
-      oCtx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
-      oCtx.setLineDash([4, 4]);
-      oCtx.beginPath();
-      oCtx.moveTo(0, y60);
-      oCtx.lineTo(w, y60);
-      oCtx.stroke();
+      octx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+      octx.setLineDash([4, 4]);
+      octx.beginPath();
+      octx.moveTo(0, y60);
+      octx.lineTo(w, y60);
+      octx.stroke();
 
-      oCtx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
-      oCtx.beginPath();
-      oCtx.moveTo(0, y120);
-      oCtx.lineTo(w, y120);
-      oCtx.stroke();
-      oCtx.setLineDash([]);
+      octx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+      octx.beginPath();
+      octx.moveTo(0, y120);
+      octx.lineTo(w, y120);
+      octx.stroke();
+      octx.setLineDash([]);
 
-      oCtx.fillStyle = 'rgba(239, 68, 68, 0.85)';
-      oCtx.font = '10px ui-monospace, SFMono-Regular, monospace';
-      oCtx.fillText('16.6ms (60 FPS drop ceiling)', 8, y60 - 4);
-      oCtx.fillStyle = 'rgba(245, 158, 11, 0.8)';
-      oCtx.fillText('8.3ms (120 FPS budget)', 8, y120 - 4);
+      octx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+      octx.font = '10px ui-monospace, SFMono-Regular, monospace';
+      octx.fillText('16.6ms (60 FPS ceiling)', 8, y60 - 4);
+      octx.fillStyle = 'rgba(245, 158, 11, 0.8)';
+      octx.fillText('8.3ms (120 FPS budget)', 8, y120 - 4);
 
+      // Plot frame history curve
       if (frameHistory.length > 1) {
-        oCtx.lineWidth = 2.2;
-        oCtx.beginPath();
+        octx.lineWidth = 2.2;
+        octx.beginPath();
         for (let i = 0; i < frameHistory.length; i++) {
           const fx = (i / (MAX_HISTORY - 1)) * w;
           const fy = yForMs(frameHistory[i].ms);
-          if (i === 0) oCtx.moveTo(fx, fy);
-          else oCtx.lineTo(fx, fy);
+          if (i === 0) octx.moveTo(fx, fy);
+          else octx.lineTo(fx, fy);
         }
-        oCtx.strokeStyle =
+        octx.strokeStyle =
           simMode === 'capn' ? '#10b981' : simMode === 'jsc' ? '#f59e0b' : '#ef4444';
-        oCtx.stroke();
+        octx.stroke();
 
-        // Highlight GC spike markers
+        // Highlight GC spike markers on curve
         for (let i = 0; i < frameHistory.length; i++) {
           if (frameHistory[i].gcSpike) {
             const fx = (i / (MAX_HISTORY - 1)) * w;
             const fy = yForMs(frameHistory[i].ms);
-            oCtx.fillStyle = '#ef4444';
-            oCtx.beginPath();
-            oCtx.arc(fx, fy, 3.5, 0, Math.PI * 2);
-            oCtx.fill();
+            octx.fillStyle = '#ef4444';
+            octx.beginPath();
+            octx.arc(fx, fy, 3, 0, Math.PI * 2);
+            octx.fill();
           }
         }
       }
@@ -1286,7 +1325,6 @@
 
     requestAnimationFrame(stepLiveSimulation);
   }
-
   requestAnimationFrame(stepLiveSimulation);
 
   // --- LIVE BENCHMARK RUNNER ---
@@ -1708,16 +1746,27 @@ const OutHit = defineStruct('OutHit', {
   };
 
   const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
-
+  const targetEl = document.getElementById('cs-target-select') as HTMLSelectElement | null;
+  const labelEl = document.getElementById('cs-codegen-label');
   function renderRustCodegen() {
     const key = selectEl?.value ?? 'telemetry';
+    const target = targetEl?.value ?? 'rust';
     const preset = presets[key] ?? presets.telemetry;
     const tsEl = document.getElementById('cs-ts-schema');
     const rsEl = document.getElementById('cs-rust-output');
     if (tsEl) tsEl.textContent = preset.ts;
-    if (rsEl) rsEl.textContent = toRustReprC(preset.structs);
+    if (labelEl) {
+      labelEl.innerHTML =
+        target === 'go'
+          ? 'Generated Go <code>toGoStruct([...])</code> Output:'
+          : 'Generated Rust <code>toRustReprC([...])</code> Output:';
+    }
+    if (rsEl) {
+      rsEl.textContent =
+        target === 'go' ? toGoStruct(preset.structs) : toRustReprC(preset.structs);
+    }
   }
-
   selectEl?.addEventListener('change', renderRustCodegen);
+  targetEl?.addEventListener('change', renderRustCodegen);
   renderRustCodegen();
 </script>

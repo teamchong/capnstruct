@@ -42,7 +42,7 @@ export default defineConfig({
               link: '/columnar-and-evolution/',
             },
             {
-              label: 'WASM & Rust #[repr(C)] Codegen',
+              label: 'WASM, Rust #[repr(C)] & Go Codegen',
               link: '/wasm-and-rust/',
             },
           ],

@@ -1,9 +1,11 @@
 ---
-title: "capnstruct: Zero-Copy #[repr(C)] Binary Structs, Cyclic Graphs & Queryable Tables"
-description: Define C/Rust #[repr(C)] binary schemas and cyclic graphs in TypeScript. Read and mutate single structs, circular object graphs, WebAssembly.Memory, SharedArrayBuffer state, and queryable binary tables in-place with 0 MB JS heap overhead.
+title: Zero-Copy Binary Structs, Cyclic Graphs & Queryable Tables
+description: Define C/Rust #[repr(C)] and Go zero-copy binary schemas and cyclic graphs in TypeScript. Read and mutate single structs, circular object graphs, WebAssembly.Memory, SharedArrayBuffer state, and queryable binary tables in-place with 0 MB JS heap overhead.
 ---
 
 import LivePlayground from '../../components/LivePlayground.astro';
+
+`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
 
 <div class="cs-badge-row">
   <span class="cs-pill"><strong>Data Layout &gt; Switching JS Engines</strong> Node V8 &amp; Bun JSC</span>
@@ -11,20 +13,18 @@ import LivePlayground from '../../components/LivePlayground.astro';
   <span class="cs-pill"><strong>Single Structs, Cyclic Graphs &amp; Tables</strong> .view(), .create(), ref(), .array()</span>
   <span class="cs-pill"><strong>In-Place Mutation</strong> Primitives, UTF-8 Strings &amp; Slices</span>
   <span class="cs-pill"><strong>Wire-Safe Bounds</strong> Pointer &amp; Amplification Defense</span>
-  <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust #[repr(C)] Codegen</span>
+  <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust &amp; Go Codegen</span>
 </div>
 
 <LivePlayground />
 
-`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
-
 **Why Data Layout Beats Switching JS Engines:** Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` or `structuredClone` by **1.3x–2.7x**, because both engines still have to allocate tens of thousands of boxed heap objects (**+6 MB to +14 MB JS heap** per call), chase out-of-line pointers across CPU cache lines, and pause for garbage collection. Changing your data layout to `capnstruct` on standard Node.js yields **6.5x to 3,520x speedups** with **0.00 MB of JS heap allocation**—and natively handles circular object graphs (`a.next = b; b.next = a`) where `JSON.stringify` crashes with `TypeError`.
+
 ---
 
 ## What You Can Build With `capnstruct`
 
 ### 1. Single Binary Structs, Protocol Headers & Nested Messages (`0` Offset Math)
-
 `capnstruct` is not just for arrays. Wrap any single packet, file header, or nested RPC message in a `StructView` via `Schema.view(bytes)` or allocate one via `Schema.create({...})`:
 
 ```ts
@@ -118,6 +118,7 @@ Generate matching **Rust `#[repr(C)]` structs** (`CapnStr`, `CapnSlice<T>`, `Cap
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.go --pkg radar
 ```
 ---
 
@@ -232,4 +233,4 @@ Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** an
 | :--- | :--- | :--- |
 | **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
 | **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |
+| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 5.85 KiB | **1.97 KiB** (2,013 B) |

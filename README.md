@@ -1,23 +1,20 @@
 # capnstruct
 
-Zero-copy `#[repr(C)]` binary structs, views, and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU. Read and mutate **single binary structs, protocol headers, nested messages, `WebAssembly.Memory` arenas, `SharedArrayBuffer` state, and binary tables** in place—with no `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
+Zero-copy `#[repr(C)]` binary structs, cyclic object graphs (`ref`), and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU. Read and mutate **single binary structs, protocol headers, cyclic AST/graph nodes, `WebAssembly.Memory` arenas, `SharedArrayBuffer` state, and binary tables** in-place with no `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
 
 **Live Documentation & Interactive Browser Playground:** [https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)
 
-## Why `capnstruct`?
+## Why `capnstruct`? (Data Layout > Switching JS Engines)
 
-1. **`JSON.stringify` / `JSON.parse` and `structuredClone` are expensive at scale**: Parsing 100,000 records allocates 100,000 separate V8 heap objects (often 8x larger than the raw wire bytes) and eagerly decodes every UTF-8 string. Updating a single field or querying a time window requires re-serializing the entire payload.
-2. **Raw `Uint8Array` / `DataView` has zero parse cost, but is brittle by hand**: Reading a binary packet or WASM memory buffer directly is fast (`dv.getFloat64(base + 16, true)`), but maintaining manual byte offsets, alignment padding, variable-length string pointers, and `WebAssembly.Memory.grow()` re-binding by hand is error-prone.
-
-`capnstruct` lets you define a schema once and work with any `Uint8Array`, `ArrayBuffer`, or `WebAssembly.Memory` buffer using ordinary TypeScript syntax (**< 5.8 KiB minified + gzipped**):
-- **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads.
-- **Zero-Allocation Flyweight Iteration & Seeking**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects, and `cursor.seek(i)` / `cursor.at(i)` repositions the cursor in $O(1)$.
-- **Zero-Heap Queryable Tables (`.rangeBy()`, `.subarray()`, `.filterBytes()`, `.concatBytes()`)**: Run $O(\log N)$ binary search (`lowerBound`, `upperBound`, `rangeBy`) directly on a sorted binary column (~5,000x faster than `JSON.parse` + `.filter()`), slice zero-copy sub-tables via `.subarray()`, filter matching binary rows without per-row JS objects via `.filterBytes()`, and bulk-merge binary chunks via `.concatBytes()`.
-- **Zero-Indirection Inline Types (`fixedStr`, `fixedBytes`, `f16`, `sentinel`/`nullable`, `scaled`)**: Keep fixed-width ASCII/UTF-8 strings (`fixedStr(N)`), raw byte arrays (`fixedBytes(N)`), IEEE 754 half-floats (`f16`), zero-bit sentinel nulls (`sentinel(i16, -32768)`), and fixed-point numbers (`scaled(i32, 1e6)`) 100% inline inside the `#[repr(C)]` struct with zero tail indirection.
-- **In-Place `str` & `slice(T)` Mutation, Tail-Tip Extension & Bulk `memcpy`**: Assigning `row.callsign = 'NEW'` overwrites in-place in `O(1)` when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when at the tail tip, or bump-allocates in the tail arena when longer. Assigning a `StructArrayView` or `TypedArray` into `slice(T)` / `fixedArray(T, N)` performs a single bulk `Uint8Array.set()` `memcpy`.
-- **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()`.
-- **WebAssembly (`WasmArena`) & Multi-Target Codegen (Rust `#[repr(C)]`, C11/Zig Header, WebGPU WGSL)**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust structs (`toRustReprC`), `clang`-verified C11/Zig headers (`toCHeader`), and WebGPU WGSL shader structs with bitfield unpack helpers (`toWgsl`).
-## Quick Start
+1. **Changing Data Layout Beats Switching JS Engines (Node V8 vs. Bun JSC)**: Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` by **~2.6x**, but still allocates **+6–14 MB of JS heap objects** per call and triggers garbage collection. Switching data layout to `capnstruct` on standard Node.js gives **15x–3,500x speedups** with **0.00 MB of JS heap allocation**.
+2. **Circular References & Recursive Schemas (`ref(() => Node)`, `slice(() => Node)`)**: `JSON.stringify` crashes with `TypeError` on circular graphs (`a.next = b; b.next = a`), and V8's `structuredClone` overflows the C++ call stack on deep graphs. `capnstruct` packs cyclic graphs into a flat `Uint8Array` in $O(1)$ stack space, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular JS references via `.toObject()`.
+3. **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads (**~6.5 KiB minified + gzipped**).
+4. **Zero-Allocation Flyweight Iteration & Seeking**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects, and `cursor.seek(i)` / `cursor.at(i)` repositions the cursor in $O(1)$.
+5. **Zero-Heap Queryable Tables (`.rangeBy()`, `.subarray()`, `.filterBytes()`, `.concatBytes()`)**: Run $O(\log N)$ binary search (`lowerBound`, `upperBound`, `rangeBy`) directly on a sorted binary column (~3,500x faster than `JSON.parse` + `.filter()`), slice zero-copy sub-tables via `.subarray()`, filter matching binary rows without per-row JS objects via `.filterBytes()`, and bulk-merge binary chunks via `.concatBytes()`.
+6. **Zero-Indirection Inline Types (`fixedStr`, `fixedBytes`, `f16`, `sentinel`/`nullable`, `scaled`)**: Keep fixed-width ASCII/UTF-8 strings (`fixedStr(N)`), raw byte arrays (`fixedBytes(N)`), IEEE 754 half-floats (`f16`), zero-bit sentinel nulls (`sentinel(i16, -32768)`), and fixed-point numbers (`scaled(i32, 1e6)`) 100% inline inside the `#[repr(C)]` struct with zero tail indirection.
+7. **In-Place `str` & `slice(T)` Mutation, Tail-Tip Extension & Bulk `memcpy`**: Assigning `row.callsign = 'NEW'` overwrites in-place in $O(1)$ when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when at the tail tip, or bump-allocates in the tail arena when longer. Assigning a `StructArrayView` or `TypedArray` into `slice(T)` / `fixedArray(T, N)` performs a single bulk `Uint8Array.set()` `memcpy`.
+8. **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()`.
+9. **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` Codegen**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust `#[repr(C)]` structs (`toRustReprC`) with compile-time `size_of` / `align_of` / `offset_of!` assertions.
 
 ### 1. Define a Schema & Read/Write Zero-Copy Structs
 
@@ -213,50 +210,75 @@ console.log(windowView.length, windowView.at(0).alt); // 1, 3500
 // Zero-heap binary filtering -> tight Uint8Array ready for WebSocket / Worker transfer
 const highAltBytes = table.filterBytes((row) => row.alt !== null && row.alt > 2000);
 ```
+### 7. Circular References, Self-Referential & Recursive Schemas (`ref` & `slice`)
 
-### 7. Multi-Target Codegen: Rust `#[repr(C)]`, C11/Zig Header & WebGPU WGSL
-
-Generate matching Rust `#[repr(C)]` structs (`toRustReprC`), C11/C++/Zig headers with `_Static_assert` (`toCHeader`), or WebGPU WGSL shader structs with bitfield unpack helpers (`toWgsl`) via the programmatic API or CLI:
+`JSON.stringify` throws `TypeError: Converting circular structure to JSON` on cyclic references, and `structuredClone` allocates thousands of heap clones (and overflows the C++ stack on deep chains). `ref(() => Struct)` stores an 8-byte relative-offset pointer (`[u32 relOffset, u32 present]`) that packs cyclic JS object graphs without infinite recursion, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular references in `.toObject()` / `.toObjects()`:
 
 ```ts
-import { toRustReprC, toCHeader, toWgsl } from 'capnstruct/codegen';
+import { defineStruct, u32, str, ref, slice } from 'capnstruct';
+
+const GraphNode: any = defineStruct('GraphNode', {
+  id: u32,
+  label: str,
+  next: ref(() => GraphNode),
+  children: slice(() => GraphNode),
+});
+
+// Build a circular JS graph: n1 <-> n2 (and n1.children includes n2)
+const n1: any = { id: 1, label: 'alpha', next: null, children: [] };
+const n2: any = { id: 2, label: 'beta', next: n1, children: [] };
+n1.next = n2;
+n1.children = [n2];
+
+// Packs the cyclic graph into a single flat Uint8Array without infinite recursion
+const bytes = GraphNode.pack([n1, n2]);
+const view = GraphNode.array(bytes);
+
+// Zero-allocation O(1) cyclic traversal across arbitrary depth
+console.log(view.at(0).next.next.id); // 1
+
+// Cycle-preserving materialization back to circular JS objects
+const restored = view.at(0).toObject();
+console.log(restored.next.next === restored); // true
+```
+
+### 8. Rust `#[repr(C)]` Codegen
+
+Generate matching Rust `#[repr(C)]` structs (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) with compile-time layout assertions via the programmatic API or CLI:
+
+```ts
+import { toRustReprC } from 'capnstruct/codegen';
 import { SpdSample } from './schema.js';
 
 console.log(toRustReprC([SpdSample]));
-console.log(toCHeader([SpdSample]));
-console.log(toWgsl([SpdSample]));
 ```
 
-Or via the CLI (`--rust`, `--c`, `--wgsl` or inferred from `.rs` / `.h` / `.wgsl` extension):
+Or via the CLI:
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.h
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.wgsl
 ```
 
 ---
 
-## Benchmarks & Bundle Size
+## Data Layout > Switching JS Engines (Benchmarks & Heap Memory)
 
-Measured on Node.js (`pnpm run bench` and `pnpm run size`):
+Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`):
 
-| Benchmark Scenario | Baseline (`JSON` / `structuredClone`) | `capnstruct` Zero-Copy | Speedup |
-| :--- | :---: | :---: | :---: |
-| **Zero-Heap Time-Window Range Query** (100,000 sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.01 ms | **0.0027 ms** | **~5,115x faster** |
-| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.67 ms | **0.039 ms** | **~1,157x faster** |
-| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.21 ms | **0.039 ms** | **~774x faster** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.29 ms | **0.287 ms** | **~46.3x faster** |
-| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.77 ms | **0.536 ms** | **~25.7x faster** |
-| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.10 ms | **0.308 ms** | **~16.6x faster** |
+| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
+| :--- | :--- | :--- | :--- | :--- |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows, `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
+| **`100,000` `SpdSample` Numeric Struct Scan** (5.27 MiB JSON vs 2.29 MiB `capnstruct`, `for..of` flyweight cursor) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
+| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
-| :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime + All Primitives)** | 14.82 KiB | **5.77 KiB** (5,905 B) |
-| **Full Runtime (`+ WasmArena`)** | 16.55 KiB | **6.27 KiB** (6,424 B) |
-| **Multi-Target Codegen (`capnstruct/codegen`: Rust + C11 + WGSL)** | 7.10 KiB | **2.75 KiB** (2,819 B) |
----
-
+| :--- | :--- | :--- |
+| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
+| **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |
 ## When to Use `capnstruct` vs. Plain JS Objects
 
 `capnstruct` is not meant to replace small local UI state objects (`{ isOpen: true }`), where V8 escape analysis keeps fields in registers.

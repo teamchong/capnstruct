@@ -15,9 +15,7 @@ import {
   fixedArray,
   fixedBytes,
   fixedStr,
-  generateC,
   generateRust,
-  generateWgsl,
   i8,
   i16,
   i32,
@@ -25,15 +23,14 @@ import {
   list,
   nullable,
   pack,
+  ref,
   scaled,
   sentinel,
   slice,
   str,
   struct,
   structView,
-  toCHeader,
   toRustReprC,
-  toWgsl,
   u8,
   u16,
   u32,
@@ -1158,47 +1155,98 @@ describe('capnstruct', () => {
     });
   });
 
-  describe('Multi-Target Codegen: C11 Header (toCHeader) & WebGPU WGSL (toWgsl)', () => {
-    const ShaderParticle = defineStruct('ShaderParticle', {
-      pos: fixedArray(f32, 3),
-      vel: f16,
-      flags: u8,
-      active: bool,
-      id: u32,
-      label: str,
+  describe('Circular References, Self-Referential & Mutually Recursive Schemas (ref & slice)', () => {
+    it('packs, traverses in zero-copy, mutates, compacts, and materializes circular object graphs via ref(() => Node)', () => {
+      const GraphNode: any = defineStruct('GraphNode', {
+        id: u32,
+        label: str,
+        next: ref(() => GraphNode),
+        prev: ref(() => GraphNode),
+      });
+
+      // Build a circular doubly-linked list + self-referential node in JS
+      const n1: any = { id: 1, label: 'alpha', next: null, prev: null };
+      const n2: any = { id: 2, label: 'beta', next: null, prev: n1 };
+      n1.next = n2;
+      n2.next = n1; // cycle: n1 <-> n2
+      n1.prev = n2;
+
+      // JSON.stringify crashes on circular references, while capnstruct packs them into a flat Uint8Array!
+      expect(() => JSON.stringify(n1)).toThrow(TypeError);
+
+      const packed = GraphNode.pack([n1, n2]);
+      const table = GraphNode.array(packed);
+      expect(table.length).toBe(2);
+
+      // Zero-copy O(1) cyclic traversal across arbitrary depth without allocating JS objects
+      const v0 = table.at(0);
+      expect(v0.id).toBe(1);
+      expect(v0.next.id).toBe(2);
+      expect(v0.next.label).toBe('beta');
+      expect(v0.next.next.id).toBe(1);
+      expect(v0.next.next.prev.id).toBe(2);
+      expect(v0.prev.prev.id).toBe(1);
+
+      // .toObject() and .toObjects() reconstruct the exact circular JS object graph without infinite recursion
+      const materialized = v0.toObject();
+      expect(materialized.id).toBe(1);
+      expect(materialized.next.id).toBe(2);
+      expect(materialized.next.next).toBe(materialized);
+      expect(materialized.prev).toBe(materialized.next);
+
+      const allObjs = table.toObjects();
+      expect(allObjs[0].next).toBe(allObjs[1]);
+      expect(allObjs[1].next).toBe(allObjs[0]);
+
+      // Single-struct create() with a self-cycle (self.next = self) and tail-allocated cycle
+      const selfNode: any = { id: 99, label: 'self-loop', prev: null };
+      selfNode.next = selfNode;
+      const sv = GraphNode.create(selfNode);
+      expect(sv.next.next.next.id).toBe(99);
+      const svObj = sv.toObject();
+      expect(svObj.next).toBe(svObj);
+
+      // O(1) zero-copy pointer relinking between existing StructViews in the same buffer
+      v0.next = v0;
+      expect(v0.next.id).toBe(1);
+      v0.next = null;
+      expect(v0.next).toBeNull();
     });
 
-    it('generates valid C11/C++/Zig headers with _Static_assert verified by clang/cc', () => {
-      const cCode = toCHeader([ShaderParticle], { headerGuard: 'PARTICLE_H' });
-      expect(generateC([ShaderParticle], { headerGuard: 'PARTICLE_H' })).toBe(cCode);
-      expect(cCode).toContain('#ifndef PARTICLE_H');
-      expect(cCode).toContain('typedef struct ShaderParticle {');
-      expect(cCode).toContain('_Static_assert(sizeof(ShaderParticle) == 28');
-      expect(cCode).toContain('_Static_assert(_Alignof(ShaderParticle) == 4');
-      expect(cCode).toContain('_Static_assert(offsetof(ShaderParticle, id) == 16');
+    it('supports parent/child cycles and mutually recursive schemas across ref() and slice()', () => {
+      const TreeNode: any = defineStruct('TreeNode', {
+        id: u32,
+        parent: ref(() => TreeNode),
+        children: slice(() => TreeNode),
+      });
 
-      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-c-'));
-      try {
-        const hPath = join(tmp, 'particle.h');
-        writeFileSync(hPath, cCode, 'utf8');
-        execFileSync('cc', ['-std=c11', '-fsyntax-only', '-x', 'c', hPath], { stdio: 'pipe' });
-      } finally {
-        rmSync(tmp, { recursive: true, force: true });
-      }
-    });
+      const root: any = { id: 10, parent: null, children: [] };
+      const childA: any = { id: 20, parent: root, children: [] };
+      const childB: any = { id: 30, parent: root, children: [root] }; // childB.children points back to root!
+      root.children = [childA, childB];
 
-    it('generates WebGPU WGSL structs with 4-byte word packing and bitfield unpack helpers', () => {
-      const wgsl = toWgsl([ShaderParticle]);
-      expect(generateWgsl([ShaderParticle])).toBe(wgsl);
-      expect(wgsl).toContain('struct ShaderParticle {');
-      expect(wgsl).toContain('pos: array<f32, 3>,');
-      expect(wgsl).toContain('_word_12: u32,');
-      expect(wgsl).toContain('id: u32,');
-      expect(wgsl).toContain('label: CapnSlice,');
-      expect(wgsl).toContain('fn ShaderParticle_vel(s: ShaderParticle) -> f32');
-      expect(wgsl).toContain('unpack2x16float(s._word_12)');
-      expect(wgsl).toContain('fn ShaderParticle_flags(s: ShaderParticle) -> u32');
-      expect(wgsl).toContain('fn ShaderParticle_active(s: ShaderParticle) -> bool');
+      const bytes = TreeNode.pack([root]);
+      const view = TreeNode.view(bytes);
+
+      expect(view.id).toBe(10);
+      expect(view.children.length).toBe(2);
+      expect(view.children.at(0).id).toBe(20);
+      expect(view.children.at(0).parent.id).toBe(10);
+      expect(view.children.at(1).id).toBe(30);
+      expect(view.children.at(1).parent.children.at(0).id).toBe(20);
+      // Cyclic slice traversal: root -> childB -> root -> childA
+      expect(view.children.at(1).children.at(0).children.at(0).id).toBe(20);
+
+      const plain = view.toObject();
+      expect(plain.children[0].parent).toBe(plain);
+      expect(plain.children[1].parent).toBe(plain);
+      expect(plain.children[1].children[0].id).toBe(10);
+
+      // Verify Rust #[repr(C)] codegen handles recursive structs and CapnRef<T> without infinite loops
+      const rust = toRustReprC([TreeNode]);
+      expect(rust).toContain('pub struct CapnRef<T>');
+      expect(rust).toContain('pub parent: CapnRef<TreeNode>');
+      expect(rust).toContain('pub children: CapnSlice<TreeNode>');
     });
   });
 });

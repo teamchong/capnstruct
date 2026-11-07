@@ -1,28 +1,28 @@
 ---
-title: Zero-Copy Binary Structs & Tables for TypeScript and WebAssembly
-description: Define C/Rust #[repr(C)] binary schemas in TypeScript. Read and mutate single structs, nested messages, WebAssembly linear memory, SharedArrayBuffers, and queryable binary tables in place with zero serialization.
+title: "capnstruct: Zero-Copy #[repr(C)] Binary Structs, Cyclic Graphs & Queryable Tables"
+description: Define C/Rust #[repr(C)] binary schemas and cyclic graphs in TypeScript. Read and mutate single structs, circular object graphs, WebAssembly.Memory, SharedArrayBuffer state, and queryable binary tables in-place with 0 MB JS heap overhead.
 ---
 
 import LivePlayground from '../../components/LivePlayground.astro';
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>&lt; 5.8 KiB</strong> Minified + Gzipped</span>
-  <span class="cs-pill"><strong>0 ms Parse Step</strong> Direct DataView Accessors</span>
-  <span class="cs-pill"><strong>Single Structs &amp; Tables</strong> .view(), .create(), .array()</span>
+  <span class="cs-pill"><strong>Data Layout &gt; Switching JS Engines</strong> Node V8 &amp; Bun JSC</span>
+  <span class="cs-pill"><strong>0 ms Parse / 0 MB Heap</strong> Direct DataView Accessors</span>
+  <span class="cs-pill"><strong>Single Structs, Cyclic Graphs &amp; Tables</strong> .view(), .create(), ref(), .array()</span>
   <span class="cs-pill"><strong>In-Place Mutation</strong> Primitives, UTF-8 Strings &amp; Slices</span>
   <span class="cs-pill"><strong>Wire-Safe Bounds</strong> Pointer &amp; Amplification Defense</span>
-  <span class="cs-pill"><strong>Rust / C11 / WGSL</strong> Multi-Target Codegen</span>
+  <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust #[repr(C)] Codegen</span>
 </div>
 
-`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length strings and slices.
+`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
 
-Instead of choosing between slow `JSON.parse` / `structuredClone` serialization and brittle manual `dv.getFloat64(base + 16, true)` byte-offset math, you read and mutate **single binary structs, protocol headers, nested messages, `WebAssembly.Memory` arenas, `SharedArrayBuffer` state, and binary tables** using ordinary TypeScript property syntax.
+**Why Data Layout Beats Switching JS Engines:** Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` or `structuredClone` by **1.3x–2.7x**, because both engines still have to allocate tens of thousands of boxed heap objects (**+6 MB to +14 MB JS heap** per call) and run garbage collection. Changing your data layout to `capnstruct` on standard Node.js yields **15x to 3,520x speedups** with **0.00 MB of JS heap allocation**—and natively handles circular object graphs (`a.next = b; b.next = a`) where `JSON.stringify` crashes with `TypeError`.
 
 ---
 
 ## Interactive Browser Playground
 
-Run the live benchmark in your current browser engine, mutate binary structs and strings in place while watching the raw hex buffer update, or inspect generated **Rust `#[repr(C)]`**, **C11 / Zig**, and **WebGPU WGSL** code:
+Run the live benchmark in your current JS engine (measuring both execution time and memory overhead), mutate binary structs and strings in place while watching the raw hex buffer update, or inspect generated **Rust `#[repr(C)]`** code:
 
 <LivePlayground />
 
@@ -121,15 +121,11 @@ for (const hit of OutHit.array(wasm.memory, hdr.out_hits_ptr, hdr.out_hits_count
   console.log(hit.lat, hit.lon, hit.fids[0]); // 0 JS object allocations per row
 }
 ```
-
-Generate matching **Rust `#[repr(C)]`**, **C11 / C++ / Zig headers**, or **WebGPU WGSL shader structs** with compile-time `size_of` / `align_of` / `offset_of!` assertions from the exact same schema:
+Generate matching **Rust `#[repr(C)]` structs** (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) with compile-time `size_of` / `align_of` / `offset_of!` assertions from the exact same schema:
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.h
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.wgsl
 ```
-
 ---
 
 ### 3. Web Worker `SharedArrayBuffer` & `postMessage` (`~1,150x` Faster Than `structuredClone`)
@@ -174,38 +170,73 @@ const vals: Float64Array = samples.column('val');
 
 ---
 
+### 5. Circular References & Recursive Schemas (`ref(() => Node)`)
+
+`JSON.stringify` throws `TypeError: Converting circular structure to JSON` on circular references, and V8's `structuredClone` overflows the C++ call stack on deep linked structures. `ref(() => Struct)` stores an 8-byte relative-offset pointer (`[u32 relOffset, u32 present]`) that packs cyclic JS graphs into a flat `Uint8Array` in $O(1)$ stack space, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular JS references via `.toObject()`:
+
+```ts
+import { defineStruct, u32, str, ref, slice } from 'capnstruct';
+
+const GraphNode: any = defineStruct('GraphNode', {
+  id: u32,
+  label: str,
+  next: ref(() => GraphNode),
+  children: slice(() => GraphNode),
+});
+
+const n1: any = { id: 1, label: 'alpha', next: null, children: [] };
+const n2: any = { id: 2, label: 'beta', next: n1, children: [] };
+n1.next = n2; // cycle: n1 <-> n2
+n1.children = [n2];
+
+const bytes = GraphNode.pack([n1, n2]);
+const view = GraphNode.array(bytes);
+
+// Zero-allocation O(1) cyclic traversal across arbitrary depth
+console.log(view.at(0).next.next.id); // 1
+
+// Cycle-preserving materialization back to circular JS objects
+const obj = view.at(0).toObject();
+console.log(obj.next.next === obj); // true
+```
+
+---
+
 ## Wire Layout & Safety Guarantees
 
 ```text
-+-----------------------------------------------------------------------+
-| Fixed #[repr(C)] Struct Table (N * def.size bytes, 8B-aligned)        |
-|   Row 0: [primitive / fixedStr / scaled / sentinel | CapnStr(off,len)]|
-|   Row 1: [primitive / fixedStr / scaled / sentinel | CapnStr(off,len)]|
-+-----------------------------------------------------------------------+
-| Optional Tail Arena (UTF-8 strings & variable-length slice elements)  |
-|   offset = structBaseOffset + relOff                                  |
-+-----------------------------------------------------------------------+
++------------------------------------------------------------------+
+| Fixed #[repr(C)] Struct Table (N * def.size bytes, 8B-aligned)    |
++------------------------------------------------------------------+
+| Row 0: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]  |
+| Row 1: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]  |
++------------------------------------------------------------------+
+| Optional Tail Arena (UTF-8 strings, slices & ref targets)        |
+|   offset = structBaseOffset + relOff                             |
++------------------------------------------------------------------+
 ```
 
 1. **Zero-Header Fixed Layouts**: Structs using only primitives, `fixedArray`, `fixedStr(N)`, `fixedBytes(N)`, `sentinel()`, `scaled()`, and `f16` have **zero pointers and zero tail arena**—the buffer is 100% byte-for-byte identical to a C/Rust `#[repr(C)]` struct or array.
-2. **Wire-Safe Pointer Bounds & Amplification Defense**: Wrapping a `Uint8Array` sub-slice clamps the `DataView` window to `[byteOffset .. byteOffset + byteLength]`. Every relative `[u32 off, u32 len]` tail descriptor is validated against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')` on corrupt/negative/overflowing offsets), and `.toObject()` / `.toObjects()` enforce an `8x` traversal budget against pointer-aliasing amplification attacks.
+2. **Wire-Safe Pointer Bounds & Amplification Defense**: Wrapping a `Uint8Array` sub-slice clamps the `DataView` window to `[byteOffset .. byteOffset + byteLength]`. Every relative `[u32 off, u32 len]` tail descriptor is validated against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')` on corrupt/negative/overflowing offsets), and `.toObject()` / `.toObjects()` enforce an `8x` traversal budget against pointer-aliasing amplification attacks while preserving valid object cycles.
 3. **Cap'n-Style Wire Stride Evolution**: Pass an older schema to `NewSchema.array(v1Bytes, OldSchema)` to read older binary payloads with zero copying; fields beyond the older wire stride return default values (`0`, `""`, `[]`, `null`) and automatically upgrade in place on mutation.
 
 ---
 
-## Node.js / V8 Benchmarks & Bundle Size
+## Data Layout > Switching JS Engines (Node.js V8 vs. Bun JSC Benchmarks)
 
-| Benchmark Scenario | Baseline (`JSON` / `structuredClone`) | `capnstruct` Zero-Copy | Speedup |
-| :--- | :---: | :---: | :---: |
-| **Zero-Heap Time-Window Range Query** (100,000 sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.01 ms | **0.0027 ms** | **~5,115x faster** |
-| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.67 ms | **0.039 ms** | **~1,157x faster** |
-| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.21 ms | **0.039 ms** | **~774x faster** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.29 ms | **0.287 ms** | **~46.3x faster** |
-| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.77 ms | **0.536 ms** | **~25.7x faster** |
-| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.10 ms | **0.308 ms** | **~16.6x faster** |
+Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`):
+
+| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
+| :--- | :--- | :--- | :--- | :--- |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
+| **`100,000` `SpdSample` Numeric Struct Scan** (5.27 MiB JSON vs 2.29 MiB `capnstruct`, `for..of` flyweight cursor) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
+| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
-| :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime + All Primitives)** | 14.82 KiB | **5.77 KiB** (5,905 B) |
-| **Full Runtime (`+ WasmArena`)** | 16.55 KiB | **6.27 KiB** (6,424 B) |
-| **Multi-Target Codegen (`capnstruct/codegen`: Rust + C11 + WGSL)** | 7.10 KiB | **2.75 KiB** (2,819 B) |
+| :--- | :--- | :--- |
+| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
+| **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |

@@ -10,7 +10,7 @@
       2. Binary Inspector &amp; Live Mutator
     </button>
     <button class="cs-tab" data-tab="rust" role="tab" aria-selected="false">
-      3. Rust / C11 / WGSL Codegen
+      3. Rust #[repr(C)] Codegen
     </button>
   </div>
 
@@ -18,9 +18,9 @@
   <div class="cs-panel active" id="cs-panel-bench">
     <div class="cs-panel-header">
       <div>
-        <strong>Zero-Copy vs JSON.parse / JSON.stringify in Your Browser</strong>
+        <strong>Data Layout &gt; Switching JS Engines (Live Browser Benchmark + Heap Overhead)</strong>
         <p class="cs-sub">
-          Runs real <code>capnstruct</code> binary views in your current JS engine against native <code>JSON.parse</code> / <code>JSON.stringify</code>.
+          Runs real <code>capnstruct</code> binary views in your current JS engine against native <code>JSON.parse()</code>, <code>.filter()</code>, and <code>structuredClone()</code>.
         </p>
       </div>
       <button id="cs-run-bench" class="cs-btn cs-btn-primary">Run Live Benchmark</button>
@@ -29,18 +29,18 @@
     <div id="cs-bench-results" class="cs-bench-grid">
       <div class="cs-bench-card" data-bench="scan">
         <div class="cs-bench-top">
-          <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (2.4 MiB)</div>
-          <div class="cs-bench-desc">Flyweight cursor <code>for (const row of view)</code> (0 heap allocs) vs <code>JSON.parse</code> + loop</div>
+          <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (2.29 MiB)</div>
+          <div class="cs-bench-desc">Flyweight cursor <code>for (const row of view)</code> (<strong>0.00 MB heap</strong>) vs <code>JSON.parse</code> + loop (<strong>+10.33 MB V8 / +6.38 MB Bun heap</strong>)</div>
         </div>
         <div class="cs-bench-bottom">
           <div class="cs-bars">
             <div class="cs-bar-row">
-              <span class="cs-bar-label">JSON.parse + loop</span>
+              <span class="cs-bar-label">JSON.parse + loop (+10.3 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
               <span class="cs-bar-val" id="cs-b1-json">-- ms</span>
             </div>
             <div class="cs-bar-row">
-              <span class="cs-bar-label">capnstruct for..of</span>
+              <span class="cs-bar-label">capnstruct for..of (0 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
               <span class="cs-bar-val" id="cs-b1-capn">-- ms</span>
             </div>
@@ -52,17 +52,17 @@
       <div class="cs-bench-card" data-bench="bbox">
         <div class="cs-bench-top">
           <div class="cs-bench-title">2. 25,000 Flight Telemetry Rows (13 Fields)</div>
-          <div class="cs-bench-desc">Sparse BBox filter (~0.4% hit rate) + lazy UTF-8 string decode only on matched rows</div>
+          <div class="cs-bench-desc">Sparse BBox filter (~0.4% hit rate) + lazy UTF-8 string decode (<strong>0.00 MB heap</strong> vs <strong>+8.18 MB V8 / +5.21 MB Bun heap</strong>)</div>
         </div>
         <div class="cs-bench-bottom">
           <div class="cs-bars">
             <div class="cs-bar-row">
-              <span class="cs-bar-label">JSON.parse + filter</span>
+              <span class="cs-bar-label">JSON.parse + filter (+8.2 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
               <span class="cs-bar-val" id="cs-b2-json">-- ms</span>
             </div>
             <div class="cs-bar-row">
-              <span class="cs-bar-label">capnstruct zero-copy</span>
+              <span class="cs-bar-label">capnstruct zero-copy (0 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
               <span class="cs-bar-val" id="cs-b2-capn">-- ms</span>
             </div>
@@ -74,17 +74,17 @@
       <div class="cs-bench-card" data-bench="mutate">
         <div class="cs-bench-top">
           <div class="cs-bench-title">3. Web Worker Round-Trip + Update (25,000 Rows)</div>
-          <div class="cs-bench-desc"><code>structuredClone</code> (<code>postMessage</code> round-trip) vs <code>capnstruct</code> shared buffer in-place</div>
+          <div class="cs-bench-desc"><code>structuredClone</code> (<code>postMessage</code> round-trip, <strong>+14.24 MB V8 / +5.73 MB Bun heap</strong>) vs shared buffer in-place (<strong>0.00 MB heap</strong>)</div>
         </div>
         <div class="cs-bench-bottom">
           <div class="cs-bars">
             <div class="cs-bar-row">
-              <span class="cs-bar-label">structuredClone RT</span>
+              <span class="cs-bar-label">structuredClone RT (+14.2 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
               <span class="cs-bar-val" id="cs-b3-json">-- ms</span>
             </div>
             <div class="cs-bar-row">
-              <span class="cs-bar-label">capnstruct in-place</span>
+              <span class="cs-bar-label">capnstruct in-place (0 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
               <span class="cs-bar-val" id="cs-b3-capn">-- ms</span>
             </div>
@@ -95,19 +95,19 @@
 
       <div class="cs-bench-card" data-bench="col">
         <div class="cs-bench-top">
-          <div class="cs-bench-title">4. Columnar Float64Array Extraction (100,000 Rows)</div>
-          <div class="cs-bench-desc">Zero-copy <code>view.column('val')</code> for Arrow / WebGPU / SIMD vs JS array map</div>
+          <div class="cs-bench-title">4. 10,000 Cyclic Ring Nodes (<code>ref(() =&gt; RingNode)</code>)</div>
+          <div class="cs-bench-desc"><code>JSON.stringify</code> throws <code>TypeError</code>! Compare <code>structuredClone(cyclicRing)</code> (<strong>+1.76 MB heap</strong>) vs zero-copy <code>ref()</code> traversal (<strong>0.00 MB heap</strong>)</div>
         </div>
         <div class="cs-bench-bottom">
           <div class="cs-bars">
             <div class="cs-bar-row">
-              <span class="cs-bar-label">JSON array .map()</span>
+              <span class="cs-bar-label">structuredClone (+1.8 MB)</span>
               <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
               <span class="cs-bar-val" id="cs-b4-json">-- ms</span>
             </div>
             <div class="cs-bar-row">
-              <span class="cs-bar-label">capnstruct .column()</span>
-              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 2%"></div></div>
+              <span class="cs-bar-label">capnstruct ref() (0 MB)</span>
+              <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 8%"></div></div>
               <span class="cs-bar-val" id="cs-b4-capn">-- ms</span>
             </div>
           </div>
@@ -157,32 +157,27 @@
   <div class="cs-panel" id="cs-panel-rust">
     <div class="cs-panel-header">
       <div>
-        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code>, C11/Zig &amp; WebGPU WGSL Codegen</strong>
+        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> Codegen</strong>
         <p class="cs-sub">
-          Select a preset schema and target language to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
+          Select a preset schema (including recursive <code>ref(() =&gt; GraphNode)</code>) to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
         </p>
       </div>
       <div class="cs-actions">
         <select id="cs-schema-select" class="cs-select">
           <option value="telemetry">FlightTelemetry (u32, f32, str, slice&lt;Waypoint&gt;)</option>
+          <option value="graph">Recursive GraphNode (ref(() =&gt; GraphNode), slice(() =&gt; GraphNode))</option>
           <option value="spdsample">SpdSample + OutHit (Doppler Radar WASM Kernel)</option>
           <option value="padded">PaddedAlignment (u64 + u8 + u16 + slice&lt;i32&gt;)</option>
         </select>
-        <select id="cs-target-select" class="cs-select">
-          <option value="rust">Target: Rust #[repr(C)]</option>
-          <option value="c">Target: C11 / C++ / Zig (.h)</option>
-          <option value="wgsl">Target: WebGPU WGSL (.wgsl)</option>
-        </select>
       </div>
     </div>
-
     <div class="cs-split">
       <div class="cs-col">
         <div class="cs-col-label">TypeScript Schema &amp; Computed Offsets:</div>
         <pre id="cs-ts-schema" class="cs-code-box"></pre>
       </div>
       <div class="cs-col">
-        <div class="cs-col-label" id="cs-codegen-label">Generated Codegen Output:</div>
+        <div class="cs-col-label" id="cs-codegen-label">Generated Rust <code>toRustReprC([...])</code> Output:</div>
         <pre id="cs-rust-output" class="cs-code-box"></pre>
       </div>
     </div>
@@ -431,11 +426,11 @@
     f64,
     str,
     slice,
+    ref,
     fixedArray,
     pack,
   } from 'capnstruct';
-  import { toRustReprC, toCHeader, toWgsl } from 'capnstruct/codegen';
-  // Tab switching
+  import { toRustReprC } from 'capnstruct/codegen';
   const tabs = document.querySelectorAll<HTMLButtonElement>('.cs-tab');
   tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
@@ -585,28 +580,57 @@
         sink += mutView.bytes.byteLength;
       }
       const ms3Capn = Math.max(0.005, (performance.now() - t3C0) / 20);
+      updateBenchCard('b3', ms3Json, ms3Capn, '0 MB heap vs +14.2 MB');
 
-      updateBenchCard('b3', ms3Json, ms3Capn, '0 structuredClone copies');
-
-      // 4. Columnar Float64Array projection
+      // 4. 10,000 Cyclic Ring Nodes (ref(() => RingNode))
+      const N_RING = 10_000;
+      const RING_CLUSTER = 50;
+      const RingNode: any = defineStruct('RingNode', {
+        id: u32,
+        weight: f64,
+        next: ref(() => RingNode),
+        prev: ref(() => RingNode),
+      });
+      const jsRing: any[] = Array.from({ length: N_RING }, (_, i) => ({
+        id: i,
+        weight: i * 1.25,
+        next: null,
+        prev: null,
+      }));
+      for (let i = 0; i < N_RING; i++) {
+        const base = Math.floor(i / RING_CLUSTER) * RING_CLUSTER;
+        const off = i % RING_CLUSTER;
+        jsRing[i].next = jsRing[base + ((off + 1) % RING_CLUSTER)];
+        jsRing[i].prev = jsRing[base + ((off + RING_CLUSTER - 1) % RING_CLUSTER)];
+      }
+      const capnRingBytes = RingNode.pack(jsRing);
+      const ITERS4 = 10;
       const t4J0 = performance.now();
-      for (let it = 0; it < ITERS1; it++) {
-        const rows = JSON.parse(json1);
-        const col = new Float64Array(rows.length);
-        for (let i = 0; i < rows.length; i++) col[i] = rows[i].val;
-        sink += col[0];
+      for (let it = 0; it < ITERS4; it++) {
+        const cloned = structuredClone(jsRing);
+        for (let c = 0; c < N_RING; c += RING_CLUSTER) {
+          let cur = cloned[c];
+          for (let j = 0; j < RING_CLUSTER; j++) {
+            sink += cur.weight;
+            cur = cur.next;
+          }
+        }
       }
-      const ms4Json = (performance.now() - t4J0) / ITERS1;
-
+      const ms4Json = (performance.now() - t4J0) / ITERS4;
       const t4C0 = performance.now();
-      for (let it = 0; it < ITERS1; it++) {
-        const col = view1.column('val');
-        sink += col[0];
+      for (let it = 0; it < ITERS4; it++) {
+        const view = RingNode.array(capnRingBytes);
+        let cur = view.cursor(0);
+        for (let c = 0; c < N_RING; c += RING_CLUSTER) {
+          cur = view.seek(c);
+          for (let j = 0; j < RING_CLUSTER; j++) {
+            sink += cur.weight;
+            cur = cur.next;
+          }
+        }
       }
-      const ms4Capn = Math.max(0.005, (performance.now() - t4C0) / ITERS1);
-
-      updateBenchCard('b4', ms4Json, ms4Capn, 'contiguous Float64Array column');
-
+      const ms4Capn = Math.max(0.005, (performance.now() - t4C0) / ITERS4);
+      updateBenchCard('b4', ms4Json, ms4Capn, '0 MB heap, JSON throws!');
       if (btn) {
         btn.disabled = false;
         btn.textContent = 'Re-Run Live Benchmark';
@@ -772,6 +796,13 @@
     code: u16,
     samples: slice(i32),
   });
+  const GraphNode: any = defineStruct('GraphNode', {
+    id: u32,
+    weight: f64,
+    label: str,
+    next: ref(() => GraphNode),
+    children: slice(() => GraphNode),
+  });
 
   const presets: Record<string, { ts: string; structs: any[] }> = {
     telemetry: {
@@ -781,33 +812,43 @@
 }); // size: 8, align: 4
 
 const TelemetryRow = defineStruct('TelemetryRow', {
-  flightId: u32,            // offset 0
-  squawk: u16,              // offset 4
-  flags: u16,               // offset 6
-  lat: f32,                 // offset 8
-  lon: f32,                 // offset 12
-  altBaro: i32,             // offset 16
-  groundSpeed: f32,         // offset 20
-  callsign: str,            // offset 24 ([u32 relOffset, u32 len])
-  route: str,               // offset 32 ([u32 relOffset, u32 len])
-  waypoints: slice(Waypoint)// offset 40 ([u32 relOffset, u32 len])
+  flightId: u32,                // offset 0
+  squawk: u16,                  // offset 4
+  flags: u16,                   // offset 6
+  lat: f32,                     // offset 8
+  lon: f32,                     // offset 12
+  altBaro: i32,                 // offset 16
+  groundSpeed: f32,             // offset 20
+  callsign: str,                // offset 24 ([u32 relOffset, u32 len])
+  route: str,                   // offset 32 ([u32 relOffset, u32 len])
+  waypoints: slice(Waypoint),   // offset 40 ([u32 relOffset, u32 len])
 }); // size: 48, align: 4`,
       structs: [Waypoint, TelemetryRow],
     },
+    graph: {
+      ts: `const GraphNode: any = defineStruct('GraphNode', {
+  id: u32,                           // offset 0, size 4 (+4B padding before f64)
+  weight: f64,                       // offset 8, size 8
+  label: str,                        // offset 16, size 8 (CapnStr)
+  next: ref(() => GraphNode),        // offset 24, size 8 (CapnRef<GraphNode>)
+  children: slice(() => GraphNode),  // offset 32, size 8 (CapnSlice<GraphNode>)
+}); // size: 40, align: 8`,
+      structs: [GraphNode],
+    },
     spdsample: {
       ts: `const SpdSample = defineStruct('SpdSample', {
-  t: u32,   // offset 0 (4B padding auto-inserted after t)
-  val: f64, // offset 8
-  id: u32,  // offset 16 (4B trailing padding to align stride to 8)
+  t: u32,    // offset 0 (4B padding auto-inserted after t)
+  val: f64,  // offset 8, align 8
+  id: u32,   // offset 16 (4B trailing padding to align stride to 8)
 }); // size: 24, align: 8
 
 const OutHit = defineStruct('OutHit', {
-  fid: u32,                 // offset 0 (4B padding before lat)
-  lat: f64,                 // offset 8
-  lon: f64,                 // offset 16
-  tStart: f64,              // offset 24
-  tEnd: f64,                // offset 32
-  fids: fixedArray(u32, 8), // offset 40..72
+  fid: u32,                  // offset 0 (4B padding before lat)
+  lat: f64,                  // offset 8
+  lon: f64,                  // offset 16
+  tstart: f64,               // offset 24
+  tend: f64,                 // offset 32
+  fids: fixedArray(u32, 8),  // offset 40..72
 }); // size: 72, align: 8`,
       structs: [SpdSample, OutHit],
     },
@@ -823,35 +864,16 @@ const OutHit = defineStruct('OutHit', {
   };
 
   const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
-  const targetEl = document.getElementById('cs-target-select') as HTMLSelectElement | null;
 
   function renderRustCodegen() {
     const key = selectEl?.value ?? 'telemetry';
-    const target = targetEl?.value ?? 'rust';
     const preset = presets[key] ?? presets.telemetry;
     const tsEl = document.getElementById('cs-ts-schema');
     const rsEl = document.getElementById('cs-rust-output');
-    const lblEl = document.getElementById('cs-codegen-label');
     if (tsEl) tsEl.textContent = preset.ts;
-    if (lblEl) {
-      lblEl.innerHTML =
-        target === 'c'
-          ? 'Generated C11 / Zig <code>toCHeader([...])</code> Output:'
-          : target === 'wgsl'
-            ? 'Generated WebGPU WGSL <code>toWgsl([...])</code> Output:'
-            : 'Generated Rust <code>toRustReprC([...])</code> Output:';
-    }
-    if (rsEl) {
-      rsEl.textContent =
-        target === 'c'
-          ? toCHeader(preset.structs)
-          : target === 'wgsl'
-            ? toWgsl(preset.structs)
-            : toRustReprC(preset.structs);
-    }
+    if (rsEl) rsEl.textContent = toRustReprC(preset.structs);
   }
 
   selectEl?.addEventListener('change', renderRustCodegen);
-  targetEl?.addEventListener('change', renderRustCodegen);
   renderRustCodegen();
 </script>

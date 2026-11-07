@@ -19,10 +19,11 @@ Every `capnstruct` buffer is a standard C/Rust `#[repr(C)]` flat array followed 
 ```
 
 1. **Alignment & Padding**: Each field is aligned to `field.align` (`offset = (offset + align - 1) & ~(align - 1)`). The struct's total `size` (`stride`) is rounded up to `max(field.align)`.
-2. **Relative Tail Descriptors (`str` and `slice(T)`)**: Stored inline as 8 bytes `[u32 relOffset, u32 length]` (little-endian). When `length === 0`, `relOffset` is `0`. When `length > 0`, the payload starts at `structBaseOffset + relOffset`.
-3. **Zero-Header Row Count Recovery**: For fixed-size structs, `rowCount = byteLength / def.size`. For variable-length structs packed via `pack()`, the first variable-length descriptor in row 0 points to the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in `O(1)` without a separate framing header.
-4. **Wire-Safety Bounds & Amplification Defense**: `Uint8Array` sub-views are clamped to `[byteOffset .. byteOffset + byteLength]` so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory. Every `[relOffset, length]` descriptor is checked against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')`), and `toObject()` / `toObjects()` enforce an `8x` traversal budget (min 64 KiB) against cyclic or aliased pointer amplification attacks.
----
+### Relative Tail Descriptors (`str`, `slice(T)`, and `ref(T)`)
+Stored inline as 8 bytes (`[u32 relOffset, u32 length]` for `str`/`slice`, or `[u32 relOffset, u32 present]` for `ref`, little-endian). When `len > 0` (or `present !== 0`), the payload lives at `structBaseOffset + relOffset`. When row 0 contains a variable-length field (`def._fv >= 0`), `pack()` places row 0's first variable data at the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in $O(1)$ without a separate framing header.
+
+### Wire-Safe Pointer Bounds & Amplification Defense
+`Uint8Array` sub-views are clamped to `[byteOffset .. byteOffset + byteLength]` so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory. Every `[relOffset, length]` descriptor is checked against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')`), and `toObject()` / `toObjects()` enforce an `8x` traversal budget (min 64 KiB) against pointer-aliasing amplification attacks while preserving circular object graphs via `_rSeen`.
 
 ## Core API Reference
 
@@ -50,9 +51,9 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `fixedStr(N)`: Inline fixed-length null-padded UTF-8 string `[u8; N]` (`align: 1, size: N`) with 0 tail indirection.
 - `fixedBytes(N)`: Inline fixed-length byte array `[u8; N]` (`align: 1, size: N`) read as a zero-copy `Uint8Array`.
 - `sentinel(prim, nullValue)` / `nullable(prim, nullValue)`: Maps an inline sentinel value (e.g. `-32768` for `i16` or `NaN` for `f32`) to `null` in JS with 0 extra wire bytes.
-- `scaled(prim, factor, { null? })`: Fixed-point scaled primitive (stores `Math.round(val * factor)` in `prim`, reads `raw / factor` as `number`).
-
-### `StructView<F>`
+- **`scaled(prim, factor, { null? })`**: Fixed-point scaled primitive (stores `Math.round(val * factor)` in `prim`, reads `raw / factor` as `number`).
+- **`ref(target)` / `ref(() => target)`**: 8-byte relative-offset nullable/circular struct reference (`[u32 relOffset, u32 present]`). Supports self-referential and mutually recursive schemas, cycle-safe packing (`pack()`), $O(1)$ zero-copy view traversal and pointer relinking (`row.next = otherRow`), and cycle-preserving `.toObject()` / `.toObjects()`.
+- **`slice(element)` / `slice(() => element)`**: 8-byte relative-offset variable-length slice (`[u32 relOffset, u32 length]`). Accepts a lazy thunk `() => StructDef` for recursive tree/graph child lists.
 
 - `<field>`: Getter and setter for every field in `F` (primitives, nested structs, `fixedArray`, `fixedStr`, `fixedBytes`, `str`, and `slice`).
 - `view.seek(index)` / `view.at(index)`: Repositions a flyweight cursor to row `index` in $O(1)$ (supports negative indices from the end).
@@ -82,21 +83,21 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 
 ---
 
-## Node.js / V8 Benchmarks & Bundle Size
+## Data Layout > Switching JS Engines (Benchmarks & Bundle Size)
 
-Measured via `pnpm run bench` and `pnpm run size`:
+Measured via `pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`:
 
-| Benchmark Scenario | Baseline (`JSON` / `structuredClone`) | `capnstruct` Zero-Copy | Speedup |
-| :--- | :---: | :---: | :---: |
-| **Zero-Heap Time-Window Range Query** (100,000 sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.01 ms | **0.0027 ms** | **~5,115x faster** |
-| **Web Worker `postMessage` Round-Trip + Update** (25,000 Telemetry rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.67 ms | **0.039 ms** | **~1,157x faster** |
-| **Live In-Place `str` Mutation** (25,000 Telemetry rows vs `JSON.parse` + `JSON.stringify` round-trip) | 30.21 ms | **0.039 ms** | **~774x faster** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (25,000 Flight Telemetry rows × 13 fields) | 13.29 ms | **0.287 ms** | **~46.3x faster** |
-| **100,000 `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.77 ms | **0.536 ms** | **~25.7x faster** |
-| **JS &harr; WASM Boundary Scan** (25,000 `QpPoint` structs in `WebAssembly.Memory`: `JSON`/serde FFI vs `WasmArena`) | 5.10 ms | **0.308 ms** | **~16.6x faster** |
+| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
+| :--- | :--- | :--- | :--- | :--- |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
+| **`100,000` `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
+| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
-| :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime + All Primitives)** | 14.82 KiB | **5.77 KiB** (5,905 B) |
-| **Full Runtime (`+ WasmArena`)** | 16.55 KiB | **6.27 KiB** (6,424 B) |
-| **Multi-Target Codegen (`capnstruct/codegen`: Rust + C11 + WGSL)** | 7.10 KiB | **2.75 KiB** (2,819 B) |
+| :--- | :--- | :--- |
+| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
+| **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 4.00 KiB | **1.52 KiB** (1,553 B) |

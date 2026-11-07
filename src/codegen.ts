@@ -8,19 +8,6 @@ export interface RustCodegenOptions {
   /** Visibility modifier for structs and fields (default: `'pub'`). */
   vis?: 'pub' | 'pub(crate)' | '';
 }
-
-export interface CCodegenOptions {
-  /** Emit C11 `_Static_assert` size/align/offsetof checks (default: `true`). */
-  assertions?: boolean;
-  /** Header include guard macro name (default: `'CAPNSTRUCT_GENERATED_H'`). */
-  headerGuard?: string;
-}
-
-export interface WgslCodegenOptions {
-  /** Emit bitfield accessor helper functions for sub-32-bit fields (default: `true`). */
-  helpers?: boolean;
-}
-
 export type SchemaCollection =
   | StructDefLike
   | readonly StructDefLike[]
@@ -43,11 +30,10 @@ function collectDefs(input: SchemaCollection): StructDefLike[] {
   function visitDesc(desc: FieldDesc): void {
     if (desc.kind === 'struct') {
       visitStruct(desc);
-    } else if (desc.kind === 'array' || desc.kind === 'slice') {
+    } else if (desc.kind === 'array' || desc.kind === 'slice' || desc.kind === 'ref') {
       visitDesc(desc.element);
     }
   }
-
   function visitStruct(def: StructDefLike, fallbackName?: string): void {
     const name = def.name || fallbackName || 'AnonStruct';
     if (visited.has(name)) return;
@@ -68,21 +54,34 @@ function collectDefs(input: SchemaCollection): StructDefLike[] {
 
   return ordered.map(({ def, name }) => (def.name ? def : { ...def, name, rustType: name }));
 }
-
-function checkVarTypes(desc: FieldDesc, flags: { str: boolean; slice: boolean }): void {
-  if (desc.kind === 'str') flags.str = true;
-  else if (desc.kind === 'slice') {
+function checkVarTypes(
+  desc: FieldDesc,
+  flags: { str: boolean; slice: boolean; ref: boolean },
+  seen = new Set<FieldDesc>(),
+): void {
+  if (seen.has(desc)) return;
+  seen.add(desc);
+  if (desc.kind === 'str') {
+    flags.str = true;
+  } else if (desc.kind === 'slice') {
     flags.slice = true;
-    checkVarTypes(desc.element, flags);
+    checkVarTypes(desc.element, flags, seen);
+  } else if (desc.kind === 'ref') {
+    flags.ref = true;
+    checkVarTypes(desc.element, flags, seen);
   } else if (desc.kind === 'array') {
-    checkVarTypes(desc.element, flags);
+    checkVarTypes(desc.element, flags, seen);
+  } else if (desc.kind === 'struct') {
+    for (const f of desc.fieldList) checkVarTypes(f.desc, flags, seen);
   }
 }
 
-function descHasFloat(desc: FieldDesc): boolean {
+function descHasFloat(desc: FieldDesc, seen = new Set<FieldDesc>()): boolean {
+  if (seen.has(desc)) return false;
+  seen.add(desc);
   if (desc.kind === 'primitive') return 'float' in desc && Boolean(desc.float);
-  if (desc.kind === 'array' || desc.kind === 'slice') return descHasFloat(desc.element);
-  if (desc.kind === 'struct') return desc.fieldList.some((f) => descHasFloat(f.desc));
+  if (desc.kind === 'array' || desc.kind === 'slice' || desc.kind === 'ref') return descHasFloat(desc.element, seen);
+  if (desc.kind === 'struct') return desc.fieldList.some((f) => descHasFloat(f.desc, seen));
   return false;
 }
 
@@ -92,7 +91,7 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
   const eqDerives = options.derive ?? [...new Set([...derives, 'Eq'])];
   const emitAsserts = options.assertions ?? true;
   const vis = options.vis === undefined ? 'pub ' : options.vis ? `${options.vis} ` : '';
-  const flags = { str: false, slice: false };
+  const flags = { str: false, slice: false, ref: false };
   for (const d of defs) {
     for (const f of d.fieldList) {
       checkVarTypes(f.desc, flags);
@@ -112,7 +111,13 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
 
   if (flags.slice) {
     blocks.push(
-      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n  ${vis}off: u32,\n  ${vis}len: u32,\n  ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnSlice<T> {\n  #[inline]\n  ${vis}unsafe fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n    if self.len == 0 {\n      return &[];\n    }\n    let start = self.off as usize;\n    let byte_len = (self.len as usize).checked_mul(core::mem::size_of::<T>()).expect("CapnSlice overflow");\n    let end = start.checked_add(byte_len).expect("CapnSlice out of bounds");\n    assert!(end <= base.len(), "CapnSlice out of bounds");\n    unsafe {\n      core::slice::from_raw_parts(\n        base.as_ptr().add(start) as *const T,\n        self.len as usize,\n      )\n    }\n  }\n}`,
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n    ${vis}off: u32,\n    ${vis}len: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnSlice<T> {\n    #[inline]\n    ${vis}unsafe fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n        if self.len == 0 {\n            return &[];\n        }\n        let start = self.off as usize;\n        let byte_len = (self.len as usize).checked_mul(core::mem::size_of::<T>()).expect("CapnSlice overflow");\n        let end = start.checked_add(byte_len).expect("CapnSlice out of bounds");\n        assert!(end <= base.len(), "CapnSlice out of bounds");\n        unsafe {\n            core::slice::from_raw_parts(\n                base.as_ptr().add(start) as *const T,\n                self.len as usize,\n            )\n        }\n    }\n}`,
+    );
+  }
+
+  if (flags.ref) {
+    blocks.push(
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnRef<T> {\n    ${vis}off: u32,\n    ${vis}present: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnRef<T> {\n    #[inline]\n    ${vis}unsafe fn as_ref<'a>(&self, base: &'a [u8]) -> Option<&'a T> {\n        if self.present == 0 {\n            return None;\n        }\n        let start = self.off as usize;\n        let end = start.checked_add(core::mem::size_of::<T>()).expect("CapnRef out of bounds");\n        assert!(end <= base.len(), "CapnRef out of bounds");\n        unsafe { Some(&*(base.as_ptr().add(start) as *const T)) }\n    }\n}`,
     );
   }
 
@@ -154,232 +159,3 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
 }
 
 export const generateRust = toRustReprC;
-
-function cTypeFor(desc: FieldDesc, fieldName: string): string {
-  if (desc.kind === 'primitive') {
-    const t = desc.type;
-    if (t === 'fixedStr' || t === 'fixedBytes') {
-      return `uint8_t ${fieldName}[${(desc as any).length}]`;
-    }
-    const rt = desc.rustType;
-    const map: Record<string, string> = {
-      u8: 'uint8_t',
-      i8: 'int8_t',
-      u16: 'uint16_t',
-      i16: 'int16_t',
-      u32: 'uint32_t',
-      i32: 'int32_t',
-      u64: 'uint64_t',
-      i64: 'int64_t',
-      f32: 'float',
-      f64: 'double',
-      bool: 'bool',
-    };
-    return `${map[rt] || 'uint8_t'} ${fieldName}`;
-  }
-  if (desc.kind === 'str') return `CapnStr ${fieldName}`;
-  if (desc.kind === 'slice') return `CapnSlice ${fieldName}`;
-  if (desc.kind === 'struct') return `${desc.name || 'AnonStruct'} ${fieldName}`;
-  if (desc.kind === 'array') {
-    const dims: number[] = [];
-    let cur: FieldDesc = desc;
-    while (cur.kind === 'array') {
-      dims.push(cur.length);
-      cur = cur.element;
-    }
-    const base = cTypeFor(cur, fieldName);
-    return `${base}${dims.map((n) => `[${n}]`).join('')}`;
-  }
-  return `uint8_t ${fieldName}`;
-}
-
-/** Generates a standard C11 / C++ / Zig (`@cImport`) header with `_Static_assert` layout verification. */
-export function toCHeader(schemas: SchemaCollection, options: CCodegenOptions = {}): string {
-  const defs = collectDefs(schemas);
-  const emitAsserts = options.assertions ?? true;
-  const guard = options.headerGuard ?? 'CAPNSTRUCT_GENERATED_H';
-
-  const flags = { str: false, slice: false };
-  for (const d of defs) {
-    for (const f of d.fieldList) {
-      checkVarTypes(f.desc, flags);
-    }
-  }
-
-  const blocks: string[] = [
-    '/* Auto-generated by capnstruct. DO NOT EDIT. */',
-    `#ifndef ${guard}\n#define ${guard}\n\n#include <stdint.h>\n#include <stdbool.h>\n#include <stddef.h>`,
-  ];
-
-  if (flags.str) {
-    blocks.push(`typedef struct CapnStr {\n  uint32_t off;\n  uint32_t len;\n} CapnStr;`);
-  }
-  if (flags.slice) {
-    blocks.push(`typedef struct CapnSlice {\n  uint32_t off;\n  uint32_t len;\n} CapnSlice;`);
-  }
-
-  for (const def of defs) {
-    const name = def.name || 'AnonStruct';
-    const lines: string[] = [`typedef struct ${name} {`];
-    let cur = 0;
-    let padIdx = 0;
-    for (const f of def.fieldList) {
-      if (f.offset > cur) {
-        lines.push(`  uint8_t _pad${padIdx++}[${f.offset - cur}];`);
-      }
-      lines.push(`  ${cTypeFor(f.desc, f.name)};`);
-      cur = f.offset + f.size;
-    }
-    if (def.size > cur) {
-      lines.push(`  uint8_t _pad${padIdx++}[${def.size - cur}];`);
-    }
-    lines.push(`} ${name};`);
-
-    if (emitAsserts) {
-      lines.push(`_Static_assert(sizeof(${name}) == ${def.size}, "sizeof(${name}) mismatch");`);
-      lines.push(`_Static_assert(_Alignof(${name}) == ${def.align}, "alignof(${name}) mismatch");`);
-      for (const f of def.fieldList) {
-        lines.push(
-          `_Static_assert(offsetof(${name}, ${f.name}) == ${f.offset}, "offsetof(${name}, ${f.name}) mismatch");`,
-        );
-      }
-    }
-
-    blocks.push(lines.join('\n'));
-  }
-
-  blocks.push(`#endif /* ${guard} */`);
-  return blocks.join('\n\n') + '\n';
-}
-
-export const generateC = toCHeader;
-
-function wgslDirectType(desc: FieldDesc): string | null {
-  if (desc.kind === 'primitive') {
-    const rt = desc.rustType;
-    if (rt === 'u32') return 'u32';
-    if (rt === 'i32') return 'i32';
-    if (rt === 'f32') return 'f32';
-    if (rt === 'u64' || rt === 'i64' || rt === 'f64') return 'vec2<u32>';
-    return null;
-  }
-  if (desc.kind === 'str' || desc.kind === 'slice') return 'CapnSlice';
-  if (desc.kind === 'struct') return desc.name || 'AnonStruct';
-  if (desc.kind === 'array') {
-    const el = wgslDirectType(desc.element);
-    return el ? `array<${el}, ${desc.length}>` : null;
-  }
-  return null;
-}
-
-/** Generates WebGPU WGSL `struct` definitions and sub-word bitfield unpack helpers matching the binary layout. */
-export function toWgsl(schemas: SchemaCollection, options: WgslCodegenOptions = {}): string {
-  const defs = collectDefs(schemas);
-  const emitHelpers = options.helpers ?? true;
-
-  let needsSlice = false;
-  for (const d of defs) {
-    for (const f of d.fieldList) {
-      if (f.desc.kind === 'str' || f.desc.kind === 'slice') needsSlice = true;
-    }
-  }
-
-  const blocks: string[] = ['// Auto-generated by capnstruct for WebGPU WGSL. DO NOT EDIT.'];
-  if (needsSlice) {
-    blocks.push(`struct CapnSlice {\n  off: u32,\n  len: u32,\n}`);
-  }
-
-  for (const def of defs) {
-    const name = def.name || 'AnonStruct';
-    const lines: string[] = [
-      `// size: ${def.size} bytes, align: ${def.align} bytes`,
-      `struct ${name} {`,
-    ];
-    const helpers: string[] = [];
-
-    // Group struct layout into direct >=4B-aligned fields and packed 4-byte words for sub-32-bit fields
-    let cur = 0;
-    let padIdx = 0;
-    const fields = def.fieldList;
-    let i = 0;
-    while (i < fields.length) {
-      const f = fields[i];
-      const direct = f.offset % 4 === 0 ? wgslDirectType(f.desc) : null;
-      if (direct) {
-        if (f.offset > cur) {
-          const gap = f.offset - cur;
-          const words = Math.floor(gap / 4);
-          for (let w = 0; w < words; w++) {
-            lines.push(`  _pad${padIdx++}: u32,`);
-          }
-          cur += words * 4;
-        }
-        const alignAttr = f.offset === 0 && def.align > 4 ? `@align(${def.align}) ` : '';
-        lines.push(`  /* @offset(${f.offset}) */ ${alignAttr}${f.name}: ${direct},`);
-        cur = f.offset + f.size;
-        i++;
-      } else {
-        // Pack 4-byte word(s) covering sub-word fields until the next 4-byte aligned direct field
-        const wordStart = cur;
-        let j = i;
-        let spanEnd = Math.ceil((f.offset + f.size) / 4) * 4;
-        while (j + 1 < fields.length) {
-          const nf = fields[j + 1];
-          const nd = nf.offset % 4 === 0 ? wgslDirectType(nf.desc) : null;
-          if (nd && nf.offset >= spanEnd) break;
-          j++;
-          spanEnd = Math.max(spanEnd, Math.ceil((nf.offset + nf.size) / 4) * 4);
-        }
-        for (let wOff = wordStart; wOff < spanEnd; wOff += 4) {
-          const alignAttr = wOff === 0 && def.align > 4 ? `@align(${def.align}) ` : '';
-          lines.push(`  /* @offset(${wOff}) */ ${alignAttr}_word_${wOff}: u32,`);
-        }
-        if (emitHelpers) {
-          for (let k = i; k <= j; k++) {
-            const sf = fields[k];
-            if (sf.desc.kind === 'primitive') {
-              const rt = sf.desc.rustType;
-              const wOff = Math.floor(sf.offset / 4) * 4;
-              const bitOff = (sf.offset - wOff) * 8;
-              if (sf.desc.type === 'f16') {
-                const lane = bitOff === 0 ? 'x' : 'y';
-                helpers.push(
-                  `fn ${name}_${sf.name}(s: ${name}) -> f32 {\n  return unpack2x16float(s._word_${wOff}).${lane};\n}`,
-                );
-              } else if (rt === 'i8' || rt === 'i16') {
-                const bits = sf.size * 8;
-                helpers.push(
-                  `fn ${name}_${sf.name}(s: ${name}) -> i32 {\n  return extractBits(bitcast<i32>(s._word_${wOff}), ${bitOff}u, ${bits}u);\n}`,
-                );
-              } else if (rt === 'u8' || rt === 'u16' || rt === 'bool') {
-                const bits = sf.size * 8;
-                const ret =
-                  rt === 'bool'
-                    ? `extractBits(s._word_${wOff}, ${bitOff}u, 8u) != 0u`
-                    : `extractBits(s._word_${wOff}, ${bitOff}u, ${bits}u)`;
-                helpers.push(
-                  `fn ${name}_${sf.name}(s: ${name}) -> ${rt === 'bool' ? 'bool' : 'u32'} {\n  return ${ret};\n}`,
-                );
-              }
-            }
-          }
-        }
-        cur = spanEnd;
-        i = j + 1;
-      }
-    }
-    while (cur < def.size) {
-      lines.push(`  /* @offset(${cur}) */ _pad${padIdx++}: u32,`);
-      cur += 4;
-    }
-    lines.push('}');
-    blocks.push(lines.join('\n'));
-    if (helpers.length > 0) {
-      blocks.push(helpers.join('\n\n'));
-    }
-  }
-
-  return blocks.join('\n\n') + '\n';
-}
-
-export const generateWgsl = toWgsl;

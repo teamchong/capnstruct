@@ -124,4 +124,55 @@ Holding 100,000 rows as plain JS objects in browser memory consumes 150–300 MB
 ### The `capnstruct` Pattern
 1. **Virtual Table Rendering (0 Heap Objects in RAM):** Keep all 100,000 rows in a single `StructArrayView` (`~2.4 MiB` flat buffer) and only read the 20 visible rows in your `@tanstack/virtual` render loop via `rows.at(virtualRow.index)`.
 2. **Zero-Heap Binary Search & Filtering (`rangeBy` / `filterBytes`):** Slice time windows in $O(\log N)$ via `rows.rangeBy('t', t0, t1)` (~5,000x faster than `JSON.parse` + `.filter()`) or extract matching binary rows via `rows.filterBytes(pred)` with 0 intermediate JS objects.
-3. **Columnar WebGL / WebGPU / Arrow Extraction:** Call `rows.column('lat')` and `rows.column('lon')` to extract contiguous `Float64Array` / `Float32Array` typed arrays for WebGL attributes, WebGPU storage buffers (with `toWgsl()` shader structs), or Apache Arrow (`arrow.makeVector(rows.column('lat'))`).
+3. **Columnar WebGL / WebGPU / Arrow Extraction:** Call `rows.column('lat')` and `rows.column('lon')` to extract contiguous `Float64Array` / `Float32Array` typed arrays for WebGL/WebGPU vertex buffers or Apache Arrow (`arrow.makeVector(rows.column('lat'))`).
+
+---
+
+## 4. Packing & Traversing Circular Object Graphs (`ref(() => Node)`)
+
+### The Bottleneck
+
+In compilers, ASTs, scene graphs, and doubly-linked state machines, objects frequently reference their parents, siblings, or cycle back to themselves (`a.next = b; b.next = a`).
+
+- `JSON.stringify(graph)` immediately crashes with `TypeError: Converting circular structure to JSON`.
+- V8's `structuredClone(graph)` handles cycles by building an internal hash table and cloning every node on the heap, but allocates megabytes of V8 heap memory and overflows the C++ call stack (`RangeError: Maximum call stack size exceeded`) on deep linked chains (~1,000+ hops).
+
+### The `capnstruct` Fix
+
+Use `ref(() => Struct)` for nullable/circular struct references and `slice(() => Struct)` for recursive child lists. `capnstruct` tracks visited object identities during `pack()` to serialize cyclic graphs into a single flat `Uint8Array` in $O(1)$ call-stack depth, traverses cycles in $O(1)$ with zero heap allocations, and reconstructs circular JS object references when `.toObject()` is called:
+
+```ts
+import { defineStruct, u32, f64, str, ref, slice } from 'capnstruct';
+
+const SceneNode: any = defineStruct('SceneNode', {
+  id: u32,
+  weight: f64,
+  name: str,
+  parent: ref(() => SceneNode),
+  nextSibling: ref(() => SceneNode),
+  children: slice(() => SceneNode),
+});
+
+// Build a cyclic scene graph (parent <-> child and sibling ring)
+const root: any = { id: 1, weight: 1.0, name: 'root', parent: null, nextSibling: null, children: [] };
+const childA: any = { id: 2, weight: 0.5, name: 'mesh_a', parent: root, nextSibling: null, children: [] };
+const childB: any = { id: 3, weight: 0.8, name: 'mesh_b', parent: root, nextSibling: childA, children: [root] };
+childA.nextSibling = childB;
+root.children = [childA, childB];
+
+// 1. Pack cyclic graph into a wire-ready Uint8Array (JSON.stringify throws TypeError here!)
+const bytes: Uint8Array = SceneNode.pack([root, childA, childB]);
+
+// 2. Zero-allocation O(1) cyclic traversal directly over the binary buffer
+const nodes = SceneNode.array(bytes);
+const vRoot = nodes.at(0);
+console.log(vRoot.children.at(0).nextSibling.parent.name); // 'root'
+
+// 3. Mutate pointer links in place in O(1) without copying struct bytes
+vRoot.nextSibling = vRoot; // self-loop in place
+console.log(vRoot.nextSibling.id); // 1
+
+// 4. Reconstruct circular JS object graph when needed
+const restored = vRoot.toObject();
+console.log(restored === restored.nextSibling); // true
+```

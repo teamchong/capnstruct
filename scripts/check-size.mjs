@@ -4,18 +4,18 @@ import { buildSync } from 'esbuild';
 const entries = [
   {
     name: 'Declarative Schema API (Core Runtime)',
-    maxGzipBytes: 6042, // 5.9 KiB
-    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, defineStruct, struct, pack, concatBytes, structView, StructArrayView } from "./dist/index.js";`,
+    maxGzipBytes: 6800, // 6.64 KiB
+    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, pack, concatBytes, structView, StructArrayView } from "./dist/index.js";`,
   },
   {
     name: 'Full Runtime (+ WasmArena)',
-    maxGzipBytes: 6554, // 6.4 KiB
-    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, defineStruct, struct, pack, concatBytes, structView, StructArrayView, WasmArena, Arena } from "./dist/index.js";`,
+    maxGzipBytes: 7320, // 7.15 KiB
+    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, pack, concatBytes, structView, StructArrayView, WasmArena, Arena } from "./dist/index.js";`,
   },
   {
-    name: 'Multi-Target Codegen (Rust + C11 + WGSL)',
-    maxGzipBytes: 2867, // 2.8 KiB
-    code: `export { toRustReprC, generateRust, toCHeader, generateC, toWgsl, generateWgsl } from "./dist/codegen.js";`,
+    name: 'Rust #[repr(C)] Codegen (capnstruct/codegen)',
+    maxGzipBytes: 2048, // 2.0 KiB
+    code: `export { toRustReprC, generateRust } from "./dist/codegen.js";`,
   },
 ];
 

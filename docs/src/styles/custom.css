@@ -2,7 +2,7 @@
   --sl-color-accent-low: #12284c;
   --sl-color-accent: #3b82f6;
   --sl-color-accent-high: #bfdbfe;
-  --sl-content-width: 56rem;
+  --sl-content-width: 68rem;
 }
 
 :root[data-theme='light'] {

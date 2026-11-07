@@ -5,232 +5,105 @@ description: Define C/Rust #[repr(C)] and Go zero-copy binary schemas and cyclic
 
 import LivePlayground from '../../components/LivePlayground.astro';
 
-`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
+`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>Data Layout &gt; Bun &amp; Rust</strong> Node V8, Bun JSC &amp; Rust -O3</span>
-  <span class="cs-pill"><strong>0 ms Parse / 0 MB Heap</strong> Direct DataView &amp; WASM Accessors</span>
-  <span class="cs-pill"><strong>Single Structs, Cyclic Graphs &amp; Tables</strong> .view(), .create(), ref(), .array()</span>
-  <span class="cs-pill"><strong>In-Place Mutation</strong> Primitives, UTF-8 Strings &amp; Slices</span>
-  <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust #[repr(C)] &amp; Go / TinyGo WASM Codegen</span>
+  <span class="cs-pill"><strong>Data Layout &gt; Bun &amp; Rust</strong> (45x JS / 198x&ndash;651x Rust &amp; Go WASM)</span>
+  <span class="cs-pill"><strong>0 MB JS Heap</strong> (`Uint8Array` / `SharedArrayBuffer` / `WebAssembly.Memory`)</span>
+  <span class="cs-pill"><strong>Cyclic Graphs</strong> (`ref(() => Node)`)</span>
+  <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust `#[repr(C)]` &amp; Go / TinyGo WASM Codegen</span>
 </div>
 
 <LivePlayground />
 
-**Why Data Layout Beats Switching to Bun or Rust:** Switching from **Node.js (V8)** to **Bun (JavaScriptCore)** speeds up `JSON.parse` + `.filter()` or `structuredClone` by **~1.3x–2.6x**, and rewriting in **Rust (`rustc -O3` WASM)** without changing the wire format still spends **3.73–4.16 ms** scanning JSON text (or **23.0 ms** across JS&harr;WASM FFI). Restructuring into a contiguous `capnstruct` `#[repr(C)]` layout yields **12x–45x speedups in standard JS** (beating Rust JSON parsing!) and **194x–714x speedups in Rust WASM** with **+0.00 MB of heap allocation**—while natively handling circular object graphs (`a.next = b; b.next = a`) where `JSON.stringify` and `serde_json` crash.
+## Benchmarks: Bun JSC (`~2x`) vs. Rust `-O3` (JSON / FFI) vs. `capnstruct #[repr(C)]`
+
+Measured on Apple Silicon (`pnpm run bench` on Node.js v24.15.0, Bun v1.4.3, Rust 1.96 `wasm32`, Go 1.27, TinyGo 0.43):
+
+| Workload | Node.js V8 (JSON) | Bun JSC (`~2x`) | Rust `-O3` (JSON / FFI) | `capnstruct #[repr(C)]` (JS / Rust / Go WASM) | Speedup |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **100k `SpdSample` Scan** (`5.27 MiB` JSON vs `2.29 MiB`) | `14.14 ms` (`+10.3 MB`) | `5.65 ms` (`+6.9 MB`) | `3.68 ms` JSON / `23.7 ms` FFI | **`0.31 ms` JS** / **`0.071 ms` Rust** / **`0.084 ms` TinyGo** | **45x JS / 198x WASM** |
+| **25k Telemetry Filter (`4%` hit rate)** | `13.24 ms` (`+8.2 MB`) | `5.21 ms` (`+5.2 MB`) | `4.16 ms` JSON | **`0.39 ms` JS** / **`0.020 ms` Rust** / **`0.031 ms` Go** | **34x JS / 651x WASM** |
+| **25k `QpPoint` JS &harr; WASM Boundary** | `5.48 ms` (`+3.7 MB`) | `2.10 ms` (`+1.7 MB`) | `5.48 ms` (`serde` FFI) | **`0.34 ms` JS** / **`0.036 ms` Rust** (`0 B` copy) | **16x JS / 153x WASM** |
+| **25k Worker `postMessage` Round-Trip** | `45.94 ms` (`+14.2 MB`) | `35.50 ms` (`+5.7 MB`) | — | **`0.046 ms` JS** (`SharedArrayBuffer` in-place) | **~1,000x faster** |
+| **100k Sorted `rangeBy('id', min, max)`** | `14.06 ms` (`+10.3 MB`) | `5.88 ms` (`+6.9 MB`) | — | **`0.0058 ms` JS** (`O(log N)` binary search, `0 B`) | **~2,400x faster** |
+| **10k Cyclic `RingNode` Graph Clone** | Throws on cycle | `2.63 ms` (`+0.7 MB`) | `3.23 ms` (`serde_json`) | **`0.30 ms` JS** / **`0.016 ms` Rust** / **`0.019 ms` Go** | **173x Go / 198x Rust** |
+
+| Bundle Entrypoint | Minified + Gzip |
+| :--- | :--- |
+| **Core (`capnstruct`)** — `defineStruct`, `StructArrayView`, `ref`, `slice`, all primitives | **`6.51 KiB`** |
+| **Codegen (`capnstruct/codegen`)** — Rust `#[repr(C)]` + Go / TinyGo WASM generator | **`2.53 KiB`** |
 
 ---
 
-## What You Can Build With `capnstruct`
+## Quick Start
 
-### 1. Single Binary Structs, Protocol Headers & Nested Messages (`0` Offset Math)
-`capnstruct` is not just for arrays. Wrap any single packet, file header, or nested RPC message in a `StructView` via `Schema.view(bytes)` or allocate one via `Schema.create({...})`:
+### 1. Zero-Copy Binary Structs & In-Place Mutation
 
 ```ts
-import { defineStruct, u8, u16, u32, i16, i32, f16, fixedStr, fixedBytes, sentinel, scaled, str, slice } from 'capnstruct';
+import { defineStruct, u32, i32, i16, fixedStr, sentinel, scaled, str, slice } from 'capnstruct';
 
 const Waypoint = defineStruct('Waypoint', {
-  lat: scaled(i32, 1e6),          // stores compact 4B i32 on wire, reads/writes float degrees in JS
+  lat: scaled(i32, 1e6),          // 4B int32 on wire <-> float degrees in JS
   lon: scaled(i32, 1e6),
-  alt: sentinel(i16, -32768),     // -32768 sentinel on wire <-> null in JS (0 extra validity bytes)
+  alt: sentinel(i16, -32768),     // -32768 on wire <-> null in JS (0 extra bytes)
 });
 
 const RadarPacket = defineStruct('RadarPacket', {
-  magic: fixedStr(4),             // inline [u8; 4] ASCII ("RADR") — 0 tail pointer overhead
-  icao: fixedStr(6),              // inline [u8; 6] hex ID
-  hmac: fixedBytes(16),           // inline [u8; 16] zero-copy Uint8Array sub-slice
+  magic: fixedStr(4),             // inline [u8; 4] ASCII
   seq: u32,
-  snr: f16,                       // 2-byte IEEE 754 half-precision float
-  callsign: str,                  // variable-length UTF-8 string in tail arena ([u32 off, u32 len])
-  route: slice(Waypoint),         // variable-length nested struct slice in tail arena
+  callsign: str,                  // [u32 relOffset, u32 byteLen] into tail arena
+  route: slice(Waypoint),         // [u32 relOffset, u32 count] into tail arena
 });
 
-// Allocate and initialize a single binary struct (or wrap an incoming packet via RadarPacket.view(uint8))
 const pkt = RadarPacket.create({
   magic: 'RADR',
-  icao: 'a8b2c3',
   seq: 42,
-  snr: 18.5,
   callsign: 'SFO_101',
-  route: [
-    { lat: 37.6188, lon: -122.375, alt: null },
-    { lat: 35.6762, lon: 139.6503, alt: 35000 },
-  ],
+  route: [{ lat: 37.6188, lon: -122.375, alt: null }],
 });
 
-// Direct property reads & in-place mutation on the underlying binary buffer
-pkt.seq += 1;
-pkt.callsign = 'SFO_101_EXPRESS';
-console.log(pkt.magic, pkt.route.at(0).alt, pkt.route.at(1).lat); // "RADR", null, 35.6762
-
-// Wire-ready Uint8Array (automatically compacts dead tail bytes if mutated)
-const wireBytes: Uint8Array = pkt.bytes;
+pkt.seq += 1;                     // mutates u32 in-place (0 allocations)
+pkt.route.at(0).alt = 1500;       // updates nested struct in-place
+const wireBytes: Uint8Array = pkt.bytes; // ready for WebSocket, Worker, or WASM
 ```
 
----
-
-### 2. Zero-Copy JS &harr; Rust / C / Zig WebAssembly (`WasmArena`)
-
-Passing structs between JavaScript and WebAssembly via `serde-wasm-bindgen` or JSON serializes every field across the FFI boundary. Writing manual `Uint32Array` / `Float64Array` index arithmetic (`outU32[ptr + i * 16 + 8]`) breaks whenever a struct field changes or `memory.grow()` detaches the buffer.
-
-With `capnstruct`, TypeScript and Rust/C/Zig read and write the **exact same `#[repr(C)]` bytes** inside `WebAssembly.Memory`:
+### 2. Rust `#[repr(C)]` & Go / TinyGo WASM Shared Memory
 
 ```ts
-// Before: Brittle manual pointer arithmetic that breaks when WebAssembly.Memory grows
-const outBuf = wasm.memory.buffer;
-const hdrU32 = new Uint32Array(outBuf, hdrPtr, 17);
-const hitsF64 = new Float64Array(outBuf, hdrU32[15], hdrU32[7] * 8);
-const lat = hitsF64[i * 8], lon = hitsF64[i * 8 + 1];
-```
-
-```ts
-// After: Declarative #[repr(C)] view with automatic WebAssembly.Memory.grow() re-binding
 import { WasmArena, defineStruct, u32, f64, fixedArray } from 'capnstruct';
+import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
 
-export const IOHeader = defineStruct('IOHeader', {
+const IOHeader = defineStruct('IOHeader', {
   num_samples: u32,
   out_hits_ptr: u32,
-  out_hits_count: u32,
+  samples: fixedArray(f64, 1024),
 });
 
-export const OutHit = defineStruct('OutHit', {
-  lat: f64,
-  lon: f64,
-  start: f64,
-  pre: f64,
-  set_idx: u32,
-  n_flights: u32,
-  fids: fixedArray(u32, 6),
-});
+// Generate exact C-ABI Rust #[repr(C)] or Go / TinyGo structs (+ //go:wasmexport capn_alloc):
+console.log(toRustReprC([IOHeader]));
+console.log(toGoStruct([IOHeader], { pkg: 'radar', tinygo: true }));
 
-const arena = new WasmArena(wasm.memory, 64);
+// Share WebAssembly.Memory with automatic re-binding on memory.grow():
+const arena = new WasmArena(wasm.memory, wasm.alloc);
 const hdr = arena.allocOne(IOHeader);
-
-wasm.run_search(hdr.byteOffset); // Even if WASM calls memory.grow() inside run_search(),
-                                 // hdr re-binds automatically on the next property read!
-
-for (const hit of OutHit.array(wasm.memory, hdr.out_hits_ptr, hdr.out_hits_count)) {
-  console.log(hit.lat, hit.lon, hit.fids[0]); // 0 JS object allocations per row
-}
+wasm.run_search(hdr.byteOffset);
+console.log(hdr.num_samples);     // auto-rebinds even if WASM grew memory
 ```
-Generate matching **Rust `#[repr(C)]` structs** (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) or **Go / TinyGo WASM zero-copy structs** (`toGoStruct` / `--go-wasm` with `//go:wasmexport capn_alloc` & `CapnSliceView[T]`) with compile-time `size_of` / `align_of` / `offset_of` assertions from the exact same schema:
 
-```bash
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.go --pkg radar
-npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm
-```
----
-
-### 3. Web Worker `SharedArrayBuffer` & `postMessage` (`~1,150x` Faster Than `structuredClone`)
-
-Sending an array or state tree of 25,000 objects to a Web Worker via `postMessage(data)` runs `structuredClone`, freezing the main thread for ~45 ms while deep-cloning every object and string across heaps.
-
-With `capnstruct`, keep your state in a `SharedArrayBuffer` (or transferable `ArrayBuffer`) and mutate fields in place from either thread with `0 ms` serialization cost:
+### 3. Queryable Tables (`O(log N)`) & Cyclic Graphs (`ref`)
 
 ```ts
-// main.ts — share the backing buffer once (0 ms clone overhead)
-const sab = new SharedArrayBuffer(2 * 1024 * 1024);
-const rows = Telemetry.array(sab, { byteOffset: 0, count: 25_000 });
-worker.postMessage({ buffer: sab, count: rows.length });
+import { defineStruct, u32, f64, str, ref, slice } from 'capnstruct';
 
-// worker.ts — mutate primitives, strings, and slices in place
-const view = Telemetry.array(buffer, { byteOffset: 0, count });
-const cur = view.cursor();
-for (let i = 0; i < view.length; i += 250) {
-  cur.seek(i).callsign = 'UPD_999'; // Overwrites UTF-8 bytes in place (0 allocations)
-}
-```
+// O(log N) binary range slice & zero-allocation flyweight scan on packed tables:
+const windowRows = TelemetryRow.array(wireBytes).rangeBy('ts', 1500, 2500);
 
----
-
-### 4. Zero-Heap Queryable Tables, Columnar Projections & Schema Evolution
-
-Unpacking binary payloads into `[{ ts, lat, lon, ... }]` JS arrays just to binary-search a time window or filter rows causes 8x V8 heap amplification and major GC pauses. `StructArrayView` queries and slices binary buffers directly in external memory:
-
-```ts
-// 1. O(log N) binary search time-window slice (~0.0027 ms on 100k rows, 0 allocations)
-const windowView = samples.rangeBy('t', 1700000000, 1700000600);
-
-// 2. Zero-heap binary filtering -> returns a packed Uint8Array ready for network/Worker transfer
-const matchedBytes = windowView.filterBytes((row) => row.val > 50.0);
-
-// 3. Bulk memcpy chunk concatenation
-const mergedBytes = SpdSample.concatBytes([chunkA, chunkB, matchedBytes]);
-
-// 4. Zero-copy TypedArray column extraction for WebGPU, WebGL, DuckDB, or Apache Arrow
-const vals: Float64Array = samples.column('val');
-```
-
----
-
-### 5. Circular References & Recursive Schemas (`ref(() => Node)`)
-
-`JSON.stringify` throws `TypeError: Converting circular structure to JSON` on circular references, and V8's `structuredClone` overflows the C++ call stack on deep linked structures. `ref(() => Struct)` stores an 8-byte relative-offset pointer (`[u32 relOffset, u32 present]`) that packs cyclic JS graphs into a flat `Uint8Array` in $O(1)$ stack space, traverses cycles in $O(1)$ with zero allocations, and reconstructs circular JS references via `.toObject()`:
-
-```ts
-import { defineStruct, u32, str, ref, slice } from 'capnstruct';
-
+// Cyclic object graphs packed into flat Uint8Array in O(1) stack space:
 const GraphNode: any = defineStruct('GraphNode', {
   id: u32,
   label: str,
   next: ref(() => GraphNode),
   children: slice(() => GraphNode),
 });
-
-const n1: any = { id: 1, label: 'alpha', next: null, children: [] };
-const n2: any = { id: 2, label: 'beta', next: n1, children: [] };
-n1.next = n2; // cycle: n1 <-> n2
-n1.children = [n2];
-
-const bytes = GraphNode.pack([n1, n2]);
-const view = GraphNode.array(bytes);
-
-// Zero-allocation O(1) cyclic traversal across arbitrary depth
-console.log(view.at(0).next.next.id); // 1
-
-// Cycle-preserving materialization back to circular JS objects
-const obj = view.at(0).toObject();
-console.log(obj.next.next === obj); // true
 ```
-
----
-
-## Wire Layout & Safety Guarantees
-
-```text
-+------------------------------------------------------------------+
-| Fixed #[repr(C)] Struct Table (N * def.size bytes, 8B-aligned)    |
-+------------------------------------------------------------------+
-| Row 0: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]  |
-| Row 1: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]  |
-+------------------------------------------------------------------+
-| Optional Tail Arena (UTF-8 strings, slices & ref targets)        |
-|   offset = structBaseOffset + relOff                             |
-+------------------------------------------------------------------+
-```
-
-1. **Zero-Header Fixed Layouts**: Structs using only primitives, `fixedArray`, `fixedStr(N)`, `fixedBytes(N)`, `sentinel()`, `scaled()`, and `f16` have **zero pointers and zero tail arena**—the buffer is 100% byte-for-byte identical to a C/Rust `#[repr(C)]` struct or array.
-2. **Wire-Safe Pointer Bounds & Amplification Defense**: Wrapping a `Uint8Array` sub-slice clamps the `DataView` window to `[byteOffset .. byteOffset + byteLength]`. Every relative `[u32 off, u32 len]` tail descriptor is validated against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')` on corrupt/negative/overflowing offsets), and `.toObject()` / `.toObjects()` enforce an `8x` traversal budget against pointer-aliasing amplification attacks while preserving valid object cycles.
-3. **Cap'n-Style Wire Stride Evolution**: Pass an older schema to `NewSchema.array(v1Bytes, OldSchema)` to read older binary payloads with zero copying; fields beyond the older wire stride return default values (`0`, `""`, `[]`, `null`) and automatically upgrade in place on mutation.
-
----
-
-## Data Layout > Switching to Bun, Rust, or Go/TinyGo (Benchmarks & Bundle Size)
-
-Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)**, **Bun v1.4.3 (JavaScriptCore)**, **Rust 1.96 (`rustc -O3 wasm32`)**, **Go 1.27 (`GOOS=wasip1 GOARCH=wasm`)**, and **TinyGo 0.43 (`-target=wasi -opt=2`)**, plus `pnpm run size`):
-
-| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Go·TinyGo WASM / Rust `#[repr(C)]`) | Speedup (Layout vs. Engine/Lang) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`100,000` `SpdSample` Numeric Struct Scan** (`5.27 MiB` JSON vs `2.29 MiB` `capnstruct`) | 14.14 ms / **+10.30 MB** | 5.65 ms / **+6.87 MB** | 3.68 ms (in-WASM) / 23.7 ms (FFI) | **0.31 ms JS** (Bun: 0.16 ms) / **0.084 ms TinyGo** / **0.107 ms Go** / **0.071 ms Rust** (**0 MB**) | **45x faster JS / 168x TinyGo / 198x Rust** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 13.24 ms / **+8.17 MB** | 7.36 ms / **+5.21 MB** | 4.16 ms (in-WASM JSON scan) | **0.39 ms JS** / **0.031 ms Go WASM** / **0.034 ms TinyGo** / **0.020 ms Rust** (**0 MB**) | **34x faster JS / 428x Go WASM / 651x Rust** |
-| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.48 ms / **+3.70 MB** | 2.10 ms / **+1.72 MB** | 5.48 ms (FFI) | **0.34 ms JS** / **0.036 ms Rust** (**0 MB**) | **16x faster JS / 153x Rust** |
-| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.94 ms / **+14.24 MB** | 35.50 ms / **+5.73 MB** | — | **0.046 ms JS** (Bun: 0.028 ms) / **+0.00 MB** | **~1,000x–1,270x faster (0 MB)** |
-| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.06 ms / **+10.33 MB** | 5.88 ms / **+6.88 MB** | — | **0.0058 ms JS** / **+0.00 MB** | **~2,408x faster (0 MB heap)** |
-| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` / `serde_json` / `encoding/json` throw!) | 3.23 ms (`structuredClone`) / **+1.76 MB** | 2.63 ms (`structuredClone`) / **+0.69 MB** | Throws on cyclic JSON! | **0.30 ms JS** / **0.019 ms Go WASM** / **0.034 ms TinyGo** / **0.016 ms Rust** (**0 MB**) | **8.7x faster JS / 173x Go WASM / 190x Rust** |
-
-| Entrypoint | Minified | Minified + Gzip (`level: 9`) |
-| :--- | :--- | :--- |
-| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,666 B) |
-| **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` & Go / TinyGo WASM Codegen (`capnstruct/codegen`)** | 7.44 KiB | **2.53 KiB** (2,595 B) |

@@ -10,6 +10,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'capnstruct',
+      tableOfContents: false,
       favicon: '/favicon.svg',
       logo: {
         src: './src/assets/logo.svg',

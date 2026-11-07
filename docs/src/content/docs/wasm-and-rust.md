@@ -40,7 +40,7 @@ console.log(points.at(0).x, points.at(0).label); // 1.5, 'radar-0'
 
 ## 2. Rust `#[repr(C)]` Codegen (`capnstruct/codegen` & CLI)
 
-`capnstruct/codegen` and the `capnstruct` CLI generate exact **Rust `#[repr(C)]` struct definitions** (`toRustReprC`), including zero-copy `CapnStr`, `CapnSlice<T>`, and `CapnRef<T>` helpers and compile-time `size_of` / `align_of` / `offset_of!` assertions directly from your TypeScript schemas. Recursive and mutually recursive schemas (`ref(() => Node)`, `slice(() => Node)`) are handled automatically without duplicate definitions.
+`capnstruct/codegen` and the `capnstruct` CLI generate exact **Rust `#[repr(C)]` struct definitions** (`toRustReprC`), including zero-copy `CapnStr`, `CapnSlice<T>`, and `CapnRef<T>` helpers and compile-time `size_of` / `align_of` / `offset_of!` assertions directly from your TypeScript schemas. Self-referential (`(self) => ({ next: ref(self), children: slice(self) })`) and mutually recursive (`ref(() => Node)`) schemas are handled automatically without duplicate definitions.
 
 ### Programmatic API
 
@@ -103,8 +103,8 @@ const _: () = {
 
 `toGoStruct` (alias `generateGo`) and `npx capnstruct` generate zero-copy Go struct definitions that work identically across **64-bit native Go** (`amd64`/`arm64`), **standard Go WebAssembly** (`GOOS=wasip1 GOARCH=wasm` / `GOOS=js GOARCH=wasm`), and **TinyGo WebAssembly** (`tinygo build -target=wasi -opt=2 -no-debug`, producing compact ~26 KiB WASM binaries):
 
-- **32-Bit WASM vs. 64-Bit Native Layout Parity**: On 32-bit WebAssembly targets (especially TinyGo `wasm32`), natural alignment of `uint64`/`int64`/`float64` is 4 bytes instead of 8 bytes. `toGoStruct` inserts explicit `_padN [k]byte` fields before every 8-byte field and at the struct tail so the memory layout is 100% byte-for-byte identical across JS `DataView`, Rust `#[repr(C)]`, Go `wasip1/wasm`, TinyGo `wasi`, and 64-bit native Go—verified at compile time by `unsafe.Sizeof` and `unsafe.Offsetof` blank-constant assertions.
-- **Zero-Copy Linear Memory Views (`CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`)**: Cast any `(ptr uintptr, byteLen uint32)` passed across a `//go:wasmexport` boundary directly into a `[]T` or `*T` slice in $O(1)$ without copying or decoding.
+- **32-Bit WASM vs. 64-Bit Native Layout Parity**: On 32-bit WebAssembly targets (especially TinyGo `wasm32`), natural alignment of `uint64`/`int64`/`float64` is 4 bytes instead of 8 bytes. `toGoStruct` inserts explicit `_padN [k]byte` fields before every 8-byte field and at the struct tail so the memory layout is 100% byte-for-byte identical across JS `DataView`, Rust `#[repr(C)]`, Go `wasip1/wasm`, TinyGo `wasi`, and 64-bit native Go (verified at compile time by `unsafe.Sizeof` and `unsafe.Offsetof` blank-constant assertions).
+- **Zero-Copy Linear Memory Views (`CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`)**: Cast any `(ptr uintptr, byteLen uint32)` passed across a `//go:wasmexport` boundary directly into a `[]T` or `*T` slice in `O(1)` without copying or decoding.
 - **Pinned WASM Arena Exports (`{ wasm: true }` / `--go-wasm`)**: Emits `//go:wasmexport capn_alloc` (8-byte aligned bump allocation pinned against Go/TinyGo GC collection) and `//go:wasmexport capn_reset` so the JS host can write packed `capnstruct` bytes directly into `wasmInstance.exports.memory.buffer`.
 
 ### Programmatic API & CLI

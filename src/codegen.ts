@@ -98,7 +98,7 @@ function descHasFloat(desc: FieldDesc, seen = new Set<FieldDesc>()): boolean {
 export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptions = {}): string {
   const defs = collectDefs(schemas);
   const derives = options.derive ?? ['Copy', 'Clone', 'Debug', 'PartialEq'];
-  const eqDerives = options.derive ?? [...new Set([...derives, 'Eq'])];
+  const eqDerives = options.derive ?? Array.from(new Set([...derives, 'Eq']));
   const emitAsserts = options.assertions ?? true;
   const vis = options.vis === undefined ? 'pub ' : options.vis ? `${options.vis} ` : '';
   const flags = { str: false, slice: false, ref: false };

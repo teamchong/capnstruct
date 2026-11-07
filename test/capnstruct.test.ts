@@ -648,12 +648,12 @@ describe('capnstruct', () => {
         expect(readFileSync(objPath).byteLength).toBeGreaterThan(0);
 
         // Also compile and execute Go WASM (GOOS=wasip1 GOARCH=wasm) & TinyGo WASM (-target=wasi) with { wasm: true }
-        const RingNode: any = defineStruct('RingNode', {
-          id: u32,
-          weight: f64,
-          label: str,
-          next: ref(() => RingNode),
-        });
+    const RingNode = defineStruct('RingNode', (self) => ({
+      id: u32,
+      weight: f64,
+      label: str,
+      next: ref(self),
+    }));
         const wasmGoCode =
           toGoStruct([SpdSample, RingNode], { wasm: true }) +
           `\n//go:wasmexport sum_ring\nfunc sum_ring(ptr uintptr, byteLen uint32, count uint32) float64 {\n\tb := CapnBytes(ptr, byteLen)\n\tnodes := CapnSliceView[RingNode](b, count)\n\tcur := &nodes[0]\n\tvar total float64\n\tfor i := uint32(0); i < count && cur != nil; i++ {\n\t\ttotal += cur.Weight + float64(len(cur.Label.String(b)))\n\t\tcur = cur.Next.Ptr(b)\n\t}\n\treturn total\n}\n\nfunc main() {}\n`;
@@ -724,14 +724,18 @@ describe('capnstruct', () => {
             shim as WebAssembly.Imports,
           );
           (inst.exports._initialize as () => void)();
-          return inst.exports as Record<string, any>;
-        };
+      return inst.exports as {
+        memory: WebAssembly.Memory;
+        capn_alloc: (n: number) => number;
+        capn_reset: () => void;
+        sum_ring: (ptr: number, byteLen: number, count: number) => number;
+      };
+    };
 
-        const n1: any = { id: 1, weight: 10.5, label: 'alpha', next: null };
-        const n2: any = { id: 2, weight: 20.25, label: 'beta', next: n1 };
-        n1.next = n2; // cycle: n1 <-> n2
-        const packedRing = RingNode.pack([n1, n2]);
-
+    const n1 = RingNode.item({ id: 1, weight: 10.5, label: 'alpha', next: null });
+    const n2 = RingNode.item({ id: 2, weight: 20.25, label: 'beta', next: n1 });
+      n1.next = n2; // cycle: n1 <-> n2
+      const packedRing = RingNode.pack([n1, n2]);
         const goExp = instantiateWasiModule(goWasmPath);
         const goPtr = goExp.capn_alloc(packedRing.byteLength) as number;
         new Uint8Array((goExp.memory as WebAssembly.Memory).buffer, goPtr, packedRing.byteLength).set(
@@ -1318,20 +1322,19 @@ describe('capnstruct', () => {
 
   describe('Circular References, Self-Referential & Mutually Recursive Schemas (ref & slice)', () => {
     it('packs, traverses in zero-copy, mutates, compacts, and materializes circular object graphs via ref(() => Node)', () => {
-      const GraphNode: any = defineStruct('GraphNode', {
+      const GraphNode = defineStruct('GraphNode', (self) => ({
         id: u32,
         label: str,
-        next: ref(() => GraphNode),
-        prev: ref(() => GraphNode),
-      });
+        next: ref(self),
+        prev: ref(self),
+      }));
 
       // Build a circular doubly-linked list + self-referential node in JS
-      const n1: any = { id: 1, label: 'alpha', next: null, prev: null };
-      const n2: any = { id: 2, label: 'beta', next: null, prev: n1 };
+      const n1 = GraphNode.item({ id: 1, label: 'alpha', next: null, prev: null });
+      const n2 = GraphNode.item({ id: 2, label: 'beta', next: null, prev: n1 });
       n1.next = n2;
       n2.next = n1; // cycle: n1 <-> n2
       n1.prev = n2;
-
       // JSON.stringify crashes on circular references, while capnstruct packs them into a flat Uint8Array!
       expect(() => JSON.stringify(n1)).toThrow(TypeError);
 
@@ -1342,17 +1345,17 @@ describe('capnstruct', () => {
       // Zero-copy O(1) cyclic traversal across arbitrary depth without allocating JS objects
       const v0 = table.at(0);
       expect(v0.id).toBe(1);
-      expect(v0.next.id).toBe(2);
-      expect(v0.next.label).toBe('beta');
-      expect(v0.next.next.id).toBe(1);
-      expect(v0.next.next.prev.id).toBe(2);
-      expect(v0.prev.prev.id).toBe(1);
+    expect(v0.next?.id).toBe(2);
+    expect(v0.next?.label).toBe('beta');
+    expect(v0.next?.next?.id).toBe(1);
+    expect(v0.next?.next?.prev?.id).toBe(2);
+    expect(v0.prev?.prev?.id).toBe(1);
 
       // .toObject() and .toObjects() reconstruct the exact circular JS object graph without infinite recursion
       const materialized = v0.toObject();
       expect(materialized.id).toBe(1);
-      expect(materialized.next.id).toBe(2);
-      expect(materialized.next.next).toBe(materialized);
+    expect(materialized.next?.id).toBe(2);
+    expect(materialized.next?.next).toBe(materialized);
       expect(materialized.prev).toBe(materialized.next);
 
       const allObjs = table.toObjects();
@@ -1360,10 +1363,10 @@ describe('capnstruct', () => {
       expect(allObjs[1].next).toBe(allObjs[0]);
 
       // Single-struct create() with a self-cycle (self.next = self) and tail-allocated cycle
-      const selfNode: any = { id: 99, label: 'self-loop', prev: null };
+      const selfNode = GraphNode.item({ id: 99, label: 'self-loop', prev: null });
       selfNode.next = selfNode;
       const sv = GraphNode.create(selfNode);
-      expect(sv.next.next.next.id).toBe(99);
+    expect(sv.next?.next?.next?.id).toBe(99);
       const svObj = sv.toObject();
       expect(svObj.next).toBe(svObj);
 
@@ -1375,26 +1378,25 @@ describe('capnstruct', () => {
     });
 
     it('supports parent/child cycles and mutually recursive schemas across ref() and slice()', () => {
-      const TreeNode: any = defineStruct('TreeNode', {
+      const TreeNode = defineStruct('TreeNode', (self) => ({
         id: u32,
-        parent: ref(() => TreeNode),
-        children: slice(() => TreeNode),
-      });
+        parent: ref(self),
+        children: slice(self),
+      }));
 
-      const root: any = { id: 10, parent: null, children: [] };
-      const childA: any = { id: 20, parent: root, children: [] };
-      const childB: any = { id: 30, parent: root, children: [root] }; // childB.children points back to root!
+      const root = TreeNode.item({ id: 10, parent: null, children: [] });
+      const childA = TreeNode.item({ id: 20, parent: root, children: [] });
+      const childB = TreeNode.item({ id: 30, parent: root, children: [root] }); // childB.children points back to root!
       root.children = [childA, childB];
-
       const bytes = TreeNode.pack([root]);
       const view = TreeNode.view(bytes);
 
       expect(view.id).toBe(10);
       expect(view.children.length).toBe(2);
       expect(view.children.at(0).id).toBe(20);
-      expect(view.children.at(0).parent.id).toBe(10);
-      expect(view.children.at(1).id).toBe(30);
-      expect(view.children.at(1).parent.children.at(0).id).toBe(20);
+    expect(view.children.at(0).parent?.id).toBe(10);
+    expect(view.children.at(1).id).toBe(30);
+    expect(view.children.at(1).parent?.children.at(0).id).toBe(20);
       // Cyclic slice traversal: root -> childB -> root -> childA
       expect(view.children.at(1).children.at(0).children.at(0).id).toBe(20);
 

@@ -3,7 +3,7 @@ title: Live Mutation & Growable Views
 description: Mutate strings and slices in-place on binary views, push and pop rows, and compact dead tail-arena bytes.
 ---
 
-Unlike Apache Arrow, FlatBuffers, or Cap'n Proto—where binary buffers are strictly read-only or cannot shrink/grow variable-length fields—`capnstruct` separates the **developer-facing JS interface** from the **underlying binary arena mechanics**.
+Unlike Apache Arrow, FlatBuffers, or Cap'n Proto (where binary buffers are strictly read-only or cannot shrink/grow variable-length fields), `capnstruct` separates the **developer-facing JS interface** from the **underlying binary arena mechanics**.
 
 ## 1. Mutating Strings (`str`) & Slices (`slice`) on Any View
 

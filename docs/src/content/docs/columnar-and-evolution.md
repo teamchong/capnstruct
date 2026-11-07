@@ -43,7 +43,7 @@ console.log(Array.from(lats)); // [37.7749, 35.6762, 51.5074]
 
 ## 2. Cap'n-Style Schema Evolution (Forward & Backward Wire Stride Compatibility)
 
-In distributed systems, edge Workers, and persistent storage, schemas evolve over time. Unlike rigid C structs—where adding a new field at the end of a struct breaks every existing binary payload—`capnstruct` supports **Cap'n-style wire stride compatibility** with zero per-row header overhead:
+In distributed systems, edge Workers, and persistent storage, schemas evolve over time. Unlike rigid C structs (where adding a new field at the end of a struct breaks every existing binary payload), `capnstruct` supports **Cap'n-style wire stride compatibility** with zero per-row header overhead:
 
 1. **Newer Schema Reading Older Binary Buffers**: Pass the older schema (or `{ stride: OldSchema.size }`) to `NewSchema.view(bytes, OldSchema)` or `NewSchema.array(bytes, OldSchema)`.
    - Fields present in the older wire stride are read directly from binary memory at zero cost.

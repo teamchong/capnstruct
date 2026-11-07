@@ -16,16 +16,16 @@
 
 Switching JS engines (**Node.js V8 &rarr; Bun JavaScriptCore**) speeds up `JSON.parse` + `.filter()` by **~2x**, and rewriting in **Rust (`rustc -O3` WASM)** without changing the wire format still spends **3.7 ms** scanning `5.27 MiB` of ASCII JSON text (or **23.0 ms** copying strings across the JS&harr;WASM FFI boundary).
 
-Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops execution to **0.17&ndash;0.31 ms in standard JavaScript** (**45x faster** than Rust JSON parsing!)—and when you combine `capnstruct` with **Rust / Go / TinyGo WASM**, execution drops to **0.015&ndash;0.071 ms** (**198x&ndash;651x faster** with **0 MB heap / 0 GC pauses**):
+Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops execution to **0.17&ndash;0.31 ms in standard JavaScript** (**45x faster** than Rust JSON parsing!), and when you combine `capnstruct` with **Rust / Go / TinyGo WASM**, execution drops to **0.015&ndash;0.071 ms** (**198x&ndash;651x faster** with **0 MB heap / 0 GC pauses**):
 
-| Workload                                              | Node.js V8 (JSON)        | Bun JSC (~2x)           | Rust `-O3` (JSON / FFI)     | `capnstruct #[repr(C)]` (JS / Rust / Go WASM)               | Speedup                     |
-| :---------------------------------------------------- | :----------------------- | :---------------------- | :-------------------------- | :---------------------------------------------------------- | :-------------------------- |
-| **100k `SpdSample` Scan** (`5.27 MiB` JSON vs `2.29 MiB`) | 14.14 ms (`+10.3 MB`)    | 5.65 ms (`+6.9 MB`)     | 3.68 ms JSON / 23.7 ms FFI  | **0.31 ms JS** / **0.071 ms Rust** / **0.084 ms TinyGo**    | **45x JS / 198x WASM**      |
-| **25k Telemetry Filter** (4% hit rate)                | 13.24 ms (`+8.2 MB`)     | 5.21 ms (`+5.2 MB`)     | 4.16 ms JSON                | **0.39 ms JS** / **0.020 ms Rust** / **0.031 ms Go**        | **34x JS / 651x WASM**      |
-| **25k `QpPoint` JS &harr; WASM Boundary**             | 5.48 ms (`+3.7 MB`)      | 2.10 ms (`+1.7 MB`)     | 5.48 ms (`serde` FFI)       | **0.34 ms JS** / **0.036 ms Rust** (`0 B` copy)             | **16x JS / 153x WASM**      |
-| **25k Worker `postMessage` Round-Trip**               | 45.94 ms (`+14.2 MB`)    | 35.50 ms (`+5.7 MB`)    | —                           | **0.046 ms JS** (`SharedArrayBuffer` in-place)              | **~1,000x faster**          |
-| **100k Sorted `rangeBy('id', min, max)`**             | 14.06 ms (`+10.3 MB`)    | 5.88 ms (`+6.9 MB`)     | —                           | **0.0058 ms JS** (`O(log N)` binary search, `0 B`)          | **~2,400x faster**          |
-| **10k Cyclic `RingNode` Graph Clone**                 | 2.63 ms (`+0.7 MB`)      | 3.23 ms (`serde_json`)  | Throws on cycle             | **0.30 ms JS** / **0.016 ms Rust** / **0.019 ms Go**        | **173x Go / 190x Rust**     |
+| Workload                                                  | Node.js V8 (JSON)     | Bun JSC (~2x)          | Rust `-O3` (JSON / FFI)    | `capnstruct #[repr(C)]` (JS / Rust / Go WASM)            | Speedup                 |
+| :-------------------------------------------------------- | :-------------------- | :--------------------- | :------------------------- | :------------------------------------------------------- | :---------------------- |
+| **100k `SpdSample` Scan** (`5.27 MiB` JSON vs `2.29 MiB`) | 14.14 ms (`+10.3 MB`) | 5.65 ms (`+6.9 MB`)    | 3.68 ms JSON / 23.7 ms FFI | **0.31 ms JS** / **0.071 ms Rust** / **0.084 ms TinyGo** | **45x JS / 198x WASM**  |
+| **25k Telemetry Filter** (4% hit rate)                    | 13.24 ms (`+8.2 MB`)  | 5.21 ms (`+5.2 MB`)    | 4.16 ms JSON               | **0.39 ms JS** / **0.020 ms Rust** / **0.031 ms Go**     | **34x JS / 651x WASM**  |
+| **25k `QpPoint` JS &harr; WASM Boundary**                 | 5.48 ms (`+3.7 MB`)   | 2.10 ms (`+1.7 MB`)    | 5.48 ms (`serde` FFI)      | **0.34 ms JS** / **0.036 ms Rust** (`0 B` copy)          | **16x JS / 153x WASM**  |
+| **25k Worker `postMessage` Round-Trip**                   | 45.94 ms (`+14.2 MB`) | 35.50 ms (`+5.7 MB`)   | -                          | **0.046 ms JS** (`SharedArrayBuffer` in-place)           | **~1,000x faster**      |
+| **100k Sorted `rangeBy('id', min, max)`**                 | 14.06 ms (`+10.3 MB`) | 5.88 ms (`+6.9 MB`)    | -                          | **0.0058 ms JS** (`O(log N)` binary search, `0 B`)       | **~2,400x faster**      |
+| **10k Cyclic `RingNode` Graph Clone**                     | 2.63 ms (`+0.7 MB`)   | 3.23 ms (`serde_json`) | Throws on cycle            | **0.30 ms JS** / **0.016 ms Rust** / **0.019 ms Go**     | **173x Go / 190x Rust** |
 
 ### Wire Layout & Safety Guarantees
 
@@ -40,7 +40,7 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 +-------------------------------------------------------------------+
 ```
 
-1. **Zero-Header Fixed Layouts**: Structs using only primitives, `fixedArray`, `fixedStr(N)`, `fixedBytes(N)`, `sentinel()`, `scaled()`, and `f16` have **zero pointers and zero tail arena** — 100% byte-for-byte identical to a C/Rust `#[repr(C)]` struct or array.
+1. **Zero-Header Fixed Layouts**: Structs using only primitives, `fixedArray`, `fixedStr(N)`, `fixedBytes(N)`, `sentinel()`, `scaled()`, and `f16` have **zero pointers and zero tail arena** (100% byte-for-byte identical to a C/Rust `#[repr(C)]` struct or array).
 2. **Wire-Safe Pointer Bounds & Amplification Defense**: Wrapping a `Uint8Array` sub-slice clamps the `DataView` window to `[byteOffset .. byteOffset + byteLength]`, validates every `[relOffset, length]` descriptor against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget against pointer-aliasing amplification attacks while preserving valid cycles.
 3. **Cap'n-Style Wire Stride Evolution**: Pass an older schema to `NewSchema.array(v1Bytes, OldSchema)` to read older binary payloads with zero copying; fields beyond the older wire stride return default values (`0`, `""`, `[]`, `null`) and upgrade in place on mutation.
 
@@ -87,21 +87,21 @@ import { defineStruct, u32, str, ref, slice } from 'capnstruct';
 const table = RadarPacket.array(wireBytes);
 const subView = table.rangeBy('seq', 10, 50);
 
-// 2. Cyclic object graphs packed into flat Uint8Array in O(1) stack space:
-const GraphNode: any = defineStruct('GraphNode', {
+// 2. Cyclic object graphs packed into flat Uint8Array in O(1) stack space (100% inferred types):
+const GraphNode = defineStruct('GraphNode', (self) => ({
   id: u32,
   label: str,
-  next: ref(() => GraphNode),
-  children: slice(() => GraphNode),
-});
+  next: ref(self),
+  children: slice(self),
+}));
 
-const n1: any = { id: 1, label: 'alpha', next: null, children: [] };
-const n2: any = { id: 2, label: 'beta', next: n1, children: [n1] };
+const n1 = GraphNode.item({ id: 1, label: 'alpha', next: null, children: [] });
+const n2 = GraphNode.item({ id: 2, label: 'beta', next: n1, children: [n1] });
 n1.next = n2;
 
 const bytes = GraphNode.pack([n1, n2]);
 const view = GraphNode.array(bytes);
-console.log(view.at(0).next.next.id === view.at(0).id); // true (0 allocations)
+console.log(view.at(0).next?.next?.id === view.at(0).id); // true (0 allocations)
 ```
 
 ### 3. Rust `#[repr(C)]` & Go / TinyGo WASM Zero-Copy Codegen
@@ -119,7 +119,7 @@ npx capnstruct ./src/schema.ts -o ./src/schema.go --pkg radar             # Nati
 npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm          # TinyGo (-target=wasi)
 ```
 
-| Entrypoint                                                                       | Minified  | Minified + Gzip                     |
-| :------------------------------------------------------------------------------- | :-------- | :---------------------------------- |
+| Entrypoint                                                                          | Minified  | Minified + Gzip                       |
+| :---------------------------------------------------------------------------------- | :-------- | :------------------------------------ |
 | **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena`) | 18.53 KiB | **7.02 KiB** (`6.51 KiB` schema core) |
-| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen)          | 7.44 KiB  | **2.53 KiB**                        |
+| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen)             | 7.44 KiB  | **2.53 KiB**                          |

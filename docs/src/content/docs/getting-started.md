@@ -41,23 +41,23 @@ console.log(SpdSample.offsetOf('val')); // 8
 
 ### Supported Field Descriptors
 
-| Descriptor | Size | Alignment | JS/TS Value Type | C / Rust `#[repr(C)]` Equivalent |
-| :--- | :--- | :--- | :--- | :--- |
-| `u8` / `i8` | 1 B | 1 B | `number` | `u8` / `i8` |
-| `u16` / `i16` | 2 B | 2 B | `number` | `u16` / `i16` |
-| `f16` | 2 B | 2 B | `number` (`Float16Array` for `.column()`) | `u16` (IEEE 754 binary16) |
-| `u32` / `i32` / `f32` | 4 B | 4 B | `number` | `u32` / `i32` / `f32` |
-| `u64` / `i64` | 8 B | 8 B | `bigint` (accepts `number` on write) | `u64` / `i64` |
-| `f64` | 8 B | 8 B | `number` | `f64` |
-| `fixedStr(N)` | `N` B | 1 B | `string` (null-padded UTF-8, 0 tail indirection) | `[u8; N]` |
-| `fixedBytes(N)` | `N` B | 1 B | `Uint8Array` (zero-copy sub-slice) | `[u8; N]` |
-| `sentinel(prim, nullVal)` / `nullable(prim, nullVal)` | `prim.size` | `prim.align` | `number` (or `bigint`) `\| null` | Same as `prim` |
-| `scaled(prim, factor, { null? })` | `prim.size` | `prim.align` | `number` (or `number \| null`) | Same as `prim` (stores `Math.round(val * factor)`) |
-| `fixedArray(el, N)` | `N * el.size` | `el.align` | `TypedArray` (primitives) or `StructArrayView` | `[T; N]` |
-| `str` | 8 B inline | 4 B | `string` (UTF-8 in tail arena) | `CapnStr { off: u32, len: u32 }` |
-| `slice(el)` / `slice(() => el)` | 8 B inline | 4 B | `TypedArray` / `StructArrayView` | `CapnSlice<T> { off: u32, len: u32 }` |
-| `ref(Struct)` / `ref(() => Struct)` | 8 B inline | 4 B | `StructView<F> \| null` (supports circular refs) | `CapnRef<T> { off: u32, present: u32 }` |
-| `StructDef` | `def.size` | `def.align` | `StructView<F>` (nested struct) | Nested `#[repr(C)]` struct |
+| Descriptor                                            | Size          | Alignment    | JS/TS Value Type                                 | C / Rust `#[repr(C)]` Equivalent                   |
+| :---------------------------------------------------- | :------------ | :----------- | :----------------------------------------------- | :------------------------------------------------- |
+| `u8` / `i8`                                           | 1 B           | 1 B          | `number`                                         | `u8` / `i8`                                        |
+| `u16` / `i16`                                         | 2 B           | 2 B          | `number`                                         | `u16` / `i16`                                      |
+| `f16`                                                 | 2 B           | 2 B          | `number` (`Float16Array` for `.column()`)        | `u16` (IEEE 754 binary16)                          |
+| `u32` / `i32` / `f32`                                 | 4 B           | 4 B          | `number`                                         | `u32` / `i32` / `f32`                              |
+| `u64` / `i64`                                         | 8 B           | 8 B          | `bigint` (accepts `number` on write)             | `u64` / `i64`                                      |
+| `f64`                                                 | 8 B           | 8 B          | `number`                                         | `f64`                                              |
+| `fixedStr(N)`                                         | `N` B         | 1 B          | `string` (null-padded UTF-8, 0 tail indirection) | `[u8; N]`                                          |
+| `fixedBytes(N)`                                       | `N` B         | 1 B          | `Uint8Array` (zero-copy sub-slice)               | `[u8; N]`                                          |
+| `sentinel(prim, nullVal)` / `nullable(prim, nullVal)` | `prim.size`   | `prim.align` | `number` (or `bigint`) `\| null`                 | Same as `prim`                                     |
+| `scaled(prim, factor, { null? })`                     | `prim.size`   | `prim.align` | `number` (or `number \| null`)                   | Same as `prim` (stores `Math.round(val * factor)`) |
+| `fixedArray(el, N)`                                   | `N * el.size` | `el.align`   | `TypedArray` (primitives) or `StructArrayView`   | `[T; N]`                                           |
+| `str`                                                 | 8 B inline    | 4 B          | `string` (UTF-8 in tail arena)                   | `CapnStr { off: u32, len: u32 }`                   |
+| `slice(el)` / `slice(() => el)`                       | 8 B inline    | 4 B          | `TypedArray` / `StructArrayView`                 | `CapnSlice<T> { off: u32, len: u32 }`              |
+| `ref(Struct)` / `ref(() => Struct)`                   | 8 B inline    | 4 B          | `StructView<F> \| null` (supports circular refs) | `CapnRef<T> { off: u32, present: u32 }`            |
+| `StructDef`                                           | `def.size`    | `def.align`  | `StructView<F>` (nested struct)                  | Nested `#[repr(C)]` struct                         |
 
 Pack an array of plain JS objects into a tight 8-byte-aligned `Uint8Array` via `SpdSample.pack(rows)` (or `pack(SpdSample, rows)`), and wrap any `Uint8Array`, `ArrayBuffer`, `DataView`, or `WebAssembly.Memory` without copying via `SpdSample.array(bytes)`:
 

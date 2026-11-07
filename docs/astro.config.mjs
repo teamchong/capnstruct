@@ -7,6 +7,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   site: 'https://capnstruct.teamchong.net',
+  markdown: {
+    gfm: true,
+  },
   integrations: [
     starlight({
       title: 'capnstruct',

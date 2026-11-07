@@ -121,7 +121,11 @@ export interface ArrayDesc<E extends FieldDesc = FieldDesc, N extends number = n
   readonly rustType: string;
 }
 
-export interface SliceDesc<E extends FieldDesc = FieldDesc> {
+export interface SelfRef {
+  readonly kind: 'self';
+}
+
+export interface SliceDesc<E extends FieldDesc | SelfRef = FieldDesc> {
   readonly kind: 'slice';
   readonly element: E;
   readonly size: 8;
@@ -129,7 +133,7 @@ export interface SliceDesc<E extends FieldDesc = FieldDesc> {
   readonly rustType: string;
 }
 
-export interface RefDesc<S extends StructDefLike<any> = StructDefLike<any>> {
+export interface RefDesc<S extends StructDefLike<any> | SelfRef = StructDefLike<any>> {
   readonly kind: 'ref';
   readonly element: S;
   readonly size: 8;
@@ -165,8 +169,8 @@ export type FieldDesc =
   | FixedBytesDesc
   | StrDesc
   | ArrayDesc
-  | SliceDesc
-  | RefDesc
+  | SliceDesc<any>
+  | RefDesc<any>
   | StructDefLike;
 export type FieldRecord = Record<string, FieldDesc>;
 
@@ -206,7 +210,7 @@ export type TypedArrayFor<T extends PrimitiveName> = T extends 'u8'
                       ? Float64Array
                       : boolean[];
 
-export type FieldValue<D extends FieldDesc = FieldDesc> =
+export type FieldValue<D extends FieldDesc = FieldDesc, SelfF extends FieldRecord = FieldRecord> =
   D extends NullablePrimitiveDesc<infer P>
     ? PrimitiveTsType<P> | null
     : D extends PrimitiveDesc<infer P>
@@ -220,22 +224,28 @@ export type FieldValue<D extends FieldDesc = FieldDesc> =
               ? TypedArrayFor<P>
               : E extends StructDefLike<infer SF>
                 ? StructArrayView<SF>
-                : PlainFieldValue<E>[]
+                : PlainFieldValue<E, SelfF>[]
             : D extends SliceDesc<infer E>
-              ? E extends PrimitiveDesc<infer P>
-                ? TypedArrayFor<P>
-                : E extends StructDefLike<infer SF>
-                  ? StructArrayView<SF>
-                  : PlainFieldValue<E>[]
+              ? E extends SelfRef
+                ? StructArrayView<SelfF>
+                : E extends PrimitiveDesc<infer P>
+                  ? TypedArrayFor<P>
+                  : E extends StructDefLike<infer SF>
+                    ? StructArrayView<SF>
+                    : E extends FieldDesc
+                      ? PlainFieldValue<E, SelfF>[]
+                      : never
               : D extends RefDesc<infer SF>
-                ? SF extends StructDefLike<infer F>
-                  ? StructView<F> | null
-                  : any
+                ? SF extends SelfRef
+                  ? StructView<SelfF> | null
+                  : SF extends StructDefLike<infer F>
+                    ? StructView<F> | null
+                    : any
                 : D extends StructDefLike<infer SF>
                   ? StructView<SF>
                   : never;
 
-export type FieldInput<D extends FieldDesc> =
+export type FieldInput<D extends FieldDesc = FieldDesc, SelfF extends FieldRecord = FieldRecord> =
   D extends NullablePrimitiveDesc<infer P>
     ? PrimitiveInputType<P> | null | undefined
     : D extends PrimitiveDesc<infer P>
@@ -252,33 +262,42 @@ export type FieldInput<D extends FieldDesc> =
                     | ArrayLike<Partial<StructInput<SF>> | StructView<SF>>
                     | Iterable<Partial<StructInput<SF>> | StructView<SF>>
                     | StructArrayView<SF>
-                : ArrayLike<FieldInput<E>> | Iterable<FieldInput<E>>
+                : ArrayLike<FieldInput<E, SelfF>> | Iterable<FieldInput<E, SelfF>>
             : D extends SliceDesc<infer E>
-              ? E extends PrimitiveDesc<infer P>
-                ? ArrayLike<PrimitiveInputType<P>> | Iterable<PrimitiveInputType<P>>
-                : E extends StructDefLike<infer SF>
-                  ?
-                      | ArrayLike<Partial<StructInput<SF>> | StructView<SF>>
-                      | Iterable<Partial<StructInput<SF>> | StructView<SF>>
-                      | StructArrayView<SF>
-                  : ArrayLike<FieldInput<E>> | Iterable<FieldInput<E>>
+              ? E extends SelfRef
+                ?
+                    | ArrayLike<Partial<StructInput<SelfF>> | StructView<SelfF>>
+                    | Iterable<Partial<StructInput<SelfF>> | StructView<SelfF>>
+                    | StructArrayView<SelfF>
+                : E extends PrimitiveDesc<infer P>
+                  ? ArrayLike<PrimitiveInputType<P>> | Iterable<PrimitiveInputType<P>>
+                  : E extends StructDefLike<infer SF>
+                    ?
+                        | ArrayLike<Partial<StructInput<SF>> | StructView<SF>>
+                        | Iterable<Partial<StructInput<SF>> | StructView<SF>>
+                        | StructArrayView<SF>
+                    : E extends FieldDesc
+                      ? ArrayLike<FieldInput<E, SelfF>> | Iterable<FieldInput<E, SelfF>>
+                      : never
               : D extends RefDesc<infer SF>
-                ? SF extends StructDefLike<infer F>
-                  ? Partial<StructInput<F>> | StructView<F> | null | undefined
-                  : any
+                ? SF extends SelfRef
+                  ? Partial<StructInput<SelfF>> | StructView<SelfF> | null | undefined
+                  : SF extends StructDefLike<infer F>
+                    ? Partial<StructInput<F>> | StructView<F> | null | undefined
+                    : any
                 : D extends StructDefLike<infer SF>
                   ? Partial<StructInput<SF>> | StructView<SF>
                   : never;
 
-export type StructValues<F extends FieldRecord> = {
-  [K in keyof F]: FieldValue<F[K]>;
-};
-
 export type StructInput<F extends FieldRecord> = {
-  [K in keyof F]: FieldInput<F[K]>;
+  [K in keyof F]: FieldInput<F[K], F>;
 };
 
-export type PlainFieldValue<D extends FieldDesc> =
+export type StructValues<F extends FieldRecord> = {
+  [K in keyof F]: FieldValue<F[K], F>;
+};
+
+export type PlainFieldValue<D extends FieldDesc = FieldDesc, SelfF extends FieldRecord = FieldRecord> =
   D extends NullablePrimitiveDesc<infer P>
     ? PrimitiveTsType<P> | null
     : D extends PrimitiveDesc<infer P>
@@ -288,20 +307,26 @@ export type PlainFieldValue<D extends FieldDesc> =
         : D extends FixedBytesDesc
           ? number[]
           : D extends ArrayDesc<infer E, number>
-            ? PlainFieldValue<E>[]
+            ? PlainFieldValue<E, SelfF>[]
             : D extends SliceDesc<infer E>
-              ? PlainFieldValue<E>[]
+              ? E extends SelfRef
+                ? PlainStructValues<SelfF>[]
+                : E extends FieldDesc
+                  ? PlainFieldValue<E, SelfF>[]
+                  : never
               : D extends RefDesc<infer SF>
-                ? SF extends StructDefLike<infer F>
-                  ? PlainStructValues<F> | null
-                  : any
+                ? SF extends SelfRef
+                  ? PlainStructValues<SelfF> | null
+                  : SF extends StructDefLike<infer F>
+                    ? PlainStructValues<F> | null
+                    : any
                 : D extends StructDefLike<infer SF>
                   ? PlainStructValues<SF>
                   : never;
 
 /** Plain JavaScript object representation of a struct schema `F`. */
 export type PlainStructValues<F extends FieldRecord> = {
-  [K in keyof F]: PlainFieldValue<F[K]>;
+  [K in keyof F]: PlainFieldValue<F[K], F>;
 };
 
 /** Infers the zero-copy `StructView` type from a `StructDef`. */
@@ -564,8 +589,10 @@ export function fixedArray<E extends FieldDesc, N extends number>(
 export const array = fixedArray;
 
 /** Variable-length slice `CapnSlice<T>` stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
-export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E), kind: 'slice' | 'ref' = 'slice'): SliceDesc<E> {
-  const getEl = (): E => (typeof element === 'function' ? (element as () => E)() : element);
+export function slice(element: SelfRef): SliceDesc<SelfRef>;
+export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E), kind?: 'slice' | 'ref'): SliceDesc<E>;
+export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E) | SelfRef, kind: 'slice' | 'ref' = 'slice'): SliceDesc<any> {
+  const getEl = (): E => (typeof element === 'function' ? (element as () => E)() : (element as E));
   return {
     kind: kind as 'slice',
     get element(): E {
@@ -583,8 +610,10 @@ export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E), k
 export const list = slice;
 
 /** Nullable relative-offset pointer `CapnRef<T>` (`[u32 off, u32 present]`, 8 bytes inline, supports recursive & circular graphs). */
-export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S)): RefDesc<S> {
-  return slice(target, 'ref') as unknown as RefDesc<S>;
+export function ref(target: SelfRef): RefDesc<SelfRef>;
+export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S)): RefDesc<S>;
+export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S) | SelfRef): RefDesc<any> {
+  return slice(target as any, 'ref') as unknown as RefDesc<S>;
 }
 function ensureScratch(minBytes: number): void {
   if (minBytes > sBuf.byteLength) {
@@ -1054,11 +1083,22 @@ class MemView<F extends FieldRecord = FieldRecord> {
     return this._k().byteOffset + this._o;
   }
 
+  /** Total active + dead bytes occupied by this view's fixed table and tail arena. */
+  get usedByteLength(): number {
+    const r: any = (this as any)._a ?? this;
+    return r._tl !== undefined ? Math.max(r.byteLength, r._tl - r._o) : r.byteLength;
+  }
+
+  /** Dead bytes in the tail arena reclaimable via `.compact()`. */
+  get deadByteLength(): number {
+    const r: any = (this as any)._a ?? this;
+    return r._dead ?? 0;
+  }
+
   /** Ratio (`0..1`) of dead tail bytes to total used bytes. */
   get compactionRatio(): number {
-    const r: any = (this as any)._a ?? this,
-      used = r._tl !== undefined ? r._tl - r._o : r.byteLength;
-    return used > 0 ? Math.min(1, (r._dead ?? 0) / used) : 0;
+    const used = this.usedByteLength;
+    return used > 0 ? Math.min(1, this.deadByteLength / used) : 0;
   }
 
   /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
@@ -1619,7 +1659,8 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     off: number,
     mem: WebAssembly.Memory | WasmArena | null,
   ) => StructView<F>;
-  constructor(name: string, schema: F) {
+  constructor(name: string, schemaOrBuilder: F | ((self: SelfRef) => F)) {
+    const schema = typeof schemaOrBuilder === 'function' ? schemaOrBuilder((() => this) as unknown as SelfRef) : schemaOrBuilder;
     if (!schema) throw new TypeError('Struct schema fields are required');
     let off = 0;
     let maxA = 1;
@@ -1698,6 +1739,10 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     const v = this.view(new ArrayBuffer(this.size));
     initNulls(this, v._d, 0);
     return init !== undefined ? v.setAll(init) : v;
+  }
+  /** Infers `Partial<StructInput<F>>` on a plain JS object literal (for building typed cyclic JS graphs without `: any`). */
+  item(init: Partial<StructInput<F>>): Partial<StructInput<F>> {
+    return init;
   }
   /** Wraps a binary buffer (`Uint8Array`, `ArrayBuffer`, `DataView`, `WebAssembly.Memory`, `WasmArena`) in a zero-copy `StructView<F>`. */
   view(
@@ -1792,15 +1837,15 @@ export function pack<F extends FieldRecord>(
   return sU8.slice(0, end);
 }
 /** Compiles a declarative `#[repr(C)]` struct schema with zero-copy `StructView` and `StructArrayView` accessors. */
-export function defineStruct<F extends FieldRecord>(fields: F): StructDef<F>;
+export function defineStruct<F extends FieldRecord>(fields: F | ((self: SelfRef) => F)): StructDef<F>;
 /** Compiles a named `#[repr(C)]` struct schema (used by `toRustReprC()` codegen). */
 export function defineStruct<F extends FieldRecord>(
   name: string,
-  fields: F,
+  fields: F | ((self: SelfRef) => F),
 ): StructDef<F>;
 export function defineStruct<F extends FieldRecord>(
-  nameOrFields: string | F,
-  maybeFields?: F,
+  nameOrFields: string | F | ((self: SelfRef) => F),
+  maybeFields?: F | ((self: SelfRef) => F),
 ): StructDef<F> {
   return typeof nameOrFields === 'string'
     ? new StructDef(nameOrFields, maybeFields!)

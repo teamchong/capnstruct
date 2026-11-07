@@ -202,166 +202,191 @@
           </div>
         </div>
 
-        <!-- GRAPH 3: LIVE BROWSER BENCHMARK BARS -->
-        <div class="cs-gpanel active" id="cs-gpanel-livebars">
-          <div id="cs-bench-results" class="cs-bench-grid">
-            <div class="cs-bench-card" data-bench="scan">
-              <div class="cs-bench-top">
-            <div class="cs-bench-title">1. 100,000 Numeric Struct Scan (5.27 MiB JSON vs 2.29 MiB <code>#[repr(C)]</code>)</div>
-            <div class="cs-bench-desc">Node V8 (<strong>14.14 ms</strong>) &middot; Bun JSC (<strong>5.65 ms</strong>) &middot; Rust -O3 JSON (<strong>3.68 ms</strong>) &rarr; capnstruct (<strong>0.31 ms JS / 0.084 ms TinyGo / 0.071 ms Rust</strong>)</div>
-          </div>
-              <div class="cs-bench-bottom">
-                <div class="cs-bars">
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">JSON.parse (+10.3 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-                    <span class="cs-bar-val" id="cs-b1-json">14.18 ms</span>
-                  </div>
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">capnstruct (0 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
-                    <span class="cs-bar-val" id="cs-b1-capn">0.31 ms</span>
-                  </div>
-                </div>
-                <div class="cs-speedup" id="cs-b1-speedup">45.9x faster JS / 194x Rust (Click "Run Live Browser Benchmark")</div>
-              </div>
+      <!-- GRAPH 3: LIVE BROWSER BENCHMARK BARS -->
+      <div class="cs-gpanel active" id="cs-gpanel-livebars">
+        <div class="cs-graph-header" style="margin-top: 0.9rem;">
+          <strong class="cs-section-subhead">&#x1F525; 4 Real-World Developer Pain Points (Click "Run Live Browser Benchmark" Above to Measure on Your CPU)</strong>
+        </div>
+        <div id="cs-bench-results" class="cs-bench-grid">
+          <div class="cs-bench-card" data-bench="scan">
+            <div class="cs-bench-top">
+              <span class="cs-pain-tag">PAIN POINT #1 &middot; GC PAUSES &amp; HEAP BLOAT</span>
+              <div class="cs-bench-title">100,000-Row Telemetry Scan (5.27 MiB JSON vs 2.29 MiB <code>#[repr(C)]</code>)</div>
+              <div class="cs-bench-desc"><code>JSON.parse()</code> allocates 100,000 V8 heap objects (<strong>+10.3 MB</strong>, triggering GC stalls). <code>capnstruct</code> scans a flat <code>Uint8Array</code> in place (<strong>0 allocations</strong>):</div>
             </div>
-
-            <div class="cs-bench-card" data-bench="bbox">
-              <div class="cs-bench-top">
-            <div class="cs-bench-title">2. 25,000 Flight Telemetry Filter (13 Fields, Lazy UTF-8)</div>
-            <div class="cs-bench-desc">Node V8 (<strong>13.24 ms</strong>) &middot; Bun JSC (<strong>7.36 ms</strong>) &middot; Rust -O3 JSON (<strong>4.16 ms</strong>) &rarr; capnstruct (<strong>0.39 ms JS / 0.031 ms Go WASM / 0.020 ms Rust</strong>)</div>
-          </div>
-              <div class="cs-bench-bottom">
-                <div class="cs-bars">
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">JSON.parse + filter (+8.2 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-                    <span class="cs-bar-val" id="cs-b2-json">12.96 ms</span>
-                  </div>
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">capnstruct (0 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
-                    <span class="cs-bar-val" id="cs-b2-capn">0.29 ms</span>
-                  </div>
+            <div class="cs-bench-bottom">
+              <div class="cs-bars">
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">JSON.parse (+10.3 MB)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" id="cs-b1-json-bar" style="width: 100%"></div></div>
+                  <span class="cs-bar-val" id="cs-b1-json">14.14 ms</span>
                 </div>
-                <div class="cs-speedup" id="cs-b2-speedup">35.3x faster JS / 714x Rust (0 MB heap)</div>
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">capnstruct (0 MB)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b1-bar" style="width: 4%"></div></div>
+                  <span class="cs-bar-val" id="cs-b1-capn">0.31 ms</span>
+                </div>
               </div>
+              <div class="cs-speedup" id="cs-b1-speedup">45.6x faster JS / 199x Rust WASM (0.071 ms, 0 MB heap)</div>
             </div>
-
-            <div class="cs-bench-card" data-bench="mutate">
-              <div class="cs-bench-top">
-                <div class="cs-bench-title">3. JS &harr; Rust WASM &amp; Worker Boundary (25,000 Rows)</div>
-                <div class="cs-bench-desc">Worker <code>structuredClone</code> (<strong>45.98 ms</strong>) &middot; Rust JSON FFI (<strong>5.08 ms</strong>) &rarr; capnstruct (<strong>0.046 ms JS / 0.015 ms Rust</strong>)</div>
-              </div>
-              <div class="cs-bench-bottom">
-                <div class="cs-bars">
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">structuredClone RT (+14.2 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-                    <span class="cs-bar-val" id="cs-b3-json">45.98 ms</span>
-                  </div>
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">capnstruct (0 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
-                    <span class="cs-bar-val" id="cs-b3-capn">0.046 ms</span>
-                  </div>
-                </div>
-                <div class="cs-speedup" id="cs-b3-speedup">1,004x faster vs structuredClone / 142x vs Rust JSON FFI</div>
-              </div>
-            </div>
-
-            <div class="cs-bench-card" data-bench="col">
-              <div class="cs-bench-top">
-            <div class="cs-bench-title">4. 10,000 Cyclic Ring Nodes (<code>ref(() =&gt; RingNode)</code>)</div>
-            <div class="cs-bench-desc"><code>JSON.stringify</code> / <code>serde_json</code> / <code>encoding/json</code> throw! Node V8 (<strong>3.23 ms</strong>) &middot; Bun JSC (<strong>2.63 ms</strong>) &rarr; capnstruct (<strong>0.30 ms JS / 0.019 ms Go WASM / 0.016 ms Rust</strong>)</div>
           </div>
-              <div class="cs-bench-bottom">
-                <div class="cs-bars">
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">structuredClone (+1.8 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" style="width: 100%"></div></div>
-                    <span class="cs-bar-val" id="cs-b4-json">3.27 ms</span>
-                  </div>
-                  <div class="cs-bar-row">
-                    <span class="cs-bar-label">capnstruct ref() (0 MB)</span>
-                    <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 8%"></div></div>
-                    <span class="cs-bar-val" id="cs-b4-capn">0.30 ms</span>
-                  </div>
+          <div class="cs-bench-card" data-bench="bbox">
+            <div class="cs-bench-top">
+              <span class="cs-pain-tag">PAIN POINT #2 &middot; WASTED UTF-8 STRING DECODING</span>
+              <div class="cs-bench-title">25,000-Row Filter Query (4% Match Rate, 13 Fields + Strings)</div>
+              <div class="cs-bench-desc"><code>JSON.parse()</code> eagerly decodes UTF-8 strings on all 25,000 rows even when 96% are filtered out. <code>capnstruct</code> checks numeric bounds first and lazily decodes strings only on hits:</div>
+            </div>
+            <div class="cs-bench-bottom">
+              <div class="cs-bars">
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">JSON.parse + filter</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" id="cs-b2-json-bar" style="width: 100%"></div></div>
+                  <span class="cs-bar-val" id="cs-b2-json">13.24 ms</span>
                 </div>
-                <div class="cs-speedup" id="cs-b4-speedup">8.7x faster JS / 227x Rust (0 MB heap, JSON throws!)</div>
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">capnstruct (0 MB)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b2-bar" style="width: 3%"></div></div>
+                  <span class="cs-bar-val" id="cs-b2-capn">0.39 ms</span>
+                </div>
               </div>
+              <div class="cs-speedup" id="cs-b2-speedup">33.9x faster JS / 662x Rust WASM (0.020 ms, 0 MB heap)</div>
+            </div>
+          </div>
+          <div class="cs-bench-card" data-bench="mutate">
+            <div class="cs-bench-top">
+              <span class="cs-pain-tag">PAIN POINT #3 &middot; WEB WORKER &amp; WASM FFI SERIALIZATION TAX</span>
+              <div class="cs-bench-title">25,000-Row Worker <code>postMessage</code> Round-Trip + In-Place Update</div>
+              <div class="cs-bench-desc"><code>structuredClone()</code> freezes the main thread for <strong>45.9 ms (+14.2 MB)</strong> deep-copying objects to a Worker. <code>capnstruct</code> shares or transfers the backing <code>SharedArrayBuffer</code> / <code>Uint8Array</code> in <strong>O(1)</strong>:</div>
+            </div>
+            <div class="cs-bench-bottom">
+              <div class="cs-bars">
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">structuredClone RT</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" id="cs-b3-json-bar" style="width: 100%"></div></div>
+                  <span class="cs-bar-val" id="cs-b3-json">45.94 ms</span>
+                </div>
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">capnstruct (0 MB)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b3-bar" style="width: 1%"></div></div>
+                  <span class="cs-bar-val" id="cs-b3-capn">0.046 ms</span>
+                </div>
+              </div>
+              <div class="cs-speedup" id="cs-b3-speedup">~1,000x faster vs structuredClone / 142x vs Rust serde FFI</div>
+            </div>
+          </div>
+          <div class="cs-bench-card" data-bench="col">
+            <div class="cs-bench-top">
+              <span class="cs-pain-tag">PAIN POINT #4 &middot; CYCLIC GRAPH CRASHES IN JSON</span>
+              <div class="cs-bench-title">10,000 Doubly-Linked Ring Nodes (<code>ref((self) =&gt; self)</code>)</div>
+              <div class="cs-bench-desc"><code>JSON.stringify()</code> and <code>serde_json</code> crash with <code>TypeError: cyclic object value</code>, and <code>structuredClone()</code> allocates <strong>+1.8 MB</strong>. <code>capnstruct</code> packs &amp; traverses cycles in <strong>O(1) stack</strong>:</div>
+            </div>
+            <div class="cs-bench-bottom">
+              <div class="cs-bars">
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">structuredClone (+1.8M)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-json" id="cs-b4-json-bar" style="width: 100%"></div></div>
+                  <span class="cs-bar-val" id="cs-b4-json">3.23 ms</span>
+                </div>
+                <div class="cs-bar-row">
+                  <span class="cs-bar-label">capnstruct ref (0 MB)</span>
+                  <div class="cs-bar-track"><div class="cs-bar-fill cs-bar-capn" id="cs-b4-bar" style="width: 8%"></div></div>
+                  <span class="cs-bar-val" id="cs-b4-capn">0.30 ms</span>
+                </div>
+              </div>
+              <div class="cs-speedup" id="cs-b4-speedup">10.8x faster JS / 202x Rust WASM (0.016 ms, JSON throws!)</div>
             </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- SECTION 2: LIVE BINARY MUTATOR -->
   <div class="cs-panel active cs-panel-divider" id="cs-panel-mutate">
-    <div class="cs-panel-header">
-      <div>
-        <strong>2. Interactive Binary StructArrayView Inspector &amp; Live Mutator</strong>
+    <div class="cs-panel-header cs-panel-header-stack">
+      <div class="cs-header-top">
+        <strong class="cs-panel-title">2. Pain Point: Updating 1 String or Array in Binary Formats (Arrow / FlatBuffers) Forces a Full Buffer Rebuild</strong>
         <p class="cs-sub">
-          Mutate strings &amp; slices in place, push/pop rows, and watch the fixed <code>#[repr(C)]</code> table and tail arena update in real time.
+          Immutable columnar/binary buffers (Apache Arrow, FlatBuffers) cannot mutate variable-length strings or arrays without unpacking and rebuilding the entire table. <code>capnstruct</code> stores fixed-size fields in an 8-byte-aligned <code>#[repr(C)]</code> table and variable-length strings/slices in a relative-offset <strong>tail arena</strong> so you can mutate fields directly on the binary view:
         </p>
       </div>
+      <div class="cs-how-grid">
+        <div class="cs-how-card">
+          <strong>1. Shorter / Equal Edit (<code>0 Allocs</code>)</strong>
+          <span>Overwrites UTF-8 bytes or slice elements directly inside the existing slot; records reclaimed bytes in <code>.compactionRatio</code>.</span>
+        </div>
+        <div class="cs-how-card">
+          <strong>2. Longer Edit (<code>Tail Append</code>)</strong>
+          <span>Extends in place if at the tail tip (<code>0 dead bytes</code>), or bump-allocates at the tail end and updates the 8-byte <code>[u32 relOff, u32 len]</code> pointer.</span>
+        </div>
+        <div class="cs-how-card">
+          <strong>3. <code>.compact()</code> (<code>Wire Ready</code>)</strong>
+          <span>Strips dead tail bytes in a single pass and rebinds the view in-place before sending over WebSocket / RPC.</span>
+        </div>
+      </div>
       <div class="cs-actions">
+        <button id="cs-btn-shorter" class="cs-btn">1. Overwrite Row #1 Shorter (0 Allocs)</button>
+        <button id="cs-btn-longer" class="cs-btn">2. Extend Row #1 Longer (Tail Append)</button>
         <button id="cs-btn-push" class="cs-btn">+ Push Row (<code>.push()</code>)</button>
         <button id="cs-btn-pop" class="cs-btn">- Pop Row (<code>.pop()</code>)</button>
-        <button id="cs-btn-compact" class="cs-btn cs-btn-primary">Compact Dead Tail (<code>.compact()</code>)</button>
+        <button id="cs-btn-compact" class="cs-btn cs-btn-primary">3. Compact Dead Tail (<code>.compact()</code>)</button>
       </div>
     </div>
-
     <div class="cs-stats-strip">
-      <div class="cs-stat"><span>Rows (<code>.length</code>):</span> <strong id="cs-st-len">0</strong></div>
+      <div class="cs-stat"><span>Rows (<code>.length</code>):</span> <strong id="cs-st-len">2</strong></div>
       <div class="cs-stat"><span>Struct Stride:</span> <strong id="cs-st-stride">24 B</strong></div>
-      <div class="cs-stat"><span>Wire Bytes (<code>.bytes.byteLength</code>):</span> <strong id="cs-st-bytes">0 B</strong></div>
-      <div class="cs-stat"><span>Fragmentation (<code>.compactionRatio</code>):</span> <strong id="cs-st-frag">0.0%</strong></div>
-      <div class="cs-stat"><span>Last Action:</span> <strong id="cs-st-action">Initialized</strong></div>
+      <div class="cs-stat"><span>Wire Bytes (<code>.usedByteLength</code>):</span> <strong id="cs-st-bytes">96 B</strong></div>
+      <div class="cs-stat"><span>Dead Tail (<code>.compactionRatio</code>):</span> <strong id="cs-st-frag">0.0%</strong></div>
+      <div class="cs-stat"><span>Last Operation:</span> <strong id="cs-st-action">Initialized 2-row #[repr(C)] buffer</strong></div>
     </div>
-
     <div class="cs-split">
       <div class="cs-col">
-        <div class="cs-col-label">Live JS View (<code>for (const row of users)</code>) — Edit fields inline:</div>
+        <div class="cs-col-label">Live Binary View (<code>usersView.at(i).name = ...</code>) &mdash; Type to Mutate In-Place:</div>
         <div id="cs-rows-editor" class="cs-rows-list"></div>
       </div>
       <div class="cs-col">
-        <div class="cs-col-label">Raw Wire Buffer Hex + ASCII Inspector (Fixed Table + Tail Arena):</div>
+        <div class="cs-col-label">Live Wire Buffer Hex + ASCII Inspector (<code>TBL</code> = Fixed #[repr(C)] Table, <code>TAIL</code> = Variable Arena):</div>
         <pre id="cs-hex-view" class="cs-code-box"></pre>
       </div>
     </div>
   </div>
 
-  <!-- TAB 3: RUST CODEGEN -->
+  <!-- SECTION 3: LIVE ZERO-COPY RUST & GO/TINYGO CODEGEN -->
   <div class="cs-panel active cs-panel-divider" id="cs-panel-rust">
-    <div class="cs-panel-header">
-      <div>
-        <strong>3. Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> &amp; Go / TinyGo WASM Zero-Copy Codegen</strong>
+    <div class="cs-panel-header cs-panel-header-stack">
+      <div class="cs-header-top">
+        <strong class="cs-panel-title">3. Pain Point: Brittle Manual <code>DataView</code> Byte Offsets &amp; Duplicate Rust / Go Structs for WebAssembly</strong>
         <p class="cs-sub">
-          Select a preset schema (including recursive <code>ref(() =&gt; GraphNode)</code>) and target (Rust, Go Native, or Go / TinyGo WASM with <code>//go:wasmexport capn_alloc</code>) to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
+          Sharing memory between TypeScript and Rust/Go WebAssembly usually forces a choice between slow <code>serde_json</code> string copies or brittle manual <code>DataView.getFloat64(ptr + 16, true)</code> offset math that breaks silently when a struct changes. Define your schema once in TypeScript and generate verified Rust <code>#[repr(C)]</code> and Go / TinyGo structs with compile-time offset assertions:
         </p>
       </div>
-      <div class="cs-actions">
-        <select id="cs-schema-select" class="cs-select">
-          <option value="telemetry">FlightTelemetry (u32, f32, str, slice&lt;Waypoint&gt;)</option>
-          <option value="graph">Recursive GraphNode (ref(() =&gt; GraphNode), slice(() =&gt; GraphNode))</option>
-          <option value="spdsample">SpdSample + OutHit (Doppler Radar WASM Kernel)</option>
-          <option value="padded">PaddedAlignment (u64 + u8 + u16 + slice&lt;i32&gt;)</option>
-        </select>
-        <select id="cs-target-select" class="cs-select">
-          <option value="rust">Target: Rust #[repr(C)] (.rs)</option>
-          <option value="go-wasm">Target: Go / TinyGo WASM (.go --wasm)</option>
-          <option value="go">Target: Go Zero-Copy Structs (.go)</option>
-        </select>
+      <div class="cs-param-bar" style="margin-bottom: 0;">
+        <div class="cs-param-item">
+          <span class="cs-param-label">Schema Preset:</span>
+          <div class="cs-pill-group" id="cs-schema-pills">
+            <button class="cs-mini-btn active" data-schema="telemetry">FlightTelemetry (Nested + Slice)</button>
+            <button class="cs-mini-btn" data-schema="graph">Cyclic GraphNode (ref + slice)</button>
+            <button class="cs-mini-btn" data-schema="spdsample">Doppler Radar WASM Kernel</button>
+            <button class="cs-mini-btn" data-schema="padded">64-Bit Padded Alignment</button>
+          </div>
+        </div>
+        <div class="cs-param-item">
+          <span class="cs-param-label">Codegen Target:</span>
+          <div class="cs-pill-group" id="cs-target-pills">
+            <button class="cs-mini-btn active" data-target="rust">Rust #[repr(C)] (.rs)</button>
+            <button class="cs-mini-btn" data-target="go-wasm">Go / TinyGo WASM (--go-wasm)</button>
+            <button class="cs-mini-btn" data-target="go">Go Native (.go)</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="cs-split">
       <div class="cs-col">
-        <div class="cs-col-label">TypeScript Schema &amp; Computed Offsets:</div>
+        <div class="cs-col-label">TypeScript Schema Definition &amp; Computed C-ABI Offsets:</div>
         <pre id="cs-ts-schema" class="cs-code-box"></pre>
       </div>
       <div class="cs-col">
-        <div class="cs-col-label" id="cs-codegen-label">Generated Rust <code>toRustReprC([...])</code> Output:</div>
+        <div class="cs-col-label" id="cs-codegen-label">Generated Rust <code>toRustReprC([...])</code> Output (with Compile-Time Layout Assertions):</div>
         <pre id="cs-rust-output" class="cs-code-box"></pre>
       </div>
     </div>
@@ -479,15 +504,59 @@
     flex-direction: column;
     justify-content: space-between;
   }
+  .cs-pain-tag {
+    display: inline-block;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    margin-bottom: 0.35rem;
+    width: fit-content;
+  }
   .cs-bench-title {
     font-weight: 700;
-    font-size: 0.92rem;
+    font-size: 0.9rem;
     margin-bottom: 0.25rem;
   }
   .cs-bench-desc {
     font-size: 0.78rem;
     color: var(--sl-color-gray-2);
     margin-bottom: 0.85rem;
+    line-height: 1.4;
+  }
+  .cs-how-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem;
+    width: 100%;
+  }
+  @media (max-width: 780px) {
+    .cs-how-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cs-how-card {
+    padding: 0.55rem 0.75rem;
+    border-radius: 0.45rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+  .cs-how-card strong {
+    color: #10b981;
+    font-size: 0.8rem;
+  }
+  .cs-how-card span {
+    color: var(--sl-color-gray-2);
   }
   .cs-bars {
     display: flex;
@@ -913,17 +982,20 @@
     ref,
     fixedArray,
     pack,
+    type StructDefLike,
   } from 'capnstruct';
+  import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
+
   // --- SECTION 1: 3 SIDE-BY-SIDE LIVE 60FPS ANIMATIONS (NO TAB SWITCHING) ---
-  const RadarNode: any = defineStruct('RadarNode', {
+  const RadarNode = defineStruct('RadarNode', (self) => ({
     id: u32,
     x: f32,
     y: f32,
     vx: f32,
     vy: f32,
     callsign: str,
-    next: ref(() => RadarNode),
-  });
+    next: ref(self),
+  }));
 
   const v8Canvas = document.getElementById('cs-anim-v8') as HTMLCanvasElement | null;
   const jscCanvas = document.getElementById('cs-anim-jsc') as HTMLCanvasElement | null;
@@ -946,15 +1018,17 @@
 
   // Build binary dataset for live 60fps zero-copy simulation
   const MAX_SIM_N = 2500;
-  const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) => ({
-    id: i,
-    x: ((i * 73) % 1000) / 1000,
-    y: ((i * 137 + 29) % 1000) / 1000,
-    vx: (((i % 7) - 3) * 0.0008) || 0.0005,
-    vy: (((i % 5) - 2) * 0.0008) || -0.0005,
-    callsign: `AC_${1000 + (i % 9000)}`,
-    next: null as any,
-  }));
+  const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) =>
+    RadarNode.item({
+      id: i,
+      x: ((i * 73) % 1000) / 1000,
+      y: ((i * 137 + 29) % 1000) / 1000,
+      vx: (((i % 7) - 3) * 0.0008) || 0.0005,
+      vy: (((i % 5) - 2) * 0.0008) || -0.0005,
+      callsign: `AC_${1000 + (i % 9000)}`,
+      next: null,
+    }),
+  );
   const SIM_CLUSTER = 32;
   for (let i = 0; i < 2048; i++) {
     const base = Math.floor(i / SIM_CLUSTER) * SIM_CLUSTER;
@@ -1612,18 +1686,22 @@
       // 4. 10,000 Cyclic Ring Nodes (ref(() => RingNode))
       const N_RING = 10_000;
       const RING_CLUSTER = 50;
-      const RingNode: any = defineStruct('RingNode', {
+      const RingNode = defineStruct('RingNode', (self) => ({
         id: u32,
         weight: f64,
-        next: ref(() => RingNode),
-        prev: ref(() => RingNode),
-      });
-      const jsRing: any[] = Array.from({ length: N_RING }, (_, i) => ({
-        id: i,
-        weight: i * 1.25,
-        next: null,
-        prev: null,
+        label: str,
+        next: ref(self),
+        prev: ref(self),
       }));
+      const jsRing = Array.from({ length: N_RING }, (_, i) =>
+        RingNode.item({
+          id: i,
+          weight: i * 1.25,
+          label: `node_${i}`,
+          next: null,
+          prev: null,
+        }),
+      );
       for (let i = 0; i < N_RING; i++) {
         const base = Math.floor(i / RING_CLUSTER) * RING_CLUSTER;
         const off = i % RING_CLUSTER;
@@ -1733,13 +1811,12 @@
     const rawSlice = new Uint8Array(
       usersView.buffer,
       usersView.byteOffset,
-      Math.max(usersView.byteLength, (usersView as any)._tl ? (usersView as any)._tl - usersView.byteOffset : usersView.byteLength)
+      usersView.usedByteLength,
     );
-
     if (lenEl) lenEl.textContent = String(usersView.length);
     if (strideEl) strideEl.textContent = `${usersView.stride} B`;
     if (bytesEl) bytesEl.textContent = `${rawSlice.byteLength} B`;
-    if (fragEl) fragEl.textContent = `${(usersView.compactionRatio * 100).toFixed(1)}%`;
+    if (fragEl) fragEl.textContent = `${(usersView.compactionRatio * 100).toFixed(1)}% (${usersView.deadByteLength} B dead)`;
     if (actEl) actEl.textContent = actionLabel;
     if (hexEl) hexEl.textContent = formatHexDump(rawSlice, usersView.length, usersView.stride);
 
@@ -1757,17 +1834,17 @@
         nameInput.value = u.name;
         nameInput.title = 'Edit row.name (in-place when <= current UTF-8 length, tail-append when longer)';
         nameInput.addEventListener('change', () => {
-          const prevDead = (usersView as any)._dead ?? 0;
+          const prevDead = usersView.deadByteLength;
           const prevLen = new TextEncoder().encode(usersView.at(i).name).byteLength;
           const nextLen = new TextEncoder().encode(nameInput.value).byteLength;
           usersView.at(i).name = nameInput.value;
-          const nextDead = (usersView as any)._dead ?? 0;
+          const nextDead = usersView.deadByteLength;
           renderMutator(
             nextLen <= prevLen
               ? `row[${i}].name overwritten in-place (0 allocs)`
               : nextDead === prevDead
                 ? `row[${i}].name extended in-place at tail tip (0 dead bytes)`
-                : `row[${i}].name bump-allocated in tail arena`
+                : `row[${i}].name bump-allocated in tail arena (+${nextDead - prevDead} B reclaimable)`,
           );
         });
 
@@ -1789,23 +1866,31 @@
     }
   }
 
+  document.getElementById('cs-btn-shorter')?.addEventListener('click', () => {
+    if (usersView.length === 0) return;
+    usersView.at(0).name = 'Ada';
+    renderMutator('usersView.at(0).name = "Ada" -> overwritten in-place (0 allocs)');
+  });
+  document.getElementById('cs-btn-longer')?.addEventListener('click', () => {
+    if (usersView.length === 0) return;
+    usersView.at(0).name = 'Countess Ada Lovelace (Analytical Engine)';
+    renderMutator('usersView.at(0).name = "Countess Ada..." -> tail-arena bump alloc');
+  });
   document.getElementById('cs-btn-push')?.addEventListener('click', () => {
     const id = nextId++;
     usersView.push({ id, name: `Engineer_${id}`, scores: [id * 10, id * 20] });
     renderMutator(`users.push({ id: ${id}, ... })`);
   });
-
   document.getElementById('cs-btn-pop')?.addEventListener('click', () => {
     const popped = usersView.pop();
     renderMutator(popped ? `users.pop() -> #${popped.id}` : 'users.pop() (empty)');
   });
-
   document.getElementById('cs-btn-compact')?.addEventListener('click', () => {
     const packed = usersView.compact();
-    renderMutator(`users.compact() -> ${packed.byteLength} B tight wire buffer`);
+    renderMutator(`users.compact() -> ${packed.byteLength} B tight wire buffer (0% dead tail)`);
   });
 
-  renderMutator('Initial 2-row binary buffer');
+  renderMutator('Initialized 2-row #[repr(C)] buffer');
 
   // --- TAB 3: RUST #[repr(C)] CODEGEN ---
   const OutHit = defineStruct('OutHit', {
@@ -1823,15 +1908,15 @@
     code: u16,
     samples: slice(i32),
   });
-  const GraphNode: any = defineStruct('GraphNode', {
+  const GraphNode = defineStruct('GraphNode', (self) => ({
     id: u32,
     weight: f64,
     label: str,
-    next: ref(() => GraphNode),
-    children: slice(() => GraphNode),
-  });
+    next: ref(self),
+    children: slice(self),
+  }));
 
-  const presets: Record<string, { ts: string; structs: any[] }> = {
+  const presets: Record<string, { ts: string; structs: StructDefLike[] }> = {
     telemetry: {
       ts: `const Waypoint = defineStruct('Waypoint', {
   lat: f32, // offset 0, size 4
@@ -1839,43 +1924,43 @@
 }); // size: 8, align: 4
 
 const TelemetryRow = defineStruct('TelemetryRow', {
-  flightId: u32,                // offset 0
-  squawk: u16,                  // offset 4
-  flags: u16,                   // offset 6
-  lat: f32,                     // offset 8
-  lon: f32,                     // offset 12
-  altBaro: i32,                 // offset 16
-  groundSpeed: f32,             // offset 20
-  callsign: str,                // offset 24 ([u32 relOffset, u32 len])
-  route: str,                   // offset 32 ([u32 relOffset, u32 len])
-  waypoints: slice(Waypoint),   // offset 40 ([u32 relOffset, u32 len])
+  flightId: u32,              // offset 0
+  squawk: u16,                // offset 4
+  flags: u16,                 // offset 6
+  lat: f32,                   // offset 8
+  lon: f32,                   // offset 12
+  altBaro: i32,               // offset 16
+  groundSpeed: f32,           // offset 20
+  callsign: str,              // offset 24 ([u32 relOffset, u32 len])
+  route: str,                 // offset 32 ([u32 relOffset, u32 len])
+  waypoints: slice(Waypoint), // offset 40 ([u32 relOffset, u32 len])
 }); // size: 48, align: 4`,
       structs: [Waypoint, TelemetryRow],
     },
     graph: {
-      ts: `const GraphNode: any = defineStruct('GraphNode', {
-  id: u32,                           // offset 0, size 4 (+4B padding before f64)
-  weight: f64,                       // offset 8, size 8
-  label: str,                        // offset 16, size 8 (CapnStr)
-  next: ref(() => GraphNode),        // offset 24, size 8 (CapnRef<GraphNode>)
-  children: slice(() => GraphNode),  // offset 32, size 8 (CapnSlice<GraphNode>)
-}); // size: 40, align: 8`,
+      ts: `const GraphNode = defineStruct('GraphNode', (self) => ({
+  id: u32,               // offset 0, size 4 (+4B padding before f64)
+  weight: f64,           // offset 8, size 8
+  label: str,            // offset 16, size 8 (CapnStr)
+  next: ref(self),       // offset 24, size 8 (CapnRef<GraphNode>)
+  children: slice(self), // offset 32, size 8 (CapnSlice<GraphNode>)
+})); // size: 40, align: 8`,
       structs: [GraphNode],
     },
     spdsample: {
       ts: `const SpdSample = defineStruct('SpdSample', {
-  t: u32,    // offset 0 (4B padding auto-inserted after t)
-  val: f64,  // offset 8, align 8
-  id: u32,   // offset 16 (4B trailing padding to align stride to 8)
+  t: u32,   // offset 0 (4B padding auto-inserted after t)
+  val: f64, // offset 8, align 8
+  id: u32,  // offset 16 (4B trailing padding to align stride to 8)
 }); // size: 24, align: 8
 
 const OutHit = defineStruct('OutHit', {
-  fid: u32,                  // offset 0 (4B padding before lat)
-  lat: f64,                  // offset 8
-  lon: f64,                  // offset 16
-  tstart: f64,               // offset 24
-  tend: f64,                 // offset 32
-  fids: fixedArray(u32, 8),  // offset 40..72
+  fid: u32,                 // offset 0 (4B padding before lat)
+  lat: f64,                 // offset 8
+  lon: f64,                 // offset 16
+  tstart: f64,              // offset 24
+  tend: f64,                // offset 32
+  fids: fixedArray(u32, 8), // offset 40..72
 }); // size: 72, align: 8`,
       structs: [SpdSample, OutHit],
     },
@@ -1890,34 +1975,48 @@ const OutHit = defineStruct('OutHit', {
     },
   };
 
-  const selectEl = document.getElementById('cs-schema-select') as HTMLSelectElement | null;
-  const targetEl = document.getElementById('cs-target-select') as HTMLSelectElement | null;
+  let currentSchemaKey = 'telemetry';
+  let currentTarget = 'rust';
   const labelEl = document.getElementById('cs-codegen-label');
+  const tsEl = document.getElementById('cs-ts-schema');
+  const rsEl = document.getElementById('cs-rust-output');
+
   function renderRustCodegen() {
-    const key = selectEl?.value ?? 'telemetry';
-    const target = targetEl?.value ?? 'rust';
-    const preset = presets[key] ?? presets.telemetry;
-    const tsEl = document.getElementById('cs-ts-schema');
-    const rsEl = document.getElementById('cs-rust-output');
+    const preset = presets[currentSchemaKey] ?? presets.telemetry;
     if (tsEl) tsEl.textContent = preset.ts;
     if (labelEl) {
       labelEl.innerHTML =
-        target === 'go-wasm'
+        currentTarget === 'go-wasm'
           ? 'Generated Go / TinyGo WASM <code>toGoStruct([...], { wasm: true })</code> Output:'
-          : target === 'go'
+          : currentTarget === 'go'
             ? 'Generated Go <code>toGoStruct([...])</code> Output:'
-            : 'Generated Rust <code>toRustReprC([...])</code> Output:';
+            : 'Generated Rust <code>toRustReprC([...])</code> Output (with Compile-Time Layout Assertions):';
     }
     if (rsEl) {
       rsEl.textContent =
-        target === 'go-wasm'
+        currentTarget === 'go-wasm'
           ? toGoStruct(preset.structs, { wasm: true })
-          : target === 'go'
+          : currentTarget === 'go'
             ? toGoStruct(preset.structs)
             : toRustReprC(preset.structs);
     }
   }
-  selectEl?.addEventListener('change', renderRustCodegen);
-  targetEl?.addEventListener('change', renderRustCodegen);
+
+  document.querySelectorAll<HTMLButtonElement>('#cs-schema-pills .cs-mini-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#cs-schema-pills .cs-mini-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentSchemaKey = btn.dataset.schema || 'telemetry';
+      renderRustCodegen();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>('#cs-target-pills .cs-mini-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#cs-target-pills .cs-mini-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTarget = btn.dataset.target || 'rust';
+      renderRustCodegen();
+    });
+  });
   renderRustCodegen();
 </script>

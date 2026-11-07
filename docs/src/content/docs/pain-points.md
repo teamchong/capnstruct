@@ -4,18 +4,18 @@ description: Copy-pasteable recipes for Web Worker SharedArrayBuffers, Rust/C We
 ---
 
 Practical patterns for replacing `JSON.parse`, `structuredClone`, `serde-wasm-bindgen`, and manual `DataView` offset arithmetic with zero-copy `capnstruct` views.
+
 ---
 
 ## 1. Eliminating the Web Worker `postMessage` (`structuredClone`) Freeze (~1,200x Faster)
 
-### The Bottleneck
-Libraries like `comlink`, `piscina`, and `tinypool` make it easy to call a Web Worker or Node `worker_threads` function. However, when you pass an array of 25,000–100,000 objects via `postMessage(rows)`, the browser's `structuredClone` algorithm deep-clones every object and string on the main thread (~45–90 ms), and clones them again when the Worker returns the updated array.
-
-### The `capnstruct` Pattern
-Keep your rows in a `StructArrayView` backed by a `SharedArrayBuffer` (or a transferable `ArrayBuffer`). Both the main thread and the Worker read and mutate the same buffer in place with zero object cloning:
+<div class="cs-pain-vs-solve">
+  <div class="cs-pain-box"><strong>The Bottleneck:</strong> Passing 25,000–100,000 objects via <code>postMessage(rows)</code> triggers <code>structuredClone</code>, freezing the main thread for ~45–90 ms while deep-cloning 50,000 objects across heaps.</div>
+  <div class="cs-solve-box"><strong>The capnstruct Fix:</strong> Keep rows in a <code>StructArrayView</code> backed by a <code>SharedArrayBuffer</code> (or transferable <code>ArrayBuffer</code>). Both threads read and mutate the same buffer in place in ~0.04 ms (0 clones).</div>
+</div>
 
 ```ts
-// schema.ts — shared between Main Thread and Worker
+// schema.ts - shared between Main Thread and Worker
 import { defineStruct, u32, f64, str } from 'capnstruct';
 
 export const Telemetry = defineStruct('Telemetry', {
@@ -64,8 +64,10 @@ self.onmessage = ({ data: { buffer, count } }) => {
 
 ## 2. Replacing `serde-wasm-bindgen` & Manual `DataView` Math in Rust WASM
 
-### The Bottleneck
-Passing `Vec<MyStruct>` between JavaScript and Rust WebAssembly via `serde-wasm-bindgen` or JSON serializes every struct field across the FFI boundary. To avoid that tax, developers end up writing brittle manual `Uint32Array` / `Float64Array` pointer math in JS (`shardsU32[i * 8 + 4] = fidBase`) and manually keeping byte offsets in sync with Rust.
+<div class="cs-pain-vs-solve">
+  <div class="cs-pain-box"><strong>The Bottleneck:</strong> Passing <code>Vec&lt;MyStruct&gt;</code> via <code>serde-wasm-bindgen</code> or JSON copies every field across the FFI boundary, forcing developers to write brittle <code>Uint32Array[i * 8 + 4]</code> pointer math in JS.</div>
+  <div class="cs-solve-box"><strong>The capnstruct Fix:</strong> Wrap <code>WebAssembly.Memory</code> in a zero-copy <code>#[repr(C)]</code> view. Both JS and Rust/Go WASM read the exact same bytes in linear memory, and views auto-rebind when <code>memory.grow()</code> runs.</div>
+</div>
 
 ### Real Case Study: `doppler-geo` WASM Search Kernel (Before vs. After)
 
@@ -118,45 +120,60 @@ for (const h of OutHit.array(kernel.memory, hdr.out_hits_ptr, hdr.out_hits_count
 
 ## 3. 100,000-Row Virtual Tables (`@tanstack/virtual`) & WebGL / Deck.gl Layers
 
-### The Bottleneck
-Holding 100,000 rows as plain JS objects in browser memory consumes 150–300 MB of V8 heap and triggers major GC pauses. Rendering those points on a WebGL map (`deck.gl` / `maplibre-gl`) or chart (`Chart.js` / `uPlot`) then requires looping over all 100,000 objects again to copy coordinates into `Float32Array` / `Float64Array` buffers.
+<div class="cs-pain-vs-solve">
+  <div class="cs-pain-box"><strong>The Bottleneck:</strong> Holding 100,000 rows as plain JS objects consumes 150–300 MB of V8 heap, triggers GC pauses, and requires looping over all 100k objects to copy coordinates into <code>Float64Array</code> buffers.</div>
+  <div class="cs-solve-box"><strong>The capnstruct Fix:</strong> Keep all 100,000 rows in a 2.4 MiB flat buffer (0 JS heap objects). Read only the 20 visible rows in <code>@tanstack/virtual</code>, binary-search time windows via <code>rangeBy()</code> in O(log N), or extract <code>Float64Array</code> columns via <code>.column('lat')</code>.</div>
+</div>
 
-### The `capnstruct` Pattern
-1. **Virtual Table Rendering (0 Heap Objects in RAM):** Keep all 100,000 rows in a single `StructArrayView` (`~2.4 MiB` flat buffer) and only read the 20 visible rows in your `@tanstack/virtual` render loop via `rows.at(virtualRow.index)`.
-2. **Zero-Heap Binary Search & Filtering (`rangeBy` / `filterBytes`):** Slice time windows in $O(\log N)$ via `rows.rangeBy('t', t0, t1)` (~5,000x faster than `JSON.parse` + `.filter()`) or extract matching binary rows via `rows.filterBytes(pred)` with 0 intermediate JS objects.
-3. **Columnar WebGL / WebGPU / Arrow Extraction:** Call `rows.column('lat')` and `rows.column('lon')` to extract contiguous `Float64Array` / `Float32Array` typed arrays for WebGL/WebGPU vertex buffers or Apache Arrow (`arrow.makeVector(rows.column('lat'))`).
+```ts
+import { defineStruct, u32, f32, str } from 'capnstruct';
+
+const FlightRow = defineStruct('FlightRow', {
+  ts: u32,
+  lat: f32,
+  lon: f32,
+  callsign: str,
+});
+
+const rows = FlightRow.array(wireBytes); // 0 JS objects allocated
+
+// 1. @tanstack/virtual: read only visible rows on demand
+const visibleRow = rows.at(virtualItem.index);
+
+// 2. O(log N) binary search time window + zero-heap filter
+const bboxBytes = rows
+  .rangeBy('ts', 1700000000, 1700000600)
+  .filterBytes((r) => r.lat > 37.0 && r.lat < 38.0);
+
+// 3. Contiguous Float32Array column for WebGL / Deck.gl / Apache Arrow
+const lats: Float32Array = rows.column('lat');
+```
 
 ---
 
-## 4. Packing & Traversing Circular Object Graphs (`ref(() => Node)`)
+## 4. Packing & Traversing Circular Object Graphs (`ref(self)` & `slice(self)`)
 
-### The Bottleneck
-
-In compilers, ASTs, scene graphs, and doubly-linked state machines, objects frequently reference their parents, siblings, or cycle back to themselves (`a.next = b; b.next = a`).
-
-- `JSON.stringify(graph)` immediately crashes with `TypeError: Converting circular structure to JSON`.
-- V8's `structuredClone(graph)` handles cycles by building an internal hash table and cloning every node on the heap, but allocates megabytes of V8 heap memory and overflows the C++ call stack (`RangeError: Maximum call stack size exceeded`) on deep linked chains (~1,000+ hops).
-
-### The `capnstruct` Fix
-
-Use `ref(() => Struct)` for nullable/circular struct references and `slice(() => Struct)` for recursive child lists. `capnstruct` tracks visited object identities during `pack()` to serialize cyclic graphs into a single flat `Uint8Array` in $O(1)$ call-stack depth, traverses cycles in $O(1)$ with zero heap allocations, and reconstructs circular JS object references when `.toObject()` is called:
+<div class="cs-pain-vs-solve">
+  <div class="cs-pain-box"><strong>The Bottleneck:</strong> <code>JSON.stringify(graph)</code> crashes immediately with <code>TypeError: Converting circular structure to JSON</code>, and V8's <code>structuredClone(graph)</code> overflows the C++ call stack on deep linked chains (~1,000+ hops).</div>
+  <div class="cs-solve-box"><strong>The capnstruct Fix:</strong> Pass a <code>(self) =&gt; ({ ... })</code> callback to <code>defineStruct</code> and use <code>Struct.item({...})</code> for 100% TypeScript type inference. <code>pack()</code> serializes cyclic graphs in O(1) stack depth, traverses cycles in O(1) with 0 allocations, and restores circular references in <code>.toObject()</code>.</div>
+</div>
 
 ```ts
 import { defineStruct, u32, f64, str, ref, slice } from 'capnstruct';
 
-const SceneNode: any = defineStruct('SceneNode', {
+const SceneNode = defineStruct('SceneNode', (self) => ({
   id: u32,
   weight: f64,
   name: str,
-  parent: ref(() => SceneNode),
-  nextSibling: ref(() => SceneNode),
-  children: slice(() => SceneNode),
-});
+  parent: ref(self),
+  nextSibling: ref(self),
+  children: slice(self),
+}));
 
-// Build a cyclic scene graph (parent <-> child and sibling ring)
-const root: any = { id: 1, weight: 1.0, name: 'root', parent: null, nextSibling: null, children: [] };
-const childA: any = { id: 2, weight: 0.5, name: 'mesh_a', parent: root, nextSibling: null, children: [] };
-const childB: any = { id: 3, weight: 0.8, name: 'mesh_b', parent: root, nextSibling: childA, children: [root] };
+// Build a cyclic scene graph (parent <-> child and sibling ring) with 100% inferred TypeScript types
+const root = SceneNode.item({ id: 1, weight: 1.0, name: 'root', parent: null, nextSibling: null, children: [] });
+const childA = SceneNode.item({ id: 2, weight: 0.5, name: 'mesh_a', parent: root, nextSibling: null, children: [] });
+const childB = SceneNode.item({ id: 3, weight: 0.8, name: 'mesh_b', parent: root, nextSibling: childA, children: [root] });
 childA.nextSibling = childB;
 root.children = [childA, childB];
 
@@ -166,11 +183,11 @@ const bytes: Uint8Array = SceneNode.pack([root, childA, childB]);
 // 2. Zero-allocation O(1) cyclic traversal directly over the binary buffer
 const nodes = SceneNode.array(bytes);
 const vRoot = nodes.at(0);
-console.log(vRoot.children.at(0).nextSibling.parent.name); // 'root'
+console.log(vRoot.children.at(0).nextSibling?.parent?.name); // 'root'
 
 // 3. Mutate pointer links in place in O(1) without copying struct bytes
 vRoot.nextSibling = vRoot; // self-loop in place
-console.log(vRoot.nextSibling.id); // 1
+console.log(vRoot.nextSibling?.id); // 1
 
 // 4. Reconstruct circular JS object graph when needed
 const restored = vRoot.toObject();

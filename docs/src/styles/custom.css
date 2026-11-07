@@ -42,3 +42,71 @@
   height: 100%;
   margin-top: 0 !important;
 }
+
+/* Clean, scannable tables across all docs pages */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.sl-markdown-content th {
+  background: var(--sl-color-bg-nav);
+  color: var(--sl-color-white);
+  font-weight: 700;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  white-space: nowrap;
+}
+
+.sl-markdown-content td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  vertical-align: top;
+}
+
+.sl-markdown-content tr:last-child td {
+  border-bottom: none;
+}
+
+/* Pain-point vs solution callout banners */
+.cs-pain-banner,
+.cs-pain-vs-solve {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.65rem;
+  margin: 0.6rem 0 0.85rem;
+}
+
+.cs-pain-box,
+.cs-solve-box {
+  margin: 0 !important;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.45rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.cs-pain-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+}
+
+.cs-pain-box strong {
+  color: #f87171;
+}
+
+.cs-solve-box {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+}
+
+.cs-solve-box strong {
+  color: #34d399;
+}

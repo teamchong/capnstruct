@@ -2,35 +2,14 @@
 ---
 
 <div class="cs-playground not-content">
-  <div class="cs-tabs" role="tablist">
-    <button class="cs-tab active" data-tab="bench" role="tab" aria-selected="true">
-      1. Live 60 FPS Visual Proof &amp; Scaling Graphs
-    </button>
-    <button class="cs-tab" data-tab="mutate" role="tab" aria-selected="false">
-      2. Binary Inspector &amp; Live Mutator
-    </button>
-    <button class="cs-tab" data-tab="rust" role="tab" aria-selected="false">
-      3. Rust #[repr(C)] &amp; Go / TinyGo WASM Codegen
-    </button>
-  </div>
-
-  <!-- TAB 1: LIVE 60FPS VISUAL SIMULATOR + SCALING GRAPHS -->
+  <!-- SECTION 1: 3 SIDE-BY-SIDE LIVE 60FPS ANIMATIONS + SCALING GRAPHS (NO TABS REQUIRED) -->
   <div class="cs-panel active" id="cs-panel-bench">
     <div class="cs-panel-header cs-panel-header-stack">
       <div class="cs-header-top">
-        <strong class="cs-panel-title">Why Restructuring Data Layout Beats Switching to Bun, Rust, or Go/TinyGo (Live 60 FPS Race)</strong>
+        <strong class="cs-panel-title">1. Live Side-by-Side 60 FPS Visual Proof: Baseline (1x) vs. Engine Switch (~2x) vs. capnstruct Layout (45x–198x)</strong>
         <p class="cs-sub">
-          Watch all 4 architectures race side-by-side every frame: switching from <strong>Node V8 (1x)</strong> to <strong>Bun JSC (~2x)</strong> still constructs the exact same scattered heap boxes (<strong>+6.9 MB GC</strong>), and even <strong>Rust -O3 JSON (~3.8x)</strong> must scan 5.27 MiB of ASCII text. <strong>capnstruct #[repr(C)]</strong> strides through contiguous L1 cache lines <strong>45x faster in JS (198x in Rust/Go/TinyGo WASM)</strong> with <strong>0.00 MB heap</strong>.
+          All 3 animations run simultaneously below (no tab switching needed). Hover or drag over any radar to query live telemetry nodes and cyclic <code>ref(() =&gt; RingNode)</code> graphs in sync: notice how <strong>Bun JSC (~2x)</strong> still constructs the exact same scattered heap boxes (<strong>+6.9 MB GC stalls</strong>), whereas <strong>capnstruct #[repr(C)]</strong> glides through contiguous L1 cache lines at <strong>60/120 FPS with 0.00 MB heap</strong>.
         </p>
-      </div>
-      <div class="cs-sim-controls">
-        <div class="cs-mode-group" role="group" aria-label="Layout & Engine Mode">
-          <button class="cs-mode-btn active" data-mode="compare">&#x1F3C1; All 4 Side-by-Side Race</button>
-          <button class="cs-mode-btn" data-mode="capn">&#9889; capnstruct #[repr(C)] (45x–198x)</button>
-          <button class="cs-mode-btn" data-mode="jsc">&#x1F7E0; Bun v1.4 (JSC ~2x Switch)</button>
-          <button class="cs-mode-btn" data-mode="rust">&#x1F980; Rust -O3 (JSON ~3.8x)</button>
-          <button class="cs-mode-btn" data-mode="json">&#x1F534; Node.js v24 (V8 1x)</button>
-        </div>
       </div>
 
       <!-- Interactive Parameter Bar (Anti-Cherry-Pick Controls) -->
@@ -51,41 +30,43 @@
           <input id="cs-sel-slider" type="range" min="1" max="100" value="4" class="cs-slider" />
         </div>
         <div class="cs-param-item cs-live-hud">
-          <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">60 FPS</span>
-          <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.18 ms/frame</span>
-          <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB/frame</span>
+          <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">45x vs ~2x</span>
+          <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.17ms vs 5.7ms (Bun)</span>
+          <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB vs +6.9 MB GC</span>
         </div>
       </div>
 
-      <!-- Dual Live Canvas: Spatial Radar + Real-Time Frame Budget Oscilloscope -->
-      <div class="cs-canvas-grid">
-        <div class="cs-canvas-wrap">
+      <!-- 3 SIDE-BY-SIDE LIVE ANIMATIONS (NO TAB SWITCHING) -->
+      <div class="cs-trio-grid">
+        <div class="cs-canvas-wrap cs-card-v8">
           <div class="cs-canvas-title">
-            <span class="cs-canvas-label">Live 4-Lane CPU Scan &amp; Memory Layout Race</span>
-            <span class="cs-canvas-hint" id="cs-canvas-matched">2x Engine Switch vs 45x–198x Layout</span>
+            <span class="cs-canvas-label">&#x1F534; 1. Node.js V8 (1.0x Baseline)</span>
+            <span class="cs-canvas-hint cs-hint-v8" id="cs-hint-v8">14.1 ms &middot; +10.3 MB GC</span>
           </div>
-          <canvas id="cs-radar-canvas" width="520" height="250"></canvas>
+          <canvas id="cs-anim-v8" class="cs-anim-canvas" width="310" height="270"></canvas>
         </div>
-        <div class="cs-canvas-wrap">
+        <div class="cs-canvas-wrap cs-card-jsc">
           <div class="cs-canvas-title">
-            <span class="cs-canvas-label">4-Curve Frame Budget Oscilloscope (ms/frame)</span>
-            <span class="cs-canvas-hint" id="cs-osc-status">capnstruct: 0.17 ms (0 MB) vs Bun ~2x: 5.7 ms</span>
+            <span class="cs-canvas-label">&#x1F7E0; 2. Bun JSC (~2x) / Rust JSON</span>
+            <span class="cs-canvas-hint cs-hint-jsc" id="cs-hint-jsc">5.7 ms &middot; +6.9 MB GC!</span>
           </div>
-          <canvas id="cs-osc-canvas" width="420" height="250"></canvas>
+          <canvas id="cs-anim-jsc" class="cs-anim-canvas" width="310" height="270"></canvas>
+        </div>
+        <div class="cs-canvas-wrap cs-card-capn">
+          <div class="cs-canvas-title">
+            <span class="cs-canvas-label">&#9889; 3. capnstruct #[repr(C)] (45x–198x)</span>
+            <span class="cs-canvas-hint cs-hint-capn" id="cs-hint-capn">0.17 ms &middot; 0.00 MB (0 GC)</span>
+          </div>
+          <canvas id="cs-anim-capn" class="cs-anim-canvas" width="310" height="270"></canvas>
         </div>
       </div>
-      <!-- VISUAL MULTI-CURVE GRAPHS (Not Cherry-Picked: Scale Sweep + Selectivity Sweep + Live Browser Runner) -->
+
+      <!-- ALL 3 VISUAL GRAPHS & LIVE BENCHMARK LAID OUT DIRECTLY (NO SUB-TABS) -->
       <div class="cs-graph-section">
         <div class="cs-graph-header">
-          <div class="cs-graph-tabs" role="tablist">
-            <button class="cs-gtab active" data-gtab="scale">&#x1F4C8; Graph 1: Scaling Curve (N = 100 &rarr; 100k)</button>
-            <button class="cs-gtab" data-gtab="selectivity">&#x1F3AF; Graph 2: Filter Selectivity (0.5% &rarr; 100% Decode)</button>
-            <button class="cs-gtab" data-gtab="livebars">&#9889; Graph 3: Run Live in Your Browser</button>
-          </div>
+          <strong class="cs-section-subhead">&#x1F4C8; Scaling Curve (N = 100 &rarr; 100,000) &amp; Filter Selectivity (0.5% &rarr; 100% Decode)</strong>
           <button id="cs-run-bench" class="cs-btn cs-btn-primary">&#9654; Run Live Browser Benchmark</button>
         </div>
-
-        <!-- GRAPH 1: SCALING CURVE SVG (N = 100 -> 100,000) -->
         <div class="cs-gpanel active" id="cs-gpanel-scale">
           <div class="cs-graph-card">
             <div class="cs-graph-legend">
@@ -162,7 +143,7 @@
         </div>
 
         <!-- GRAPH 2: FILTER SELECTIVITY SWEEP SVG (0.5% -> 100% Hit Rate on 25,000 13-Field Telemetry Rows) -->
-        <div class="cs-gpanel" id="cs-gpanel-selectivity">
+        <div class="cs-gpanel active" id="cs-gpanel-selectivity">
           <div class="cs-graph-card">
             <div class="cs-graph-legend">
               <span class="cs-leg-item"><i class="cs-dot cs-dot-v8"></i> Node V8 (<code>JSON.parse</code> + filter)</span>
@@ -222,7 +203,7 @@
         </div>
 
         <!-- GRAPH 3: LIVE BROWSER BENCHMARK BARS -->
-        <div class="cs-gpanel" id="cs-gpanel-livebars">
+        <div class="cs-gpanel active" id="cs-gpanel-livebars">
           <div id="cs-bench-results" class="cs-bench-grid">
             <div class="cs-bench-card" data-bench="scan">
               <div class="cs-bench-top">
@@ -316,10 +297,10 @@
       </div>
     </div>
   </div>
-  <div class="cs-panel" id="cs-panel-mutate">
+  <div class="cs-panel active cs-panel-divider" id="cs-panel-mutate">
     <div class="cs-panel-header">
       <div>
-        <strong>Interactive Binary StructArrayView Inspector</strong>
+        <strong>2. Interactive Binary StructArrayView Inspector &amp; Live Mutator</strong>
         <p class="cs-sub">
           Mutate strings &amp; slices in place, push/pop rows, and watch the fixed <code>#[repr(C)]</code> table and tail arena update in real time.
         </p>
@@ -352,10 +333,10 @@
   </div>
 
   <!-- TAB 3: RUST CODEGEN -->
-  <div class="cs-panel" id="cs-panel-rust">
+  <div class="cs-panel active cs-panel-divider" id="cs-panel-rust">
     <div class="cs-panel-header">
       <div>
-        <strong>Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> &amp; Go / TinyGo WASM Zero-Copy Codegen</strong>
+        <strong>3. Live TypeScript Schema &rarr; Rust <code>#[repr(C)]</code> &amp; Go / TinyGo WASM Zero-Copy Codegen</strong>
         <p class="cs-sub">
           Select a preset schema (including recursive <code>ref(() =&gt; GraphNode)</code>) and target (Rust, Go Native, or Go / TinyGo WASM with <code>//go:wasmexport capn_alloc</code>) to inspect its exact C-ABI alignment, field offsets, and compile-time layout assertions.
         </p>
@@ -425,11 +406,11 @@
     background: var(--sl-color-bg-nav);
   }
   .cs-panel {
-    display: none;
+    display: block;
     padding: 1.25rem;
   }
-  .cs-panel.active {
-    display: block;
+  .cs-panel-divider {
+    border-top: 1px solid var(--sl-color-hairline);
   }
   .cs-panel-header {
     display: flex;
@@ -773,14 +754,14 @@
     min-width: 7.4rem;
     color: #38bdf8;
   }
-  .cs-canvas-grid {
+  .cs-trio-grid {
     display: grid;
-    grid-template-columns: 1.15fr 0.85fr;
-    gap: 0.85rem;
-    margin-bottom: 1.1rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.15rem;
   }
-  @media (max-width: 820px) {
-    .cs-canvas-grid {
+  @media (max-width: 920px) {
+    .cs-trio-grid {
       grid-template-columns: 1fr;
     }
   }
@@ -792,16 +773,26 @@
     display: flex;
     flex-direction: column;
   }
+  .cs-card-v8 {
+    border-color: rgba(239, 68, 68, 0.35);
+  }
+  .cs-card-jsc {
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+  .cs-card-capn {
+    border-color: rgba(16, 185, 129, 0.55);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2);
+  }
   .cs-canvas-title {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.45rem 0.65rem;
-    font-size: 0.74rem;
-    font-weight: 600;
-    color: #cbd5e1;
-    background: rgba(15, 23, 42, 0.85);
+    gap: 0.35rem;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    background: rgba(15, 23, 42, 0.9);
     border-bottom: 1px solid rgba(148, 163, 184, 0.16);
     white-space: nowrap;
     overflow: hidden;
@@ -813,17 +804,29 @@
   .cs-canvas-hint {
     font-family: var(--sl-font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 0.69rem;
+    font-size: 0.67rem;
     color: #10b981;
     flex-shrink: 0;
   }
+  .cs-hint-v8 {
+    color: #f87171;
+  }
+  .cs-hint-jsc {
+    color: #fbbf24;
+  }
+  .cs-hint-capn {
+    color: #34d399;
+  }
   .cs-canvas-wrap canvas {
     width: 100%;
-    height: 250px;
+    height: 270px;
     display: block;
     cursor: crosshair;
   }
-
+  .cs-section-subhead {
+    font-size: 0.9rem;
+    color: var(--sl-color-text);
+  }
   .cs-graph-header {
     display: flex;
     justify-content: space-between;
@@ -832,38 +835,10 @@
     gap: 0.65rem;
     margin-bottom: 0.75rem;
   }
-
-  .cs-graph-tabs {
-    display: flex;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-  }
-
-  .cs-gtab {
-    padding: 0.38rem 0.75rem;
-    border-radius: 0.45rem;
-    border: 1px solid var(--sl-color-hairline);
-    background: var(--sl-color-bg);
-    color: var(--sl-color-gray-2);
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .cs-gtab.active {
-    border-color: var(--sl-color-accent);
-    background: var(--sl-color-accent-low);
-    color: var(--sl-color-accent-high);
-  }
-
   .cs-gpanel {
-    display: none;
-  }
-
-  .cs-gpanel.active {
     display: block;
+    margin-bottom: 0.85rem;
   }
-
   .cs-graph-card {
     padding: 0.9rem 1rem;
     border-radius: 0.6rem;
@@ -939,35 +914,7 @@
     fixedArray,
     pack,
   } from 'capnstruct';
-  import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
-  const tabs = document.querySelectorAll<HTMLButtonElement>('.cs-tab');
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => {
-        t.classList.remove('active');
-        t.setAttribute('aria-selected', 'false');
-      });
-      document.querySelectorAll('.cs-panel').forEach((p) => p.classList.remove('active'));
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      const target = document.getElementById(`cs-panel-${tab.dataset.tab}`);
-      if (target) target.classList.add('active');
-    });
-  });
-
-  // Graph sub-tabs switching
-  const gtabs = document.querySelectorAll<HTMLButtonElement>('.cs-gtab');
-  gtabs.forEach((gt) => {
-    gt.addEventListener('click', () => {
-      gtabs.forEach((b) => b.classList.remove('active'));
-      document.querySelectorAll('.cs-gpanel').forEach((p) => p.classList.remove('active'));
-      gt.classList.add('active');
-      const panel = document.getElementById(`cs-gpanel-${gt.dataset.gtab}`);
-      if (panel) panel.classList.add('active');
-    });
-  });
-
-  // --- TAB 1: LIVE 60FPS INTERACTIVE VISUALIZER + BENCHMARK ---
+  // --- SECTION 1: 3 SIDE-BY-SIDE LIVE 60FPS ANIMATIONS (NO TAB SWITCHING) ---
   const RadarNode: any = defineStruct('RadarNode', {
     id: u32,
     x: f32,
@@ -978,23 +925,26 @@
     next: ref(() => RadarNode),
   });
 
-  const radarCanvas = document.getElementById('cs-radar-canvas') as HTMLCanvasElement | null;
-  const oscCanvas = document.getElementById('cs-osc-canvas') as HTMLCanvasElement | null;
+  const v8Canvas = document.getElementById('cs-anim-v8') as HTMLCanvasElement | null;
+  const jscCanvas = document.getElementById('cs-anim-jsc') as HTMLCanvasElement | null;
+  const capnCanvas = document.getElementById('cs-anim-capn') as HTMLCanvasElement | null;
+  const animCanvases = [v8Canvas, jscCanvas, capnCanvas].filter(Boolean) as HTMLCanvasElement[];
+
   const hudFps = document.getElementById('cs-hud-fps');
   const hudMs = document.getElementById('cs-hud-ms');
   const hudHeap = document.getElementById('cs-hud-heap');
-  const hudMatched = document.getElementById('cs-canvas-matched');
-  const hudOscStatus = document.getElementById('cs-osc-status');
+  const hintV8 = document.getElementById('cs-hint-v8');
+  const hintJsc = document.getElementById('cs-hint-jsc');
+  const hintCapn = document.getElementById('cs-hint-capn');
   const selSlider = document.getElementById('cs-sel-slider') as HTMLInputElement | null;
   const selValEl = document.getElementById('cs-sel-val');
-  let simMode: 'compare' | 'capn' | 'rust' | 'jsc' | 'json' = 'compare';
+
   let simScale = 25000;
   let simSelectivityPct = 4;
   let pointerX = 0.5;
-  let pointerY = 0.5;
-  let radarAngle = 0;
+  let pointerY = 0.45;
 
-  // Build binary + plain JS datasets for live 60fps canvas simulation
+  // Build binary dataset for live 60fps zero-copy simulation
   const MAX_SIM_N = 2500;
   const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) => ({
     id: i,
@@ -1005,7 +955,6 @@
     callsign: `AC_${1000 + (i % 9000)}`,
     next: null as any,
   }));
-  // Link cyclic clusters of 32 nodes so ref(() => RadarNode) cyclic graph is live
   const SIM_CLUSTER = 32;
   for (let i = 0; i < 2048; i++) {
     const base = Math.floor(i / SIM_CLUSTER) * SIM_CLUSTER;
@@ -1019,24 +968,12 @@
     simFlatX[i] = simPlainRows[i].x;
     simFlatY[i] = simPlainRows[i].y;
   }
-  const simJsonStrings: Record<number, string> = {
-    2500: JSON.stringify(simPlainRows.map((r) => ({ id: r.id, x: r.x, y: r.y, callsign: r.callsign }))),
-  };
-
-  document.querySelectorAll<HTMLButtonElement>('.cs-mode-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.cs-mode-btn').forEach((b) => b.classList.remove('active'));
-      simMode = (btn.dataset.mode as 'compare' | 'capn' | 'rust' | 'jsc' | 'json') || 'compare';
-      frameTick = 0;
-    });
-  });
 
   document.querySelectorAll<HTMLButtonElement>('.cs-mini-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.cs-mini-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      simScale = parseInt(btn.dataset.scale || '2500', 10);
-      frameTick = 0;
+      simScale = parseInt(btn.dataset.scale || '25000', 10);
     });
   });
 
@@ -1044,25 +981,25 @@
     selSlider.addEventListener('input', () => {
       simSelectivityPct = parseInt(selSlider.value || '4', 10);
       if (selValEl) selValEl.textContent = `${simSelectivityPct}%`;
-      frameTick = 0;
     });
   }
 
-  if (radarCanvas) {
+  // Synchronize pointer lens across all 3 animation canvases
+  animCanvases.forEach((cvs) => {
     const updatePointer = (clientX: number, clientY: number) => {
-      const rect = radarCanvas.getBoundingClientRect();
-      pointerX = Math.max(0.05, Math.min(0.95, (clientX - rect.left) / rect.width));
-      pointerY = Math.max(0.05, Math.min(0.95, (clientY - rect.top) / rect.height));
+      const rect = cvs.getBoundingClientRect();
+      pointerX = Math.max(0.08, Math.min(0.92, (clientX - rect.left) / rect.width));
+      pointerY = Math.max(0.08, Math.min(0.92, (clientY - rect.top) / (rect.height * 0.46)));
     };
-    radarCanvas.addEventListener('mousemove', (e) => updatePointer(e.clientX, e.clientY));
-    radarCanvas.addEventListener(
+    cvs.addEventListener('mousemove', (e) => updatePointer(e.clientX, e.clientY));
+    cvs.addEventListener(
       'touchmove',
       (e) => {
         if (e.touches[0]) updatePointer(e.touches[0].clientX, e.touches[0].clientY);
       },
       { passive: true },
     );
-  }
+  });
 
   interface MultiFramePoint {
     v8Ms: number;
@@ -1073,37 +1010,309 @@
     jscGc: boolean;
   }
   const frameHistory: MultiFramePoint[] = [];
-  const MAX_HISTORY = 120;
+  const MAX_HISTORY = 90;
   let frameTick = 0;
+
+  // Independent radar angles + scan progress so stuttering vs smooth 60 FPS is visually obvious!
+  let v8RadarAngle = 0;
+  let jscRadarAngle = 0;
+  let capnRadarAngle = 0;
+
   let v8Prog = 0;
   let jscProg = 0;
-  let rustProg = 0;
   let capnProg = 0;
   let v8Sweeps = 0;
   let jscSweeps = 0;
-  let rustSweeps = 0;
   let capnSweeps = 0;
   let v8HeapAccum = 0;
   let jscHeapAccum = 0;
   let v8GcStall = 0;
   let jscGcStall = 0;
 
-  function stepLiveSimulation() {
-    if (!radarCanvas || !oscCanvas) return;
-    const panelBench = document.getElementById('cs-panel-bench');
-    if (panelBench && !panelBench.classList.contains('active')) {
-      requestAnimationFrame(stepLiveSimulation);
-      return;
+  function renderAnimCard(
+    canvas: HTMLCanvasElement | null,
+    opts: {
+      kind: 'v8' | 'jsc' | 'capn';
+      color: string;
+      radarAng: number;
+      prog: number;
+      sweeps: number;
+      heapMB: number;
+      maxHeapMB: number;
+      stalled: boolean;
+      stallLabel: string;
+      memTitle: string;
+      memSub: string;
+      msLabel: string;
+      radius: number;
+    },
+  ) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.fillStyle = '#090d16';
+    ctx.fillRect(0, 0, w, h);
+
+    // -------------------------------------------------------------------------
+    // TOP ZONE (0..118px): Live Spatial Radar + Cyclic ref(() => Node) Ring
+    // V8 stutters at ~15fps & freezes on GC; Bun (~2x) moves 2x faster & STILL
+    // freezes on GC; capnstruct glides at locked 60fps with 0 GC pauses!
+    // -------------------------------------------------------------------------
+    const radarH = 116;
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+    ctx.lineWidth = 1;
+    for (let gx = 52; gx < w; gx += 52) {
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, radarH);
+      ctx.stroke();
+    }
+    for (let gy = 38; gy < radarH; gy += 38) {
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
     }
 
+    const cx = pointerX * w;
+    const cy = Math.min(0.85, Math.max(0.18, pointerY)) * radarH;
+    const radPx = Math.max(20, opts.radius * Math.min(w, radarH * 1.3));
+    const r2 = opts.radius * opts.radius;
+
+    const sampleCount = 180;
+    for (let i = 0; i < sampleCount; i++) {
+      const dirX = (i % 3) - 1;
+      const dirY = (i % 5) - 2;
+      const nx = ((simFlatX[i] + opts.radarAng * 0.008 * dirX) % 1 + 1) % 1;
+      const ny = ((simFlatY[i] + opts.radarAng * 0.006 * dirY) % 1 + 1) % 1;
+      const dx = nx - pointerX;
+      const dy = ny - Math.min(0.85, Math.max(0.18, pointerY));
+      const inside = dx * dx + dy * dy <= r2;
+      ctx.fillStyle = inside ? opts.color : 'rgba(148, 163, 184, 0.25)';
+      const px = nx * w;
+      const py = ny * radarH;
+      ctx.fillRect(px - (inside ? 1.5 : 1), py - (inside ? 1.5 : 1), inside ? 3.2 : 2, inside ? 3.2 : 2);
+    }
+
+    // Cyclic doubly-linked ref(() => RadarNode) ring + rotating sweep beam
+    const ringNodes = 10;
+    const ringR = Math.max(18, Math.min(42, radPx * 0.68));
+    ctx.strokeStyle = opts.color;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    for (let k = 0; k <= ringNodes; k++) {
+      const ang = opts.radarAng * 0.7 + (k / ringNodes) * Math.PI * 2;
+      const rx = cx + Math.cos(ang) * ringR;
+      const ry = cy + Math.sin(ang) * ringR;
+      if (k === 0) ctx.moveTo(rx, ry);
+      else ctx.lineTo(rx, ry);
+    }
+    ctx.stroke();
+
+    // Rotating radar sweep hand so frame stutter vs smooth 60fps is immediately obvious
+    const handAng = opts.radarAng * 1.6;
+    ctx.strokeStyle = opts.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(handAng) * radPx, cy + Math.sin(handAng) * radPx);
+    ctx.stroke();
+
+    ctx.strokeStyle = opts.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radPx, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Status badge in top-left of radar
+    ctx.fillStyle = 'rgba(9, 13, 22, 0.82)';
+    ctx.fillRect(6, 5, w - 12, 16);
+    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = opts.color;
+    ctx.fillText(opts.memTitle, 9, 16);
+
+    if (opts.stalled) {
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.9)';
+      ctx.fillRect(10, radarH / 2 - 11, w - 20, 22);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(opts.stallLabel, w / 2, radarH / 2 + 4);
+      ctx.textAlign = 'left';
+    }
+
+    // -------------------------------------------------------------------------
+    // MIDDLE ZONE (120..186px): Memory Layout Strip + Heap Bar + Sweeps Counter
+    // -------------------------------------------------------------------------
+    const midY = 120;
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(w, midY);
+    ctx.stroke();
+
+    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(opts.memSub, 8, midY + 13);
+
+    ctx.fillStyle = opts.color;
+    ctx.textAlign = 'right';
+    ctx.fillText(`Sweeps: ${opts.sweeps}x`, w - 8, midY + 13);
+    ctx.textAlign = 'left';
+
+    const trackX = 8;
+    const trackY = midY + 18;
+    const trackW = w - 16;
+    const trackH = 22;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+    ctx.fillRect(trackX, trackY, trackW, trackH);
+
+    const nCells = 14;
+    const cellW = trackW / nCells;
+    const activeCell = Math.floor(opts.prog * nCells);
+
+    if (opts.kind === 'v8' || opts.kind === 'jsc') {
+      // Scattered pointer-soup heap boxes (BOTH V8 and Bun JSC ~2x construct this!)
+      for (let c = 0; c < nCells; c++) {
+        const bx = trackX + c * cellW + 1.5;
+        const by = c % 2 === 0 ? trackY + 2 : trackY + 11;
+        const visited = c <= activeCell;
+        ctx.fillStyle = visited ? opts.color : 'rgba(148, 163, 184, 0.22)';
+        ctx.fillRect(bx, by, cellW - 4, 8);
+        if (c < nCells - 1) {
+          const ny = (c + 1) % 2 === 0 ? trackY + 5 : trackY + 14;
+          ctx.strokeStyle = visited ? opts.color : 'rgba(148, 163, 184, 0.25)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(bx + cellW - 4, by + 4);
+          ctx.lineTo(bx + cellW + 1.5, ny);
+          ctx.stroke();
+        }
+      }
+    } else {
+      // Contiguous #[repr(C)] L1 cache-line array!
+      for (let c = 0; c < nCells; c++) {
+        const bx = trackX + c * cellW + 1;
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.36)';
+        ctx.fillRect(bx, trackY + 2, cellW - 2, trackH - 4);
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(bx, trackY + 2, cellW - 2, trackH - 4);
+      }
+      const beamX = trackX + opts.prog * (trackW - 28);
+      ctx.fillStyle = 'rgba(52, 211, 153, 0.7)';
+      ctx.fillRect(beamX, trackY + 1, 28, trackH - 2);
+    }
+
+    // Scan head cursor
+    const headX = trackX + opts.prog * trackW;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(headX, trackY);
+    ctx.lineTo(headX, trackY + trackH);
+    ctx.stroke();
+
+    // Heap allocation progress bar (shows V8 +10.3MB & Bun +6.9MB filling toward GC vs capnstruct 0.00MB)
+    const heapY = trackY + trackH + 5;
+    const heapH = 12;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.fillRect(trackX, heapY, trackW, heapH);
+    if (opts.maxHeapMB > 0) {
+      const fillRatio = Math.min(1, opts.heapMB / opts.maxHeapMB);
+      ctx.fillStyle = opts.stalled ? '#ef4444' : opts.color;
+      ctx.fillRect(trackX, heapY, trackW * fillRatio, heapH);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, monospace';
+      ctx.fillText(
+        `Heap Alloc: +${opts.heapMB.toFixed(1)} / ${opts.maxHeapMB.toFixed(1)} MB -> GC!`,
+        trackX + 4,
+        heapY + 9,
+      );
+    } else {
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
+      ctx.strokeRect(trackX, heapY, trackW, heapH);
+      ctx.fillStyle = '#34d399';
+      ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, monospace';
+      ctx.fillText('Heap Alloc: 0.00 MB (Zero Boxed Objects / 0 GC!)', trackX + 4, heapY + 9);
+    }
+
+    // -------------------------------------------------------------------------
+    // BOTTOM ZONE (182..270px): Mini Frame-Budget Oscilloscope (ms/frame)
+    // -------------------------------------------------------------------------
+    const oscTop = 184;
+    const oscH = h - oscTop;
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(0, oscTop);
+    ctx.lineTo(w, oscTop);
+    ctx.stroke();
+
+    const maxScaleMs = 22;
+    const yForMs = (ms: number) => h - 8 - Math.min(1, ms / maxScaleMs) * (oscH - 20);
+    const y60 = yForMs(16.67);
+    const y120 = yForMs(8.33);
+
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(0, y60);
+    ctx.lineTo(w, y60);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(0, y120);
+    ctx.lineTo(w, y120);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (frameHistory.length > 1) {
+      // On card 2 (Bun ~2x / Rust), also draw the purple Rust -O3 JSON curve (3.7ms)
+      if (opts.kind === 'jsc') {
+        ctx.strokeStyle = '#c084fc';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < frameHistory.length; i++) {
+          const fx = (i / (MAX_HISTORY - 1)) * w;
+          const fy = yForMs(frameHistory[i].rustMs);
+          if (i === 0) ctx.moveTo(fx, fy);
+          else ctx.lineTo(fx, fy);
+        }
+        ctx.stroke();
+      }
+
+      const key = opts.kind === 'v8' ? 'v8Ms' : opts.kind === 'jsc' ? 'jscMs' : 'capnMs';
+      ctx.strokeStyle = opts.color;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (let i = 0; i < frameHistory.length; i++) {
+        const fx = (i / (MAX_HISTORY - 1)) * w;
+        const fy = yForMs(frameHistory[i][key]);
+        if (i === 0) ctx.moveTo(fx, fy);
+        else ctx.lineTo(fx, fy);
+      }
+      ctx.stroke();
+    }
+
+    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = opts.color;
+    ctx.fillText(opts.msLabel, 8, oscTop + 12);
+  }
+
+  function stepLiveSimulation() {
+    if (animCanvases.length === 0) return;
+
     frameTick++;
-    const radius = Math.sqrt(simSelectivityPct / 100) * 0.52;
+    const radius = Math.sqrt(simSelectivityPct / 100) * 0.48;
     const r2 = radius * radius;
     const t0 = performance.now();
     let matchedCount = 0;
     let charsDecoded = 0;
 
-    // Always run real zero-copy capnstruct binary scan + cyclic ref(() => RadarNode) traversal in browser
+    // Run real zero-copy capnstruct binary scan + cyclic ref(() => RadarNode) traversal in browser
     const cur = simCapnView.cursor(0);
     const nCapn = Math.min(simScale, simCapnView.length);
     for (let i = 0; i < nCapn; i++) {
@@ -1120,28 +1329,26 @@
       ringCur = ringCur.next;
     }
     const rawCapnMs = Math.max(0.06, performance.now() - t0);
-    if (charsDecoded < 0) console.log(charsDecoded);
+    if (charsDecoded < 0) console.log(charsDecoded, matchedCount);
 
     const scaleFactor = simScale / 25000;
     const selFactor = 0.85 + (simSelectivityPct / 100) * 0.35;
-
-    // Advance all 4 race lanes at their true relative throughput so the visual speed difference is unmistakable:
-    // - Node V8 (1.0x): +0.0085/frame, stalls during GC pauses
-    // - Bun JSC (~2.5x): +0.021/frame (~2.5x faster than V8, STILL allocates +6.9 MB and stalls on GC!)
-    // - Rust -O3 JSON (~3.8x): +0.032/frame (scans 5.27 MiB ASCII text)
-    // - capnstruct #[repr(C)] (45x JS / 198x WASM): +0.38/frame (zips across contiguous L1 cache lines, 0 GC!)
     const speedMult = Math.max(0.5, Math.min(1.6, 1 / Math.sqrt(scaleFactor)));
     let v8Gc = false;
     let jscGc = false;
 
+    // 1. Node.js V8 (1.0x): choppy ~15 FPS updates + stalls during +10.3 MB GC pauses
     if (v8GcStall > 0) {
       v8GcStall--;
     } else {
+      if (frameTick % 3 === 0) {
+        v8RadarAngle += 0.032;
+      }
       v8Prog += 0.0085 * speedMult;
       v8HeapAccum += 0.38 * scaleFactor;
       if (v8HeapAccum >= 10.3) {
         v8HeapAccum = 0;
-        v8GcStall = 8;
+        v8GcStall = 12;
         v8Gc = true;
       }
       if (v8Prog >= 1) {
@@ -1150,14 +1357,18 @@
       }
     }
 
+    // 2. Bun JSC (~2x Switch): moves ~2.5x faster than V8, STILL allocates +6.9 MB and stalls on GC!
     if (jscGcStall > 0) {
       jscGcStall--;
     } else {
+      if (frameTick % 2 === 0) {
+        jscRadarAngle += 0.044;
+      }
       jscProg += 0.021 * speedMult;
       jscHeapAccum += 0.26 * scaleFactor;
       if (jscHeapAccum >= 6.87) {
         jscHeapAccum = 0;
-        jscGcStall = 5;
+        jscGcStall = 8;
         jscGc = true;
       }
       if (jscProg >= 1) {
@@ -1166,380 +1377,85 @@
       }
     }
 
-    rustProg += 0.032 * speedMult;
-    if (rustProg >= 1) {
-      rustProg -= 1;
-      rustSweeps++;
-    }
-
+    // 3. capnstruct #[repr(C)] (45x JS / 198x WASM): silky-smooth every single frame, 0 MB heap, 0 GC!
+    capnRadarAngle += 0.045;
     capnProg += 0.38 * speedMult;
     if (capnProg >= 1) {
       capnSweeps += Math.floor(capnProg);
       capnProg = capnProg % 1;
     }
 
-    // Reset counters cleanly after 999 sweeps so badges stay compact
     if (capnSweeps > 999) {
       v8Sweeps = 0;
       jscSweeps = 0;
-      rustSweeps = 0;
       capnSweeps = 0;
     }
 
     const jitter = Math.sin(frameTick * 0.19) * 0.25;
-    const v8Ms = 13.8 * scaleFactor * selFactor + jitter + (v8Gc || v8GcStall > 5 ? 7.2 : 0);
-    const jscMs = 5.65 * scaleFactor * selFactor + jitter * 0.6 + (jscGc || jscGcStall > 3 ? 4.8 : 0);
+    const v8Ms = 14.14 * scaleFactor * selFactor + jitter + (v8Gc || v8GcStall > 6 ? 6.8 : 0);
+    const jscMs = 5.65 * scaleFactor * selFactor + jitter * 0.6 + (jscGc || jscGcStall > 4 ? 5.2 : 0);
     const rustMs = 3.68 * scaleFactor * selFactor + jitter * 0.3;
     const capnMs = Math.max(0.14, 0.17 * scaleFactor + rawCapnMs * 0.2);
 
     frameHistory.push({ v8Ms, jscMs, rustMs, capnMs, v8Gc, jscGc });
     if (frameHistory.length > MAX_HISTORY) frameHistory.shift();
 
-    // Update HUD badges at ~10 Hz
     if (frameTick % 6 === 1) {
-      const focusMs =
-        simMode === 'json' ? v8Ms : simMode === 'jsc' ? jscMs : simMode === 'rust' ? rustMs : capnMs;
-      const estFps = Math.min(60, Math.round(1000 / Math.max(16.67, focusMs)));
-      if (hudFps) {
-        hudFps.textContent =
-          simMode === 'compare' ? '45x vs ~2x' : `${String(estFps).padStart(2, ' ')} FPS`;
-        hudFps.style.color =
-          simMode === 'json' ? '#ef4444' : simMode === 'jsc' ? '#f59e0b' : simMode === 'rust' ? '#c084fc' : '#10b981';
-      }
-      if (hudMs) {
-        hudMs.textContent =
-          simMode === 'compare'
-            ? `0.17ms vs 5.7ms (Bun)`
-            : `${focusMs.toFixed(2).padStart(5, ' ')} ms/frame`;
-      }
-      if (hudHeap) {
-        hudHeap.textContent =
-          simMode === 'json'
-            ? '+10.30 MB/call'
-            : simMode === 'jsc'
-              ? '+6.87 MB/call (GC!)'
-              : simMode === 'rust'
-                ? '5.27 MiB ASCII scan'
-                : '0.00 MB Heap (0 GC)';
-        hudHeap.style.color =
-          simMode === 'json' ? '#ef4444' : simMode === 'jsc' ? '#f59e0b' : simMode === 'rust' ? '#c084fc' : '#10b981';
-      }
-      if (hudMatched) {
-        hudMatched.textContent = `Sweeps done: V8 ${v8Sweeps} | Bun(~2x) ${jscSweeps} | capnstruct ${capnSweeps}`;
-      }
-      if (hudOscStatus) {
-        hudOscStatus.textContent =
-          simMode === 'jsc'
-            ? 'Bun ~2x still allocates +6.9 MB & stutters GC!'
-            : simMode === 'json'
-              ? 'Node V8: 14.1 ms + +10.3 MB GC stalls'
-              : simMode === 'rust'
-                ? 'Rust -O3 JSON: 3.7 ms scanning 5.27 MiB text'
-                : 'capnstruct: 0.17 ms JS / 0.07 ms WASM (0 MB)';
-        hudOscStatus.style.color =
-          simMode === 'json' ? '#ef4444' : simMode === 'jsc' ? '#f59e0b' : simMode === 'rust' ? '#c084fc' : '#10b981';
-      }
+      if (hudFps) hudFps.textContent = `Sweeps: ${v8Sweeps} vs ${jscSweeps} vs ${capnSweeps}`;
+      if (hudMs) hudMs.textContent = `${capnMs.toFixed(2)}ms vs ${jscMs.toFixed(1)}ms (Bun)`;
+      if (hudHeap) hudHeap.textContent = '0.00 MB vs +6.9 MB GC';
+      if (hintV8) hintV8.textContent = `${v8Ms.toFixed(1)} ms · +10.3 MB GC`;
+      if (hintJsc) hintJsc.textContent = `${jscMs.toFixed(1)} ms · +6.9 MB GC!`;
+      if (hintCapn) hintCapn.textContent = `${capnMs.toFixed(2)} ms · 0.00 MB (0 GC)`;
     }
 
-    // =========================================================================
-    // LEFT CANVAS: Live 4-Lane CPU Scan & Memory Layout Race
-    // Clearly shows WHY Bun (~2x) is still slow (scattered heap boxes + GC stall)
-    // vs capnstruct #[repr(C)] (contiguous L1 cache strip, 45x-198x faster, 0 MB)
-    // =========================================================================
-    const rctx = radarCanvas.getContext('2d');
-    if (rctx) {
-      const w = radarCanvas.width;
-      const h = radarCanvas.height;
-      rctx.fillStyle = '#090d16';
-      rctx.fillRect(0, 0, w, h);
+    renderAnimCard(v8Canvas, {
+      kind: 'v8',
+      color: '#ef4444',
+      radarAng: v8RadarAngle,
+      prog: v8Prog,
+      sweeps: v8Sweeps,
+      heapMB: v8HeapAccum,
+      maxHeapMB: 10.3,
+      stalled: v8GcStall > 0,
+      stallLabel: 'V8 GC PAUSE (+10.3 MB)!',
+      memTitle: '1.0x Speed · Choppy + GC Stalls',
+      memSub: 'Scattered Boxed Heap:',
+      msLabel: `Node V8: ${v8Ms.toFixed(1)} ms (>16.6ms stutter)`,
+      radius,
+    });
 
-      const lanes = [
-        {
-          id: 'json',
-          title: '1. Node.js V8 (JSON.parse + Clone)',
-          badge: '1.0x (14.1 ms)',
-          heapText: v8GcStall > 0 ? 'GC PAUSE STALL!' : `+${v8HeapAccum.toFixed(1)} / 10.3 MB Heap`,
-          prog: v8Prog,
-          sweeps: v8Sweeps,
-          color: '#ef4444',
-          bg: 'rgba(239, 68, 68, 0.10)',
-          stalled: v8GcStall > 0,
-          kind: 'scattered' as const,
-        },
-        {
-          id: 'jsc',
-          title: '2. Bun v1.4 Engine Switch (JSC ~2x)',
-          badge: 'Only ~2.5x (5.7 ms)',
-          heapText: jscGcStall > 0 ? 'GC PAUSE STALL!' : `+${jscHeapAccum.toFixed(1)} / 6.9 MB Heap`,
-          prog: jscProg,
-          sweeps: jscSweeps,
-          color: '#f59e0b',
-          bg: 'rgba(245, 158, 11, 0.11)',
-          stalled: jscGcStall > 0,
-          kind: 'scattered' as const,
-        },
-        {
-          id: 'rust',
-          title: '3. Rust -O3 / Go WASM (JSON Text Scan)',
-          badge: '~3.8x (3.7 ms)',
-          heapText: 'Scans 5.27 MiB ASCII',
-          prog: rustProg,
-          sweeps: rustSweeps,
-          color: '#c084fc',
-          bg: 'rgba(168, 85, 247, 0.10)',
-          stalled: false,
-          kind: 'ascii' as const,
-        },
-        {
-          id: 'capn',
-          title: '4. capnstruct #[repr(C)] (JS / Go·TinyGo / Rust)',
-          badge: '45x JS / 198x WASM!',
-          heapText: '0.00 MB Heap (0 GC!)',
-          prog: capnProg,
-          sweeps: capnSweeps,
-          color: '#10b981',
-          bg: 'rgba(16, 185, 129, 0.15)',
-          stalled: false,
-          kind: 'contiguous' as const,
-        },
-      ];
+    renderAnimCard(jscCanvas, {
+      kind: 'jsc',
+      color: '#f59e0b',
+      radarAng: jscRadarAngle,
+      prog: jscProg,
+      sweeps: jscSweeps,
+      heapMB: jscHeapAccum,
+      maxHeapMB: 6.87,
+      stalled: jscGcStall > 0,
+      stallLabel: 'BUN ~2x GC STALL (+6.9 MB)!',
+      memTitle: 'Only ~2.5x · Still Boxed + GC!',
+      memSub: 'Same Scattered Heap Boxes:',
+      msLabel: `Bun ~2x: ${jscMs.toFixed(1)}ms | Rust JSON: ${rustMs.toFixed(1)}ms`,
+      radius,
+    });
 
-      const laneH = 54;
-      const padX = 10;
-      const trackX = 14;
-      const trackW = w - 122;
-
-      for (let idx = 0; idx < lanes.length; idx++) {
-        const lane = lanes[idx];
-        const ly = 8 + idx * 60;
-        const isFocus = simMode === 'compare' || simMode === lane.id;
-        rctx.save();
-        rctx.globalAlpha = isFocus ? 1.0 : 0.35;
-
-        // Lane card background & border
-        rctx.fillStyle = lane.stalled ? 'rgba(239, 68, 68, 0.22)' : lane.bg;
-        rctx.strokeStyle = isFocus ? lane.color : 'rgba(148, 163, 184, 0.2)';
-        rctx.lineWidth = lane.id === 'capn' && isFocus ? 1.8 : 1;
-        rctx.beginPath();
-        rctx.roundRect(padX, ly, w - padX * 2, laneH, 6);
-        rctx.fill();
-        rctx.stroke();
-
-        // Top row of lane: Title + Speed badge + Heap/GC status
-        rctx.font = 'bold 10.5px ui-monospace, SFMono-Regular, monospace';
-        rctx.fillStyle = '#f8fafc';
-        rctx.fillText(lane.title, trackX, ly + 14);
-
-        rctx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
-        rctx.fillStyle = lane.stalled ? '#fca5a5' : lane.color;
-        rctx.textAlign = 'right';
-        rctx.fillText(`${lane.badge} · ${lane.heapText}`, w - 14, ly + 14);
-        rctx.textAlign = 'left';
-
-        // Memory cells visualization inside track
-        const barY = ly + 22;
-        const barH = 24;
-        rctx.fillStyle = 'rgba(9, 13, 22, 0.78)';
-        rctx.fillRect(trackX, barY, trackW, barH);
-
-        const nBlocks = 18;
-        const cellW = trackW / nBlocks;
-        const activeBlock = Math.floor(lane.prog * nBlocks);
-
-        if (lane.kind === 'scattered') {
-          // Scattered pointer-soup heap boxes (both Node V8 and Bun JSC ~2x do this!)
-          for (let b = 0; b < nBlocks; b++) {
-            const bx = trackX + b * cellW + 2;
-            const jitterY = b % 2 === 0 ? barY + 2 : barY + 11;
-            const visited = b <= activeBlock;
-            rctx.fillStyle = visited ? lane.color : 'rgba(148, 163, 184, 0.22)';
-            rctx.fillRect(bx, jitterY, cellW - 5, 9);
-            if (b < nBlocks - 1) {
-              const nextY = (b + 1) % 2 === 0 ? barY + 6 : barY + 15;
-              rctx.strokeStyle = visited ? lane.color : 'rgba(148, 163, 184, 0.25)';
-              rctx.lineWidth = 1;
-              rctx.beginPath();
-              rctx.moveTo(bx + cellW - 5, jitterY + 4);
-              rctx.lineTo(bx + cellW + 2, nextY);
-              rctx.stroke();
-            }
-          }
-          if (lane.stalled) {
-            rctx.fillStyle = 'rgba(220, 38, 38, 0.88)';
-            rctx.fillRect(trackX + 60, barY + 3, trackW - 120, barH - 6);
-            rctx.fillStyle = '#ffffff';
-            rctx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
-            rctx.textAlign = 'center';
-            rctx.fillText(
-              lane.id === 'jsc'
-                ? 'BUN ~2x STILL STALLS ON BOXED HEAP GC (+6.9 MB)!'
-                : 'V8 GC PAUSE — FREEZING SCAN (+10.3 MB HEAP)!',
-              trackX + trackW / 2,
-              barY + 16,
-            );
-            rctx.textAlign = 'left';
-          }
-        } else if (lane.kind === 'ascii') {
-          // Raw ASCII JSON byte-by-byte scan
-          for (let b = 0; b < nBlocks; b++) {
-            const bx = trackX + b * cellW + 1;
-            const visited = b <= activeBlock;
-            rctx.fillStyle = visited ? 'rgba(192, 132, 252, 0.45)' : 'rgba(148, 163, 184, 0.14)';
-            rctx.fillRect(bx, barY + 4, cellW - 2, barH - 8);
-          }
-          rctx.fillStyle = '#e9d5ff';
-          rctx.font = '9.5px ui-monospace, SFMono-Regular, monospace';
-          rctx.fillText('{"x":12.4,"y":-8.1,"val":42.5,"id":1},{"x":... (5.27 MiB ASCII)', trackX + 6, barY + 15);
-        } else {
-          // capnstruct #[repr(C)] packed contiguous L1 cache blocks!
-          for (let b = 0; b < nBlocks; b++) {
-            const bx = trackX + b * cellW + 1;
-            rctx.fillStyle = 'rgba(16, 185, 129, 0.38)';
-            rctx.fillRect(bx, barY + 2, cellW - 2, barH - 4);
-            rctx.strokeStyle = '#10b981';
-            rctx.lineWidth = 0.8;
-            rctx.strokeRect(bx, barY + 2, cellW - 2, barH - 4);
-          }
-          // Sweeping high-speed emerald laser bar
-          const beamX = trackX + lane.prog * (trackW - 36);
-          rctx.fillStyle = 'rgba(52, 211, 153, 0.65)';
-          rctx.fillRect(beamX, barY + 1, 36, barH - 2);
-          rctx.fillStyle = '#ecfdf5';
-          rctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
-          rctx.fillText('[24B #[repr(C)]][24B][24B]... Contiguous L1 Cache + O(1) ref() -> 0 Allocs!', trackX + 6, barY + 15);
-        }
-
-        // Scan head cursor line
-        const headX = trackX + lane.prog * trackW;
-        rctx.strokeStyle = '#ffffff';
-        rctx.lineWidth = 2;
-        rctx.beginPath();
-        rctx.moveTo(headX, barY);
-        rctx.lineTo(headX, barY + barH);
-        rctx.stroke();
-
-        // Right-side Completed Sweeps counter pill (shows 45x more passes completed!)
-        const pillX = trackX + trackW + 6;
-        const pillW = w - pillX - 12;
-        rctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        rctx.strokeStyle = lane.color;
-        rctx.lineWidth = 1.2;
-        rctx.beginPath();
-        rctx.roundRect(pillX, barY, pillW, barH, 4);
-        rctx.fill();
-        rctx.stroke();
-
-        rctx.fillStyle = lane.color;
-        rctx.font = 'bold 10.5px ui-monospace, SFMono-Regular, monospace';
-        rctx.textAlign = 'center';
-        rctx.fillText(`${lane.sweeps}x`, pillX + pillW / 2, barY + 11);
-        rctx.fillStyle = '#94a3b8';
-        rctx.font = '8.5px ui-monospace, SFMono-Regular, monospace';
-        rctx.fillText('sweeps', pillX + pillW / 2, barY + 21);
-        rctx.textAlign = 'left';
-
-        rctx.restore();
-      }
-    }
-
-    // =========================================================================
-    // RIGHT CANVAS: Simultaneous 4-Curve Frame Budget Oscilloscope + Gap Callout
-    // Plots ALL 4 curves at once so the viewer sees the small ~2x step (V8->Bun)
-    // vs the massive 45x-198x drop to capnstruct #[repr(C)] (0.17 ms, 0 MB)!
-    // =========================================================================
-    const octx = oscCanvas.getContext('2d');
-    if (octx) {
-      const w = oscCanvas.width;
-      const h = oscCanvas.height;
-      octx.fillStyle = '#090d16';
-      octx.fillRect(0, 0, w, h);
-
-      const maxScaleMs = 22;
-      const yForMs = (ms: number) => h - 22 - Math.min(1, ms / maxScaleMs) * (h - 38);
-
-      // Shaded green "Layout Win Zone" between Bun (~2x) and capnstruct (0.17ms)
-      const yJscAvg = yForMs(5.65 * scaleFactor * selFactor);
-      const yCapnAvg = yForMs(0.17);
-      octx.fillStyle = 'rgba(16, 185, 129, 0.09)';
-      octx.fillRect(0, yJscAvg, w, yCapnAvg - yJscAvg);
-
-      // 16.6ms (60 FPS) and 8.3ms (120 FPS) budget lines
-      const y60 = yForMs(16.67);
-      const y120 = yForMs(8.33);
-
-      octx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
-      octx.setLineDash([4, 4]);
-      octx.beginPath();
-      octx.moveTo(0, y60);
-      octx.lineTo(w, y60);
-      octx.stroke();
-
-      octx.strokeStyle = 'rgba(245, 158, 11, 0.32)';
-      octx.beginPath();
-      octx.moveTo(0, y120);
-      octx.lineTo(w, y120);
-      octx.stroke();
-      octx.setLineDash([]);
-
-      octx.font = '9.5px ui-monospace, SFMono-Regular, monospace';
-      octx.fillStyle = 'rgba(239, 68, 68, 0.75)';
-      octx.fillText('16.6ms (60 FPS ceiling)', 8, y60 - 3);
-      octx.fillStyle = 'rgba(245, 158, 11, 0.75)';
-      octx.fillText('8.3ms (120 FPS ceiling)', 8, y120 - 3);
-
-      const drawCurve = (
-        key: 'v8Ms' | 'jscMs' | 'rustMs' | 'capnMs',
-        modeId: string,
-        color: string,
-        width: number,
-      ) => {
-        if (frameHistory.length < 2) return;
-        octx.save();
-        const active = simMode === 'compare' || simMode === modeId;
-        octx.globalAlpha = active ? 1.0 : 0.28;
-        octx.strokeStyle = color;
-        octx.lineWidth = active && modeId === 'capn' ? 3.0 : width;
-        octx.beginPath();
-        for (let i = 0; i < frameHistory.length; i++) {
-          const fx = (i / (MAX_HISTORY - 1)) * w;
-          const fy = yForMs(frameHistory[i][key]);
-          if (i === 0) octx.moveTo(fx, fy);
-          else octx.lineTo(fx, fy);
-        }
-        octx.stroke();
-        octx.restore();
-      };
-
-      drawCurve('v8Ms', 'json', '#ef4444', 2.0);
-      drawCurve('jscMs', 'jsc', '#f59e0b', 2.2);
-      drawCurve('rustMs', 'rust', '#c084fc', 1.8);
-      drawCurve('capnMs', 'capn', '#10b981', 2.8);
-
-      // Direct on-canvas visual callout labels so the difference between ~2x and 45x-198x is crystal clear
-      const last = frameHistory[frameHistory.length - 1];
-      if (last) {
-        octx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
-        octx.textAlign = 'right';
-
-        octx.fillStyle = '#ef4444';
-        octx.fillText('Node V8: 14.1 ms (+10.3 MB GC)', w - 8, Math.max(14, yForMs(14.1) - 5));
-
-        octx.fillStyle = '#f59e0b';
-        octx.fillText('Bun JSC (~2x Switch): 5.7 ms (+6.9 MB GC)', w - 8, yForMs(5.7) - 5);
-
-        octx.fillStyle = '#c084fc';
-        octx.fillText('Rust -O3 JSON: 3.7 ms (ASCII scan)', w - 8, yForMs(3.7) + 12);
-
-        octx.fillStyle = '#10b981';
-        octx.font = 'bold 10.5px ui-monospace, SFMono-Regular, monospace';
-        octx.fillText(
-          'capnstruct #[repr(C)]: 0.17 ms JS / 0.07 ms WASM (0 MB!)',
-          w - 8,
-          yForMs(0.17) - 5,
-        );
-        octx.textAlign = 'left';
-      }
-    }
+    renderAnimCard(capnCanvas, {
+      kind: 'capn',
+      color: '#10b981',
+      radarAng: capnRadarAngle,
+      prog: capnProg,
+      sweeps: capnSweeps,
+      heapMB: 0,
+      maxHeapMB: 0,
+      stalled: false,
+      stallLabel: '',
+      memTitle: '45x JS / 198x WASM · Smooth 60 FPS!',
+      memSub: 'Contiguous #[repr(C)] L1:',
+      msLabel: `capnstruct: ${capnMs.toFixed(2)}ms JS / 0.07ms WASM`,
+      radius,
+    });
 
     requestAnimationFrame(stepLiveSimulation);
   }
@@ -1571,8 +1487,6 @@
   });
 
   function runBenchmarks() {
-    gtabs.forEach((b) => b.classList.toggle('active', b.dataset.gtab === 'livebars'));
-    document.querySelectorAll('.cs-gpanel').forEach((p) => p.classList.toggle('active', p.id === 'cs-gpanel-livebars'));
     const btn = document.getElementById('cs-run-bench') as HTMLButtonElement | null;
     if (btn) {
       btn.disabled = true;

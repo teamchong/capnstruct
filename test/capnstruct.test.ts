@@ -392,7 +392,7 @@ describe('capnstruct', () => {
   });
 
   describe('doppler-geo Exact #[repr(C)] Struct Parity &Rust Compiler Verification', () => {
-    // Exact struct definitions matching /Users/stevenchongcloudflare.com/repos/doppler-geo/scripts/search_kernel.rs
+    // Exact struct definitions matching doppler-geo/scripts/search_kernel.rs
     const SpdSample = defineStruct('SpdSample', {
       fi: u32,
       t_ds: u32,
@@ -631,6 +631,9 @@ describe('capnstruct', () => {
       expect(goCode).toContain('type SpdSample struct');
       expect(goCode).toContain('type CapnStr struct');
       expect(goCode).toContain('type CapnSlice[T any] struct');
+      expect(goCode).toContain('func CapnBytes(ptr uintptr, byteLen uint32) []byte');
+      expect(goCode).toContain('func CapnView[T any](b []byte) *T');
+      expect(goCode).toContain('func CapnSliceView[T any](b []byte, n uint32) []T');
       expect(goCode).toContain('unsafe.Offsetof(OutHit{}.Fids)');
 
       // Compile with `go tool compile` to verify all compile-time Sizeof, Alignof, and Offsetof assertions pass
@@ -643,6 +646,122 @@ describe('capnstruct', () => {
           stdio: 'pipe',
         });
         expect(readFileSync(objPath).byteLength).toBeGreaterThan(0);
+
+        // Also compile and execute Go WASM (GOOS=wasip1 GOARCH=wasm) & TinyGo WASM (-target=wasi) with { wasm: true }
+        const RingNode: any = defineStruct('RingNode', {
+          id: u32,
+          weight: f64,
+          label: str,
+          next: ref(() => RingNode),
+        });
+        const wasmGoCode =
+          toGoStruct([SpdSample, RingNode], { wasm: true }) +
+          `\n//go:wasmexport sum_ring\nfunc sum_ring(ptr uintptr, byteLen uint32, count uint32) float64 {\n\tb := CapnBytes(ptr, byteLen)\n\tnodes := CapnSliceView[RingNode](b, count)\n\tcur := &nodes[0]\n\tvar total float64\n\tfor i := uint32(0); i < count && cur != nil; i++ {\n\t\ttotal += cur.Weight + float64(len(cur.Label.String(b)))\n\t\tcur = cur.Next.Ptr(b)\n\t}\n\treturn total\n}\n\nfunc main() {}\n`;
+        expect(wasmGoCode).toContain('package main');
+        expect(wasmGoCode).toContain('//go:wasmexport capn_alloc');
+        expect(wasmGoCode).toContain('//go:wasmexport capn_reset');
+
+        writeFileSync(join(tmp, 'main.go'), wasmGoCode, 'utf8');
+        writeFileSync(join(tmp, 'go.mod'), 'module capnwasmtest\ngo 1.24\n', 'utf8');
+
+        const goWasmPath = join(tmp, 'go.wasm');
+        execFileSync(
+          'go',
+          ['build', '-buildmode=c-shared', '-o', goWasmPath, join(tmp, 'main.go')],
+          {
+            cwd: tmp,
+            env: { ...process.env, GOOS: 'wasip1', GOARCH: 'wasm' },
+            stdio: 'pipe',
+          },
+        );
+
+        const instantiateWasiModule = (wasmPath: string) => {
+          let inst: WebAssembly.Instance;
+          const shim = {
+            wasi_snapshot_preview1: new Proxy(
+              {},
+              {
+                get: (_, k) => {
+                  if (k === 'args_sizes_get' || k === 'environ_sizes_get') {
+                    return (cPtr: number, bPtr: number) => {
+                      const dv = new DataView((inst.exports.memory as WebAssembly.Memory).buffer);
+                      dv.setUint32(cPtr, 0, true);
+                      dv.setUint32(bPtr, 0, true);
+                      return 0;
+                    };
+                  }
+                  if (k === 'clock_time_get') {
+                    return (_id: number, _prec: bigint, tPtr: number) => {
+                      const dv = new DataView((inst.exports.memory as WebAssembly.Memory).buffer);
+                      dv.setBigUint64(tPtr, BigInt(Date.now()) * 1000000n, true);
+                      return 0;
+                    };
+                  }
+                  if (k === 'random_get') {
+                    return (p: number, l: number) => {
+                      new Uint8Array((inst.exports.memory as WebAssembly.Memory).buffer, p, l).fill(1);
+                      return 0;
+                    };
+                  }
+                  if (k === 'fd_write') {
+                    return (_fd: number, iovsPtr: number, iovsLen: number, nwrittenPtr: number) => {
+                      const dv = new DataView((inst.exports.memory as WebAssembly.Memory).buffer);
+                      let total = 0;
+                      for (let i = 0; i < iovsLen; i++) {
+                        total += dv.getUint32(iovsPtr + i * 8 + 4, true);
+                      }
+                      dv.setUint32(nwrittenPtr, total, true);
+                      return 0;
+                    };
+                  }
+                  return () => 0;
+                },
+              },
+            ),
+          };
+          inst = new WebAssembly.Instance(
+            new WebAssembly.Module(readFileSync(wasmPath)),
+            shim as WebAssembly.Imports,
+          );
+          (inst.exports._initialize as () => void)();
+          return inst.exports as Record<string, any>;
+        };
+
+        const n1: any = { id: 1, weight: 10.5, label: 'alpha', next: null };
+        const n2: any = { id: 2, weight: 20.25, label: 'beta', next: n1 };
+        n1.next = n2; // cycle: n1 <-> n2
+        const packedRing = RingNode.pack([n1, n2]);
+
+        const goExp = instantiateWasiModule(goWasmPath);
+        const goPtr = goExp.capn_alloc(packedRing.byteLength) as number;
+        new Uint8Array((goExp.memory as WebAssembly.Memory).buffer, goPtr, packedRing.byteLength).set(
+          packedRing,
+        );
+        // 10.5 + 5 ('alpha') + 20.25 + 4 ('beta') = 39.75
+        expect(goExp.sum_ring(goPtr, packedRing.byteLength, 2)).toBeCloseTo(39.75, 5);
+        goExp.capn_reset();
+        let hasTinyGo = false;
+        try {
+          execFileSync('tinygo', ['version'], { stdio: 'pipe' });
+          hasTinyGo = true;
+        } catch {
+          hasTinyGo = false;
+        }
+        if (hasTinyGo) {
+          const tinyWasmPath = join(tmp, 'tiny.wasm');
+          execFileSync(
+            'tinygo',
+            ['build', '-buildmode=c-shared', '-o', tinyWasmPath, '-target=wasi', '-opt=2', '-no-debug', join(tmp, 'main.go')],
+            { cwd: tmp, stdio: 'pipe' },
+          );
+          const tinyExp = instantiateWasiModule(tinyWasmPath);
+          const tinyPtr = tinyExp.capn_alloc(packedRing.byteLength) as number;
+          new Uint8Array((tinyExp.memory as WebAssembly.Memory).buffer, tinyPtr, packedRing.byteLength).set(
+            packedRing,
+          );
+          expect(tinyExp.sum_ring(tinyPtr, packedRing.byteLength, 2)).toBeCloseTo(39.75, 5);
+          tinyExp.capn_reset();
+        }
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }

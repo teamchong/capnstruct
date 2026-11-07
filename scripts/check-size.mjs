@@ -13,8 +13,8 @@ const entries = [
     code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, pack, concatBytes, structView, StructArrayView, WasmArena, Arena } from "./dist/index.js";`,
   },
   {
-    name: 'Rust #[repr(C)] & Go Codegen (capnstruct/codegen)',
-    maxGzipBytes: 2458, // 2.4 KiB
+    name: 'Rust #[repr(C)] & Go/TinyGo WASM Codegen (capnstruct/codegen)',
+    maxGzipBytes: 2662, // 2.6 KiB
     code: `export { toRustReprC, generateRust, toGoStruct, generateGo } from "./dist/codegen.js";`,
   },
 ];

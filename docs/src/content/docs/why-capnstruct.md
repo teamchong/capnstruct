@@ -60,22 +60,22 @@ To prove this is **not a cherry-picked benchmark**, the curve below sweeps acros
   <text x="772" y="187" text-anchor="end" font-size="11" font-weight="700" fill="#a855f7">Rust -O3 JSON: 3.73 ms (23.0 ms w/ JS FFI)</text>
   <polyline fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="3,3" points="90,219.9 205,219.9 320,219.9 435,219.9 550,219.7 665,219.5 785,219.1" />
   <polyline fill="none" stroke="#10b981" stroke-width="3.5" points="90,219.9 205,219.9 320,219.9 435,219.9 550,219.6 665,219.2 785,218.9" />
-  <text x="772" y="213" text-anchor="end" font-size="11.5" font-weight="800" fill="#10b981">capnstruct #[repr(C)]: 0.17 ms JS / 0.073 ms Rust (51x–135x faster than Rust JSON!)</text>
+  <text x="772" y="213" text-anchor="end" font-size="11.5" font-weight="800" fill="#10b981">capnstruct #[repr(C)]: 0.17 ms JS / 0.08 ms Go·TinyGo / 0.07 ms Rust</text>
   <text x="95" y="198" font-size="10" fill="currentColor" opacity="0.65">At N=100, all meet (~0.02ms)</text>
 </svg>
 
-### 3. Benchmark Summary Table (Node.js V8 vs. Bun JSC vs. Rust `-O3` vs. `capnstruct`)
+### 3. Benchmark Summary Table (Node.js V8 vs. Bun JSC vs. Rust `-O3` vs. Go / TinyGo WASM vs. `capnstruct`)
 
-Running the exact same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 (V8)**, **Bun v1.4.3 (JSC)**, and **Rust 1.96 (`rustc -C opt-level=3 --target wasm32-unknown-unknown`)**:
+Running the exact same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 (V8)**, **Bun v1.4.3 (JSC)**, **Rust 1.96 (`rustc -O3 wasm32`)**, **Go 1.27 (`GOOS=wasip1 GOARCH=wasm`)**, and **TinyGo 0.43 (`-target=wasi -opt=2`)**:
 
-| Workload | Node.js (V8) JSON / Clone | Bun (JSC) JSON / Clone | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Rust `#[repr(C)]`) | Data Layout Gain |
+| Workload | Node.js (V8) JSON / Clone | Bun (JSC) JSON / Clone | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Go·TinyGo WASM / Rust `#[repr(C)]`) | Data Layout Gain |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **100k Numeric Struct Scan** | 14.18 ms (**+10.30 MB** heap) | 5.50 ms (**+6.87 MB** heap) | 3.73 ms (in-WASM) / 23.0 ms (FFI) | **0.309 ms JS** (Bun: 0.170 ms) / **0.073 ms Rust** (**0 MB**) | **45.9x faster JS / 194x Rust** |
-| **25k Sparse BBox Filter (13 fields)** | 12.96 ms (**+8.17 MB** heap) | 6.77 ms (**+5.21 MB** heap) | 4.16 ms (in-WASM JSON scan) | **0.290 ms JS** / **0.018 ms Rust** (**0 MB**) | **35.3x faster JS / 714x Rust** |
-| **25k JS &harr; Rust WASM Boundary Scan** | 5.08 ms (**+3.70 MB** heap) | 2.12 ms (**+1.72 MB** heap) | 5.08 ms (`JSON`/`serde` FFI) | **0.306 ms JS** / **0.015 ms Rust** (`WasmArena`, **0 MB**) | **16.6x faster JS / 339x Rust** |
-| **25k Worker `postMessage` + Mutate** | 45.98 ms (**+14.24 MB** heap) | 35.54 ms (**+5.73 MB** heap) | — | **0.046 ms JS** (Bun: 0.025 ms) / **0 MB** | **~1,000x–1,420x faster, 0 MB** |
-| **100k Sorted Range Query** | 13.79 ms (**+10.33 MB** heap) | 5.68 ms (**+6.88 MB** heap) | — | **0.0051 ms JS** (**+0.00 MB** heap) | **~2,729x faster, 0 MB heap** |
-| **10k Cyclic Graph Clone & Traverse** | 3.27 ms (**+1.76 MB**, `JSON` throws) | 2.59 ms (**+0.69 MB**, `JSON` throws) | Throws on cyclic JSON! | **0.296 ms JS** / **0.011 ms Rust `CapnRef<T>`** (**0 MB**) | **8.7x faster JS / 297x Rust** |
+| **100k Numeric Struct Scan** | 14.14 ms (**+10.30 MB** heap) | 5.65 ms (**+6.87 MB** heap) | 3.68 ms (in-WASM) / 23.7 ms (FFI) | **0.31 ms JS** (Bun: 0.16 ms) / **0.084 ms TinyGo** / **0.107 ms Go** / **0.071 ms Rust** (**0 MB**) | **45x faster JS / 168x TinyGo / 198x Rust** |
+| **25k Sparse BBox Filter (13 fields)** | 13.24 ms (**+8.17 MB** heap) | 7.36 ms (**+5.21 MB** heap) | 4.16 ms (in-WASM JSON scan) | **0.39 ms JS** / **0.031 ms Go WASM** / **0.034 ms TinyGo** / **0.020 ms Rust** (**0 MB**) | **34x faster JS / 428x Go WASM / 651x Rust** |
+| **25k JS &harr; WASM Boundary Scan** | 5.48 ms (**+3.70 MB** heap) | 2.10 ms (**+1.72 MB** heap) | 5.48 ms (`JSON`/`serde` FFI) | **0.34 ms JS** / **0.036 ms Rust** (`WasmArena`, **0 MB**) | **16x faster JS / 153x Rust** |
+| **25k Worker `postMessage` + Mutate** | 45.94 ms (**+14.24 MB** heap) | 35.50 ms (**+5.73 MB** heap) | — | **0.046 ms JS** (Bun: 0.028 ms) / **0 MB** | **~1,000x–1,270x faster, 0 MB** |
+| **100k Sorted Range Query** | 14.06 ms (**+10.33 MB** heap) | 5.88 ms (**+6.88 MB** heap) | — | **0.0058 ms JS** (**+0.00 MB** heap) | **~2,408x faster, 0 MB heap** |
+| **10k Cyclic Graph Clone & Traverse** | 3.23 ms (**+1.76 MB**, `JSON` throws) | 2.63 ms (**+0.69 MB**, `JSON` throws) | Throws on cyclic JSON! | **0.30 ms JS** / **0.019 ms Go WASM** / **0.034 ms TinyGo** / **0.016 ms Rust** (**0 MB**) | **8.7x faster JS / 173x Go WASM / 190x Rust** |
 
 ---
 

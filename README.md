@@ -72,17 +72,16 @@ What if your filter matches **100% of all rows** and has to UTF-8 decode every `
 
 > **Try it live in your browser at 60 FPS:** **[https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)** includes a real-time interactive **Spatial Telemetry + Cyclic `ref(() => Node)` Radar Canvas** and **Frame-Budget Oscilloscope** where you can switch between `capnstruct` (`0 MB` heap), **Rust `-O3` (`JSON / FFI`)**, **Bun v1.4 (`JSC ~2x`)**, and **Node.js v24 (`V8 JSON / structuredClone`)**, drag the dataset scale (`2.5k` to `50k`) and selectivity slider (`1%` to `100%`), and watch GC frame spikes happen in real time.
 
-### Node.js (V8) vs. Bun (JSC) vs. Rust (`-O3` WASM) vs. `capnstruct` Benchmark Summary (`pnpm run bench`)
+### Node.js (V8) vs. Bun (JSC) vs. Rust (`-O3` WASM) vs. Go / TinyGo WASM vs. `capnstruct` (`pnpm run bench`)
 
-| Workload | Node.js (V8) JSON / Clone (`ms` / Heap) | Bun (JSC) JSON / Clone (`ms` / Heap) | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Rust `#[repr(C)]`) | Speedup (Layout vs. Engine/Lang) |
+| Workload | Node.js (V8) JSON / Clone (`ms` / Heap) | Bun (JSC) JSON / Clone (`ms` / Heap) | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Go·TinyGo WASM / Rust `#[repr(C)]`) | Speedup (Layout vs. Engine/Lang) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`100,000` `SpdSample` Numeric Struct Scan** (`5.27 MiB` JSON vs `2.29 MiB` `#[repr(C)]`) | 14.18 ms / **+10.30 MB** | 5.50 ms / **+6.87 MB** | 3.73 ms (in-WASM) / 23.0 ms (FFI) | **0.309 ms JS** (Bun: 0.170 ms) / **0.073 ms Rust** (**0 MB**) | **45.9x faster JS / 194x Rust** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` rows × 13 fields, ~0.4% hit) | 12.96 ms / **+8.17 MB** | 6.77 ms / **+5.21 MB** | 4.16 ms (in-WASM JSON scan) | **0.290 ms JS** / **0.018 ms Rust** (**0 MB**) | **35.3x faster JS / 714x Rust** |
-| **JS &harr; Rust WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`) | 5.08 ms (`JSON`/`serde` FFI, **+3.70 MB**) | 2.12 ms (`JSON`/`serde` FFI, **+1.72 MB**) | 5.08 ms (FFI) | **0.306 ms JS** / **0.015 ms Rust** (`WasmArena`, **0 MB**) | **16.6x faster JS / 339x Rust** |
-| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer`) | 45.98 ms / **+14.24 MB** | 35.54 ms / **+5.73 MB** | — | **0.046 ms JS** (Bun: 0.025 ms) / **+0.00 MB** | **~1,000x–1,420x faster (0 MB)** |
-| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max)`) | 13.79 ms / **+10.33 MB** | 5.68 ms / **+6.88 MB** | — | **0.0051 ms JS** / **+0.00 MB** | **~2,729x faster (0 MB heap)** |
-| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` & `serde_json` throw!) | 3.27 ms (`structuredClone`, **+1.76 MB**) | 2.59 ms (`structuredClone`, **+0.69 MB**) | Throws on cyclic JSON! | **0.296 ms JS** / **0.011 ms Rust `CapnRef<T>`** (**0 MB**) | **8.7x faster JS / 297x Rust** |
-
+| **`100,000` `SpdSample` Numeric Struct Scan** (`5.27 MiB` JSON vs `2.29 MiB` `#[repr(C)]`) | 14.14 ms / **+10.30 MB** | 5.65 ms / **+6.87 MB** | 3.68 ms (in-WASM) / 23.7 ms (FFI) | **0.31 ms JS** (Bun: 0.16 ms) / **0.084 ms TinyGo** / **0.107 ms Go** / **0.071 ms Rust** (**0 MB**) | **45x faster JS / 168x TinyGo / 198x Rust** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` rows × 13 fields, ~0.4% hit) | 13.24 ms / **+8.17 MB** | 7.36 ms / **+5.21 MB** | 4.16 ms (in-WASM JSON scan) | **0.39 ms JS** / **0.031 ms Go WASM** / **0.034 ms TinyGo** / **0.020 ms Rust** (**0 MB**) | **34x faster JS / 428x Go WASM / 651x Rust** |
+| **JS &harr; WASM Boundary Scan** (`25,000` `QPPoint` structs in `WebAssembly.Memory`) | 5.48 ms (`JSON`/`serde` FFI, **+3.70 MB**) | 2.10 ms (`JSON`/`serde` FFI, **+1.72 MB**) | 5.48 ms (FFI) | **0.34 ms JS** / **0.036 ms Rust** (`WasmArena`, **0 MB**) | **16x faster JS / 153x Rust** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer`) | 45.94 ms / **+14.24 MB** | 35.50 ms / **+5.73 MB** | — | **0.046 ms JS** (Bun: 0.028 ms) / **+0.00 MB** | **~1,000x–1,270x faster (0 MB)** |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max)`) | 14.06 ms / **+10.33 MB** | 5.88 ms / **+6.88 MB** | — | **0.0058 ms JS** / **+0.00 MB** | **~2,408x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` / `serde_json` / `encoding/json` throw!) | 3.23 ms (`structuredClone`, **+1.76 MB**) | 2.63 ms (`structuredClone`, **+0.69 MB**) | Throws on cyclic JSON! | **0.30 ms JS** / **0.019 ms Go WASM** / **0.034 ms TinyGo** / **0.016 ms Rust** (**0 MB**) | **8.7x faster JS / 173x Go WASM / 190x Rust** |
 ---
 ## Key Capabilities (`~6.5 KiB` Minified + Gzipped)
 
@@ -93,7 +92,7 @@ What if your filter matches **100% of all rows** and has to UTF-8 decode every `
 5. **Zero-Indirection Inline Types (`fixedStr`, `fixedBytes`, `f16`, `sentinel`/`nullable`, `scaled`)**: Keep fixed-width ASCII/UTF-8 strings (`fixedStr(N)`), raw byte arrays (`fixedBytes(N)`), IEEE 754 half-floats (`f16`), zero-bit sentinel nulls (`sentinel(i16, -32768)`), and fixed-point numbers (`scaled(i32, 1e6)`) 100% inline inside the `#[repr(C)]` struct with zero tail indirection.
 6. **In-Place `str` & `slice(T)` Mutation, Tail-Tip Extension & Bulk `memcpy`**: Assigning `row.callsign = 'NEW'` overwrites in-place in $O(1)$ when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when at the tail tip, or bump-allocates in the tail arena when longer. Assigning a `StructArrayView` or `TypedArray` into `slice(T)` / `fixedArray(T, N)` performs a single bulk `Uint8Array.set()` `memcpy`.
 7. **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()`.
-8. **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` / Go Codegen**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust `#[repr(C)]` structs (`toRustReprC`) and `go tool compile`-verified Go zero-copy structs (`toGoStruct`) with compile-time `size_of` / `align_of` / `offset_of` assertions.
+8. **WebAssembly (`WasmArena`), Rust `#[repr(C)]` & Go / TinyGo WASM Codegen**: Automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust `#[repr(C)]` structs (`toRustReprC`) and `go build` / `tinygo build`-verified Go zero-copy structs (`toGoStruct` with `//go:wasmexport capn_alloc` & `CapnSliceView[T]`) with compile-time `size_of` / `align_of` / `offset_of` assertions across 32-bit WASM and 64-bit native targets.
 
 ---
 
@@ -325,34 +324,36 @@ const restored = view.at(0).toObject();
 console.log(restored.next.next === restored); // true
 ```
 
-### 8. Rust `#[repr(C)]` & Go Zero-Copy Codegen (`toRustReprC`, `toGoStruct` & CLI)
+### 8. Rust `#[repr(C)]` & Go / TinyGo WASM Zero-Copy Codegen (`toRustReprC`, `toGoStruct` & CLI)
 
-Generate matching Rust `#[repr(C)]` structs (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) or Go zero-copy structs (`CapnStr`, `CapnSlice[T]`, `CapnRef[T]`) with compile-time layout assertions via the programmatic API or CLI:
+Generate matching Rust `#[repr(C)]` structs (`CapnStr`, `CapnSlice<T>`, `CapnRef<T>`) or Go / TinyGo WASM zero-copy structs (`CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`, `CapnStr`, `CapnSlice[T]`, `CapnRef[T]`, plus `//go:wasmexport capn_alloc` & `capn_reset`) with compile-time layout assertions via the programmatic API or CLI:
 
 ```ts
 import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
 import { SpdSample } from './schema.js';
 
 console.log(toRustReprC([SpdSample]));
-console.log(toGoStruct([SpdSample], { pkg: 'radar' }));
+console.log(toGoStruct([SpdSample], { pkg: 'radar' })); // Native Go
+console.log(toGoStruct([SpdSample], { wasm: true }));   // Go (wasip1/wasm) & TinyGo (-target=wasi)
 ```
 
-Or via the CLI (auto-detected from `.rs` or `.go` output extension, or via `--rust` / `--go`):
+Or via the CLI (auto-detected from `.rs` or `.go` output extension, or via `--rust` / `--go` / `--go-wasm`):
 
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.go --pkg radar
+npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm
 ```
 
 ---
 
 ## Bundle Size (`pnpm run size`)
+
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :--- | :--- |
-| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
+| **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,666 B) |
 | **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 6.52 KiB | **2.29 KiB** (2,343 B) |
-
+| **Rust `#[repr(C)]` & Go / TinyGo WASM Codegen (`capnstruct/codegen`)** | 7.44 KiB | **2.53 KiB** (2,595 B) |
 ---
 
 ## When to Use `capnstruct` vs. Plain JS Objects

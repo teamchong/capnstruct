@@ -1,0 +1,89 @@
+# capnstruct — Zero-Copy #[repr(C)] Binary Structs, Cyclic Graphs & Queryable Tables for TypeScript & WebAssembly
+
+> Package: `npm i capnstruct` (0 dependencies, ~6.5 KiB minified+gzipped ESM)
+> Docs & Live Playground: https://capnstruct.teamchong.net
+
+## 1. Two-Call Mental Model (`struct` + `.from()` / `.shared()`)
+
+```ts
+import { struct, u32, i32, i16, f32, f64, bool, str, fixedStr, scaled, sentinel, slice, ref } from 'capnstruct';
+
+// 1. Define schema (compiles a monomorphic V8 DataView class with C/Rust #[repr(C)] alignment)
+const Particle = struct('Particle', { x: f32, y: f32, vx: f32, vy: f32, tag: fixedStr(8) });
+
+// 2. Pack plain JS objects, allocate N rows, or zero-copy wrap an existing Uint8Array / ArrayBuffer / SharedArrayBuffer / WasmArena
+const list = Particle.from([
+  { x: 10, y: 20, vx: 1.5, vy: -0.5, tag: 'ALPHA' },
+  { x: 30, y: 40, vx: -1.0, vy: 2.0, tag: 'BETA' },
+]);
+
+// 3. Mutate & iterate in-place (0 per-row JS heap objects, 0 Proxy overhead)
+for (const p of list) {
+  p.x += p.vx;
+  p.y += p.vy;
+}
+const wireBytes: Uint8Array = list.bytes;        // Wire-ready Uint8Array (auto-compacts dead tail bytes if dirty)
+const received = Particle.from(wireBytes);       // O(1) zero-copy wrap on Worker / WebSocket / Fetch receiver
+```
+
+## 2. Field Descriptors
+
+- Primitives: `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64` (`bigint`), `f16` (`Float16Array`), `f32`, `f64`, `bool`
+- Inline fixed-length (0 tail indirection, 100% C/Rust `#[repr(C)]` flat array compatible):
+  - `fixedStr(N)`: inline `[u8; N]` null-padded UTF-8 string
+  - `fixedBytes(N)`: inline `[u8; N]` zero-copy `Uint8Array` sub-slice
+  - `fixedArray(el, N)`: inline `[T; N]` (`TypedArray` or `StructArrayView`)
+  - `sentinel(prim, nullVal)` / `nullable(prim, nullVal)`: maps an inline sentinel (e.g. `-32768` for `i16`, `NaN` for `f32`) to `null` in JS with 0 extra wire bytes
+  - `scaled(prim, factor, { null?: nullVal })`: fixed-point scaled integer (e.g. `scaled(i32, 1e5)` stores `Math.round(val * 1e5)` in `i32`, reads `raw / 1e5` as `number`)
+- Variable-length relative-offset tail arena fields (8-byte inline `[u32 relOffset, u32 len]`):
+  - `str`: variable-length UTF-8 string (in-place overwrite when `<=` old byte length, tail-tip extension, or tail bump-allocation)
+  - `slice(el)` / `slice(self)`: variable-length nested array (`TypedArray` or `StructArrayView<T>`)
+  - `ref(Target)` / `ref(self)`: nullable/circular struct pointer (`StructView<T> | null`)
+
+## 3. Cyclic Object Graphs (`(self) => ({ ... })` & `Schema.item()`)
+
+```ts
+const GraphNode = struct('GraphNode', (self) => ({
+  id: u32,
+  label: str,
+  next: ref(self),
+  children: slice(self),
+}));
+
+const a = GraphNode.item({ id: 1, label: 'root', next: null, children: [] });
+const b = GraphNode.item({ id: 2, label: 'child', next: a, children: [a] });
+a.next = b;
+a.children = [b];
+
+const nodes = GraphNode.from([a, b]); // Packs cyclic graph in O(1) stack space
+console.log(nodes.at(0).next?.next?.id === 1); // true (0 allocations)
+const restored = nodes.at(0).toObject();       // Reconstructs circular JS references
+```
+
+## 4. Zero-Heap Querying, Web Workers & Columnar Views
+
+- `Schema.shared(rowsOrCount)`: Allocates/packs over a `SharedArrayBuffer` (with `ArrayBuffer` fallback) for zero-copy Web Worker `worker.postMessage(list.buffer)` state sync.
+- `list.at(i, cursor?)` / `list.cursor()`: Random access or reusable flyweight cursor (`cursor.at(i)`).
+- `list.subarray(begin, end)`: `O(1)` zero-copy slice.
+- `list.rangeBy(field, min, max)` / `list.lowerBound(field, val)` / `list.upperBound(field, val)`: `O(log N)` binary search on sorted primitive columns with 0 object allocations.
+- `list.filterBytes((row) => boolean)`: Scans with a single flyweight cursor and copies matching binary rows into a tight `Uint8Array`.
+- `list.column(field)` / `list.setColumn(field, values)`: Extracts/writes a `TypedArray` column (zero-copy when `stride === field.size`).
+- `list.push(...items)` / `list.pop()` / `list.compact()` / `list.compactionRatio` / `list.toDebugObject()`.
+
+## 5. Rust `#[repr(C)]` & Go / TinyGo WASM Shared Memory (`WasmArena` & Codegen)
+
+```ts
+import { WasmArena } from 'capnstruct';
+import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
+
+// Share WebAssembly.Memory with automatic re-binding across memory.grow()
+const arena = new WasmArena(wasm.memory, wasm.alloc);
+const points = arena.alloc(Particle, 10_000);
+wasm.step_particles(points.byteOffset, points.length); // Zero serialization across JS <-> WASM
+
+// Generate rustc-verified #[repr(C)] structs or Go / TinyGo WASM structs (+ //go:wasmexport capn_alloc)
+const rustCode = toRustReprC([Particle, GraphNode]);
+const goWasmCode = toGoStruct([Particle, GraphNode], { pkg: 'main', wasm: true });
+// CLI: npx capnstruct ./schema.ts -o ./schema.rs
+// CLI: npx capnstruct ./schema.ts -o ./main.go --go-wasm
+```

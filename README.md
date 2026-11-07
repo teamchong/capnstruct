@@ -6,10 +6,18 @@
 [![Core Bundle](https://img.shields.io/badge/Core_Gzip-6.51_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 [![Targets](https://img.shields.io/badge/Targets-TS_%7C_Rust_%23%5Brepr(C)%5D_%7C_Go_%26_TinyGo_WASM-f59e0b?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 
-[**Live Interactive Playground &rarr; capnstruct.teamchong.net**](https://capnstruct.teamchong.net) · [**MP4 Video (`docs/public/demo.mp4`)**](docs/public/demo.mp4)
+**[Live Interactive Playground &rarr; capnstruct.teamchong.net](https://capnstruct.teamchong.net)** &middot; **[MP4 Video (`docs/public/demo.mp4`)](docs/public/demo.mp4)** &middot; **[AI Agent Ruleset (`llms.txt`)](https://capnstruct.teamchong.net/llms.txt)**
 
 [![Live Side-by-Side Comparison: Bun JSC (~2x) vs Rust -O3 WASM (JSON / FFI) vs capnstruct #[repr(C)]](docs/public/demo.gif)](https://capnstruct.teamchong.net)
 
+
+```ts
+import { struct, f32 } from 'capnstruct';
+
+const Particle = struct('Particle', { x: f32, y: f32, vx: f32, vy: f32 });
+const list = Particle.from(bytesOrObjects); // pack plain JS objects OR O(1) zero-copy wrap Uint8Array / SharedArrayBuffer
+for (const p of list) p.x += p.vx;          // mutates #[repr(C)] binary buffer in-place (0 heap allocs, 0 Proxy overhead)
+```
 ---
 
 ## Why Data Layout Beats Engine & Language Switches

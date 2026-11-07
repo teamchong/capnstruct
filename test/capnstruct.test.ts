@@ -1478,6 +1478,29 @@ describe('capnstruct', () => {
       expect(fmt.header(arr)).toEqual(['span', {}, 'Msg[1] (16 B)']);
       expect(fmt.hasBody(view)).toBe(true);
       expect(fmt.body(view)).toEqual(['div', {}, ['object', { object: { s: 'hello' } }]]);
+      expect(view.toDebugObject()).toMatchObject({
+        schema: 'Msg',
+        stride: 8,
+        rowCount: 1,
+        usedByteLength: 16,
+        deadByteLength: 0,
+        compactionRatio: 0,
+        data: { s: 'hello' },
+      });
+
+      // 2-function mental model: struct() + .from() & .shared()
+      const Particle = struct('Particle', { x: f32, y: f32, tag: str });
+      const list = Particle.from([
+        { x: 1, y: 2, tag: 'a' },
+        { x: 3, y: 4, tag: 'b' },
+      ]);
+      list.at(0).x += 10;
+      expect(Particle.from(list.bytes).at(0).x).toBe(11);
+      expect(Particle.from(5).length).toBe(5);
+      const sharedList = Particle.shared([{ x: 5, y: 6, tag: 'shared' }]);
+      expect(sharedList.at(0).tag).toBe('shared');
+      const sharedAlloc = Particle.shared(4);
+      expect(sharedAlloc.length).toBe(4);
     });
   });
 });

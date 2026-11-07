@@ -7,12 +7,22 @@ description: Install capnstruct, define #[repr(C)] schemas, pack binary buffers,
 
 ```bash
 npm install capnstruct
-# or
-pnpm add capnstruct
+# AI Coding Agents (Claude Code / Cursor / Windsurf): https://capnstruct.teamchong.net/llms.txt
 ```
 
-`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.6 KiB minified + gzipped) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
+`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.6 KiB minified + gzipped, 0 dependencies) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
 
+## 3-Line Hello World (Two-Call Mental Model)
+
+You only need two calls to start: `struct(...)` to declare a schema, and `.from(...)` to pack plain JS objects, allocate `N` rows, or zero-copy wrap an existing `Uint8Array` / `ArrayBuffer` / `SharedArrayBuffer` / `WasmArena`:
+
+```ts
+import { struct, f32 } from 'capnstruct';
+
+const Particle = struct('Particle', { x: f32, y: f32, vx: f32, vy: f32 });
+const list = Particle.from([{ x: 10, y: 20, vx: 1.5, vy: -0.5 }]); // pack objects OR zero-copy wrap bytes
+for (const p of list) p.x += p.vx;                                 // mutates binary buffer in-place (0 allocs)
+```
 ---
 
 ## 1. Define a Schema
@@ -59,19 +69,18 @@ console.log(SpdSample.offsetOf('val')); // 8
 | `ref(Struct)` / `ref(() => Struct)`                   | 8 B inline    | 4 B          | `StructView<F> \| null` (supports circular refs) | `CapnRef<T> { off: u32, present: u32 }`            |
 | `StructDef`                                           | `def.size`    | `def.align`  | `StructView<F>` (nested struct)                  | Nested `#[repr(C)]` struct                         |
 
-Pack an array of plain JS objects into a tight 8-byte-aligned `Uint8Array` via `SpdSample.pack(rows)` (or `pack(SpdSample, rows)`), and wrap any `Uint8Array`, `ArrayBuffer`, `DataView`, or `WebAssembly.Memory` without copying via `SpdSample.array(bytes)`:
+Use `SpdSample.from(input)` to pack an array of plain JS objects OR wrap any `Uint8Array`, `ArrayBuffer`, `SharedArrayBuffer`, `DataView`, or `WebAssembly.Memory` without copying (or use `SpdSample.shared(rowsOrCount)` for zero-copy Web Worker `SharedArrayBuffer` state):
 
 ```ts
-// Pack plain JS objects into a contiguous Uint8Array
-const bytes: Uint8Array = SpdSample.pack([
+// 1. Pack plain JS objects into a live StructArrayView (or call SpdSample.pack(rows) for raw Uint8Array)
+const samples = SpdSample.from([
   { t: 100, val: 42.5, id: 1 },
   { t: 200, val: 99.0, id: 2 },
 ]);
 
-// Wrap the binary buffer with zero copying
-const samples = SpdSample.array(bytes);
-console.log(samples.length); // 2
-
+// 2. Send samples.bytes over WebSocket/RPC/Worker and wrap back in O(1) with zero copying
+const received = SpdSample.from(samples.bytes);
+console.log(received.length); // 2
 // Random access with normal JS property syntax
 const first = samples.at(0);
 console.log(first.t, first.val, first.id); // 100, 42.5, 1

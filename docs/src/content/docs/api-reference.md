@@ -39,13 +39,14 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `typeof def.$input` / `InferInput<typeof def>`: Inferred input object type (`pack()`, `create()`, `push()`).
 - `def.item(init)`: Identity helper that types a plain JS object literal as `Partial<StructInput<F>>` (for building cyclic JS object graphs with full static type inference).
 - `def.offsetOf(field)`: Returns the byte offset of `field`.
-- `def.create(init?)`: Allocates a single `StructView<F>` backed by a fresh buffer.
+- `def.from(sourceOrRows)`: Universal 1-step constructor: packs an array/iterable of plain JS objects into a `StructArrayView<F>`, wraps a `Uint8Array` / `ArrayBuffer` / `SharedArrayBuffer` / `DataView` / `WebAssembly.Memory` / `WasmArena` with zero copying, or allocates `count` zero-initialized rows when passed a `number`.
+- `def.shared(rowsOrCount)`: Allocates or packs a `StructArrayView<F>` backed by a `SharedArrayBuffer` (with `ArrayBuffer` fallback) for zero-copy Web Worker `worker.postMessage(rows.buffer)` state sharing.
+- `def.create(init?)`: Allocates a single `StructView<F>` backed by a fresh buffer (`create(init).bytes` and `view(bytes)` share the exact same zero-gap layout).
 - `def.alloc(count)`: Allocates a `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array).
 - `def.pack(rows)` / `pack(def, rows)`: Packs an array of plain JS objects into an 8-byte-aligned `Uint8Array`.
 - `def.concatBytes(chunks)` / `concatBytes(def, chunks)`: Concatenates multiple `StructArrayView<F>` or `Uint8Array` chunks into a single packed `Uint8Array` via bulk `memcpy` when fixed-size.
 - `def.view(source, optionsOrOffset?)`: Wraps a single struct in `source` without copying.
 - `def.array(source, optionsOrOffset?, count?)`: Wraps a sequence of structs in `source` without copying.
-
 ### Inline Fixed-Length & Zero-Overhead Primitives
 
 - `f16`: 2-byte IEEE 754 half-precision float (`Float16Array` column support).
@@ -60,8 +61,8 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `view.seek(index)` / `view.at(index)`: Repositions a flyweight cursor to row `index` in `O(1)` (supports negative indices from the end).
 - `view.set(field, value)` / `view.set(partialObject)` / `view.setAll(partialObject)`: Updates one or more fields in place.
 - `view.toObject()` / `view.toJSON()`: Materializes a plain JS object `{ ... }`.
+- `view.toDebugObject()` / `rows.toDebugObject()`: Returns `{ schema, stride, rowCount, usedByteLength, deadByteLength, compactionRatio, data }` for structured debugging.
 - `view.usedByteLength` / `view.deadByteLength` / `view.compactionRatio`: Active + dead bytes, reclaimable dead tail bytes, and ratio (`0..1`) of dead tail bytes to total used bytes.
-- `view.compact()`: Strips dead tail bytes and rebinds the `StructView` in-place to a tight `Uint8Array`.
 - `view.bytes`: Underlying `Uint8Array` slice (auto-compacts if dirty or containing dead tail bytes).
 
 ### `StructArrayView<F>`

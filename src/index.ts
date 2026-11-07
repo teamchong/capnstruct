@@ -1101,6 +1101,29 @@ class MemView<F extends FieldRecord = FieldRecord> {
     return used > 0 ? Math.min(1, this.deadByteLength / used) : 0;
   }
 
+
+  /** Returns a structured inspection summary (`{ schema, stride, rowCount, usedByteLength, deadByteLength, compactionRatio, data }`). */
+  toDebugObject(): {
+    schema: string;
+    stride: number;
+    rowCount: number;
+    usedByteLength: number;
+    deadByteLength: number;
+    compactionRatio: number;
+    data: unknown;
+  } {
+    const a = this as any,
+      isArr = 'length' in a;
+    return {
+      schema: this.def.name || 'AnonStruct',
+      stride: isArr ? a.stride : this.def.size,
+      rowCount: isArr ? a.length : 1,
+      usedByteLength: this.usedByteLength,
+      deadByteLength: this.deadByteLength,
+      compactionRatio: this.compactionRatio,
+      data: isArr ? a.toObjects() : a.toObject(),
+    };
+  }
   /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   /** Re-packs only live fields and tail data into a tight `Uint8Array` and rebinds this view in-place. */
   compact(): Uint8Array {
@@ -1778,6 +1801,50 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     const a = this.array(new ArrayBuffer(count * this.size), 0, count);
     initNulls(this, a._d, 0, count);
     return a;
+  }
+
+  /**
+   * Universal 1-step constructor:
+   * - Given an array/iterable of plain JS objects, packs them and returns a live `StructArrayView<F>`.
+   * - Given a `Uint8Array`, `ArrayBuffer`, `SharedArrayBuffer`, `DataView`, `WebAssembly.Memory`, or `WasmArena`, wraps it with zero copying.
+   * - Given a row count (`number`), allocates a zero-initialized `StructArrayView<F>`.
+   */
+  from(
+    sourceOrRows:
+      | readonly Partial<StructInput<F>>[]
+      | Iterable<Partial<StructInput<F>>>
+      | BufferSourceInput
+      | number,
+  ): StructArrayView<F> {
+    if (typeof sourceOrRows === 'number') return this.alloc(sourceOrRows);
+    if (
+      ArrayBuffer.isView(sourceOrRows) ||
+      sourceOrRows instanceof ArrayBuffer ||
+      (typeof SharedArrayBuffer !== 'undefined' && sourceOrRows instanceof SharedArrayBuffer) ||
+      isMemOrArena(sourceOrRows)
+    ) {
+      return this.array(sourceOrRows as BufferSourceInput);
+    }
+    const rows = Array.isArray(sourceOrRows) ? sourceOrRows : Array.from(sourceOrRows as Iterable<Partial<StructInput<F>>>);
+    return this.array(this.pack(rows));
+  }
+
+  /**
+   * Allocates or packs a `StructArrayView<F>` backed by a `SharedArrayBuffer` (with `ArrayBuffer` fallback)
+   * for zero-copy Web Worker `worker.postMessage(rows.buffer)` state sharing.
+   */
+  shared(rowsOrCount: readonly Partial<StructInput<F>>[] | number): StructArrayView<F> {
+    const BufCtor: typeof ArrayBuffer =
+      typeof SharedArrayBuffer !== 'undefined' ? (SharedArrayBuffer as unknown as typeof ArrayBuffer) : ArrayBuffer;
+    if (typeof rowsOrCount === 'number') {
+      const a = this.array(new BufCtor(rowsOrCount * this.size), 0, rowsOrCount);
+      initNulls(this, a._d, 0, rowsOrCount);
+      return a;
+    }
+    const packed = this.pack(rowsOrCount),
+      sb = new BufCtor(packed.byteLength);
+    new Uint8Array(sb).set(packed);
+    return this.array(sb);
   }
   /** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
   pack(rows: readonly Partial<StructInput<F>>[]): Uint8Array {

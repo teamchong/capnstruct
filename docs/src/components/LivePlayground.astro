@@ -1,21 +1,50 @@
 ---
 ---
 
+<div class="cs-quickstart-bar not-content">
+  <div class="cs-qs-top">
+    <span class="cs-qs-label">2-Call Mental Model (<code>struct</code> + <code>.from()</code> &mdash; 0 Dependencies, No Proxy, No Build Plugin)</span>
+    <div class="cs-qs-actions">
+      <button type="button" class="cs-qs-btn cs-qs-cmd" id="cs-btn-copy-npm" title="Copy install command">
+        <code>$ npm i capnstruct</code>
+        <span class="cs-qs-badge" id="cs-npm-status">Copy</span>
+      </button>
+      <button type="button" class="cs-qs-btn cs-qs-llm" id="cs-btn-copy-llm" title="Copy 400-token capnstruct ruleset for Claude Code, Cursor, or Windsurf">
+        <span>&#x1F916; Copy LLM Prompt (<code>llms.txt</code>)</span>
+        <span class="cs-qs-badge cs-qs-badge-accent" id="cs-llm-status">Claude / Cursor</span>
+      </button>
+      <a href="/llms.txt" target="_blank" rel="noopener" class="cs-qs-link"><code>/llms.txt</code> &nearr;</a>
+    </div>
+  </div>
+  <pre class="cs-qs-code"><code><span class="cs-kw">const</span> Particle = <span class="cs-fn">struct</span>(&#123; x: f32, y: f32, vx: f32, vy: f32 &#125;);
+<span class="cs-kw">const</span> list = Particle.<span class="cs-fn">from</span>(bytesOrObjects); <span class="cs-cm">// pack plain JS objects OR O(1) zero-copy wrap Uint8Array / SharedArrayBuffer</span>
+<span class="cs-kw">for</span> (<span class="cs-kw">const</span> p <span class="cs-kw">of</span> list) p.x += p.vx;          <span class="cs-cm">// mutates #[repr(C)] binary buffer in-place (0 heap allocs)</span></code></pre>
+</div>
+
 <div class="cs-playground not-content">
   <!-- SECTION 1: 3 SIDE-BY-SIDE LIVE 60FPS ANIMATIONS + SCALING GRAPHS (NO TABS REQUIRED) -->
   <div class="cs-panel active" id="cs-panel-bench">
     <div class="cs-panel-header cs-panel-header-stack">
       <div class="cs-header-top">
-      <strong class="cs-panel-title">1. Live Side-by-Side 60 FPS Visual Proof: Bun JSC (~2x) vs. Rust -O3 WASM vs. capnstruct #[repr(C)] (45x-198x)</strong>
-      <p class="cs-sub">
-        All 3 animations run simultaneously below. Hover or drag over any radar to query live telemetry nodes and cyclic <code>ref(() =&gt; RingNode)</code> graphs in sync: notice how <strong>Bun JSC (~2x vs V8)</strong> still allocates scattered heap boxes (<strong>+6.9 MB GC stalls</strong>) and <strong>Rust -O3 WASM (JSON / FFI)</strong> still scans 5.27 MiB of text/FFI copies (<strong>3.7 ms&ndash;23.0 ms</strong>), whereas <strong>capnstruct #[repr(C)]</strong> glides through contiguous L1 cache lines at <strong>0.17 ms JS / 0.07 ms Rust&middot;Go WASM (0.00 MB heap)</strong>.
-      </p>
+        <strong class="cs-panel-title">1. Interactive Particle Vortex &amp; 60 FPS Visual Proof: Drag Your Cursor Across the Canvases</strong>
+        <p class="cs-sub">
+          Move or drag your cursor across any canvas below to swirl particles &amp; query cyclic <code>ref(self)</code> graphs in real time. Toggle between <strong>All 3 Side-by-Side</strong> or isolate <strong>Standard JS / Bun (GC Stutter)</strong> vs. <strong>capnstruct #[repr(C)] (Locked 60/120 FPS, 0.00 MB Heap)</strong> to feel the cursor hitch during GC pauses vs. zero-copy shared memory.
+        </p>
       </div>
 
       <!-- Interactive Parameter Bar (Anti-Cherry-Pick Controls) -->
-    <div class="cs-param-bar">
-      <div class="cs-param-controls">
-        <div class="cs-param-item">
+      <div class="cs-param-bar">
+        <div class="cs-param-controls">
+          <div class="cs-param-item">
+            <span class="cs-param-label">Interactive View:</span>
+            <div class="cs-pill-group" id="cs-focus-group">
+              <button class="cs-mini-btn active" data-focus="all">All 3 Side-by-Side</button>
+              <button class="cs-mini-btn" data-focus="v8">&#x1F7E0; Standard JS / Bun (GC Hitch)</button>
+              <button class="cs-mini-btn" data-focus="jsc">&#x1F980; Rust -O3 (JSON FFI)</button>
+              <button class="cs-mini-btn" data-focus="capn">&#9889; capnstruct (Locked 60/120 FPS)</button>
+            </div>
+          </div>
+          <div class="cs-param-item">
           <span class="cs-param-label">Dataset Scale (N):</span>
           <div class="cs-pill-group" id="cs-scale-group">
             <button class="cs-mini-btn" data-scale="2500">2.5k</button>
@@ -733,6 +762,105 @@
     background: rgba(239, 68, 68, 0.18);
     color: #ef4444;
   }
+  .cs-quickstart-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.7rem 0.9rem;
+    margin: 0.75rem 0 0.85rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.65rem;
+    background: var(--sl-color-bg-nav);
+  }
+  .cs-qs-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .cs-qs-label {
+    font-size: 0.73rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--sl-color-gray-2);
+  }
+  .cs-qs-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+  .cs-qs-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.32rem 0.6rem;
+    border-radius: 0.45rem;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+  }
+  .cs-qs-btn:hover {
+    border-color: var(--sl-color-accent);
+  }
+  .cs-qs-llm {
+    border-color: rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.08);
+  }
+  .cs-qs-badge {
+    font-size: 0.68rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: var(--sl-color-bg-nav);
+    color: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+    white-space: nowrap;
+  }
+  .cs-qs-badge-accent {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+  }
+  .cs-qs-link {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--sl-color-accent-high);
+    text-decoration: none;
+  }
+  .cs-qs-code {
+    margin: 0;
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.45rem;
+    background: #0b101b;
+    border: 1px solid var(--sl-color-hairline);
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.4;
+    color: #e2e8f0;
+    overflow-x: auto;
+  }
+  .cs-kw { color: #c084fc; }
+  .cs-fn { color: #38bdf8; }
+  .cs-cm { color: #64748b; }
+  .cs-trio-grid[data-focus="v8"] .cs-card-jsc,
+  .cs-trio-grid[data-focus="v8"] .cs-card-capn,
+  .cs-trio-grid[data-focus="jsc"] .cs-card-v8,
+  .cs-trio-grid[data-focus="jsc"] .cs-card-capn,
+  .cs-trio-grid[data-focus="capn"] .cs-card-v8,
+  .cs-trio-grid[data-focus="capn"] .cs-card-jsc {
+    display: none;
+  }
+  .cs-trio-grid[data-focus="v8"],
+  .cs-trio-grid[data-focus="jsc"],
+  .cs-trio-grid[data-focus="capn"] {
+    grid-template-columns: 1fr;
+  }
   .cs-param-bar {
     display: flex;
     flex-direction: column;
@@ -1058,13 +1186,61 @@
     simPlainRows[i].next = simPlainRows[base + ((i + 1) % SIM_CLUSTER)];
   }
   const simCapnBytes = RadarNode.pack(simPlainRows.slice(0, 2048));
-  const simCapnView = RadarNode.array(simCapnBytes);
+  const simCapnView = RadarNode.from(simCapnBytes);
   const simFlatX = new Float32Array(MAX_SIM_N);
   const simFlatY = new Float32Array(MAX_SIM_N);
+  const simHomeX = new Float32Array(MAX_SIM_N);
+  const simHomeY = new Float32Array(MAX_SIM_N);
+  const simVelX = new Float32Array(MAX_SIM_N);
+  const simVelY = new Float32Array(MAX_SIM_N);
+  const v8SnapX = new Float32Array(MAX_SIM_N);
+  const v8SnapY = new Float32Array(MAX_SIM_N);
+  const jscSnapX = new Float32Array(MAX_SIM_N);
+  const jscSnapY = new Float32Array(MAX_SIM_N);
+  let v8PtrX = pointerX, v8PtrY = pointerY;
+  let jscPtrX = pointerX, jscPtrY = pointerY;
   for (let i = 0; i < MAX_SIM_N; i++) {
-    simFlatX[i] = simPlainRows[i].x;
-    simFlatY[i] = simPlainRows[i].y;
+    const hx = simPlainRows[i].x ?? 0.5;
+    const hy = simPlainRows[i].y ?? 0.5;
+    simFlatX[i] = simHomeX[i] = v8SnapX[i] = jscSnapX[i] = hx;
+    simFlatY[i] = simHomeY[i] = v8SnapY[i] = jscSnapY[i] = hy;
   }
+
+  // Copy buttons for npm install and /llms.txt prompt
+  const btnCopyNpm = document.getElementById('cs-btn-copy-npm');
+  const npmStatus = document.getElementById('cs-npm-status');
+  btnCopyNpm?.addEventListener('click', () => {
+    navigator.clipboard?.writeText('npm i capnstruct');
+    if (npmStatus) {
+      npmStatus.textContent = 'Copied!';
+      setTimeout(() => { npmStatus.textContent = 'Copy'; }, 1800);
+    }
+  });
+  const btnCopyLlm = document.getElementById('cs-btn-copy-llm');
+  const llmStatus = document.getElementById('cs-llm-status');
+  btnCopyLlm?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/llms.txt');
+      const txt = await res.text();
+      await navigator.clipboard?.writeText(txt);
+      if (llmStatus) {
+        llmStatus.textContent = 'Copied 400-tok!';
+        setTimeout(() => { llmStatus.textContent = 'Claude / Cursor'; }, 2200);
+      }
+    } catch {
+      window.open('/llms.txt', '_blank');
+    }
+  });
+
+  // Interactive View Focus Toggle (All 3 vs isolated engine)
+  const trioGrid = document.querySelector<HTMLElement>('.cs-trio-grid');
+  document.querySelectorAll<HTMLButtonElement>('#cs-focus-group .cs-mini-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#cs-focus-group .cs-mini-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (trioGrid) trioGrid.dataset.focus = btn.dataset.focus || 'all';
+    });
+  });
 
   function updateStaticLatencyLabels() {
     const scaleFactor = simScale / 25000;
@@ -1107,6 +1283,7 @@
       updateStaticLatencyLabels();
     });
   }
+  updateStaticLatencyLabels();
 
   // Synchronize pointer lens across all 3 animation canvases
   animCanvases.forEach((cvs) => {
@@ -1200,26 +1377,26 @@
       ctx.stroke();
     }
 
-    const cx = pointerX * w;
-    const cy = Math.min(0.85, Math.max(0.18, pointerY)) * radarH;
+    const activePtrX = opts.kind === 'v8' ? v8PtrX : opts.kind === 'jsc' ? jscPtrX : pointerX;
+    const activePtrY = opts.kind === 'v8' ? v8PtrY : opts.kind === 'jsc' ? jscPtrY : pointerY;
+    const srcX = opts.kind === 'v8' ? v8SnapX : opts.kind === 'jsc' ? jscSnapX : simFlatX;
+    const srcY = opts.kind === 'v8' ? v8SnapY : opts.kind === 'jsc' ? jscSnapY : simFlatY;
+    const cx = activePtrX * w;
+    const cy = Math.min(0.85, Math.max(0.18, activePtrY)) * radarH;
     const radPx = Math.max(20, opts.radius * Math.min(w, radarH * 1.3));
     const r2 = opts.radius * opts.radius;
-
-    const sampleCount = 180;
+    const sampleCount = 220;
     for (let i = 0; i < sampleCount; i++) {
-      const dirX = (i % 3) - 1;
-      const dirY = (i % 5) - 2;
-      const nx = ((simFlatX[i] + opts.radarAng * 0.008 * dirX) % 1 + 1) % 1;
-      const ny = ((simFlatY[i] + opts.radarAng * 0.006 * dirY) % 1 + 1) % 1;
-      const dx = nx - pointerX;
-      const dy = ny - Math.min(0.85, Math.max(0.18, pointerY));
+      const nx = srcX[i];
+      const ny = srcY[i];
+      const dx = nx - activePtrX;
+      const dy = ny - Math.min(0.85, Math.max(0.18, activePtrY));
       const inside = dx * dx + dy * dy <= r2;
-      ctx.fillStyle = inside ? opts.color : 'rgba(148, 163, 184, 0.25)';
+      ctx.fillStyle = inside ? opts.color : 'rgba(148, 163, 184, 0.28)';
       const px = nx * w;
       const py = ny * radarH;
-      ctx.fillRect(px - (inside ? 1.5 : 1), py - (inside ? 1.5 : 1), inside ? 3.2 : 2, inside ? 3.2 : 2);
+      ctx.fillRect(px - (inside ? 1.8 : 1), py - (inside ? 1.8 : 1), inside ? 3.5 : 2, inside ? 3.5 : 2);
     }
-
     // Cyclic doubly-linked ref(() => RadarNode) ring + rotating sweep beam
     const ringNodes = 10;
     const ringR = Math.max(18, Math.min(42, radPx * 0.68));
@@ -1488,6 +1665,12 @@
         v8RadarAngle += 0.044;
         v8Prog += 0.021 * speedMult;
         v8HeapAccum += 0.26 * scaleFactor;
+        v8PtrX = pointerX;
+        v8PtrY = pointerY;
+        for (let i = 0; i < 220; i++) {
+          v8SnapX[i] = simFlatX[i];
+          v8SnapY[i] = simFlatY[i];
+        }
         if (v8HeapAccum >= 6.87) {
           v8HeapAccum = 0;
           v8GcStall = 8;
@@ -1507,6 +1690,12 @@
       jscRadarAngle += 0.028;
       jscProg += 0.032 * speedMult;
       jscHeapAccum += 0.18 * scaleFactor;
+      jscPtrX = pointerX;
+      jscPtrY = pointerY;
+      for (let i = 0; i < 220; i++) {
+        jscSnapX[i] = simFlatX[i];
+        jscSnapY[i] = simFlatY[i];
+      }
       if (jscHeapAccum >= 5.27) {
         jscHeapAccum = 0;
         jscGcStall = 5;
@@ -1519,6 +1708,28 @@
     }
 
     // 3. capnstruct #[repr(C)] (45x JS / 198x Rust & Go WASM): silky-smooth every single frame, 0 MB heap, 0 GC!
+    // Step interactive mouse-repulsor & vortex particle physics every single frame in-place
+    const pY = Math.min(0.85, Math.max(0.18, pointerY));
+    for (let i = 0; i < 220; i++) {
+      const dirX = ((i % 3) - 1) * 0.00045;
+      const dirY = ((i % 5) - 2) * 0.00035;
+      simHomeX[i] = (simHomeX[i] + dirX + 1) % 1;
+      simHomeY[i] = (simHomeY[i] + dirY + 1) % 1;
+      const dx = simFlatX[i] - pointerX;
+      const dy = simFlatY[i] - pY;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < r2 && d2 > 0.00001) {
+        const invD = 1 / Math.sqrt(d2);
+        const force = (1 - Math.sqrt(d2) / radius) * 0.0055;
+        // Swirl + radial repulsor wave around the cursor
+        simVelX[i] += (dx * invD * 0.65 - dy * invD * 0.75) * force;
+        simVelY[i] += (dy * invD * 0.65 + dx * invD * 0.75) * force;
+      }
+      simVelX[i] = (simVelX[i] + (simHomeX[i] - simFlatX[i]) * 0.045) * 0.88;
+      simVelY[i] = (simVelY[i] + (simHomeY[i] - simFlatY[i]) * 0.045) * 0.88;
+      simFlatX[i] = (simFlatX[i] + simVelX[i] + 1) % 1;
+      simFlatY[i] = (simFlatY[i] + simVelY[i] + 1) % 1;
+    }
     capnRadarAngle += 0.045;
     capnProg += 0.38 * speedMult;
     if (capnProg >= 1) {

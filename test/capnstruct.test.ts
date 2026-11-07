@@ -21,6 +21,7 @@ import {
   i16,
   i32,
   i64,
+  installDevtoolsFormatter,
   list,
   nullable,
   pack,
@@ -1461,10 +1462,22 @@ describe('capnstruct', () => {
       expect(TrackBundle.view(createdBytes).toObject()).toEqual(TrackBundle.array(createdBytes).at(0).toObject());
 
       // 8-byte single-str struct array length inference
-      const Msg = defineStruct({ s: str });
+      const Msg = defineStruct('Msg', { s: str });
       const msgBytes = Msg.pack([{ s: 'hello' }]);
-      expect(Msg.array(msgBytes).length).toBe(1);
-      expect(Msg.view(msgBytes).s).toBe('hello');
+      const arr = Msg.array(msgBytes);
+      const view = Msg.view(msgBytes);
+      expect(arr.length).toBe(1);
+      expect(view.s).toBe('hello');
+
+      // Node/Bun custom inspect & browser DevTools formatter
+      const inspectSym = Symbol.for('nodejs.util.inspect.custom');
+      expect((view as any)[inspectSym]()).toEqual({ s: 'hello' });
+      expect((arr as any)[inspectSym]()).toEqual([{ s: 'hello' }]);
+      const fmt = installDevtoolsFormatter();
+      expect(fmt.header(view)).toEqual(['span', {}, 'Msg { s: "hello" }']);
+      expect(fmt.header(arr)).toEqual(['span', {}, 'Msg[1] (16 B)']);
+      expect(fmt.hasBody(view)).toBe(true);
+      expect(fmt.body(view)).toEqual(['div', {}, ['object', { object: { s: 'hello' } }]]);
     });
   });
 });

@@ -82,4 +82,5 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `rows.compact()`: Strips dead tail bytes and rebinds the view to a tight `Uint8Array`.
 - `rows.bytes`: Returns a wire-ready `Uint8Array` (automatically calling `.compact()` if dirty).
 - `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go build` / `tinygo build`-verified Go zero-copy structs (with `CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`, `CapnStr`, `CapnSlice[T]`, `CapnRef[T]`, `//go:wasmexport capn_alloc` & `capn_reset` when `{ wasm: true }` / `--go-wasm`, and compile-time size/alignment/offset assertions).
+- `installDevtoolsFormatter()`: Auto-registered in browsers on `globalThis.devtoolsFormatters` (alongside `[Symbol.for('nodejs.util.inspect.custom')]()` in Node.js / Bun / Vitest) so `StructView` and `StructArrayView` format cleanly in `console.log()` and browser DevTools with zero eager row allocation.
 

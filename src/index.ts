@@ -1190,9 +1190,10 @@ export class StructViewBase<
   /** Serializes this struct view to a plain object for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>;
  }
- StructViewBase.prototype.at = StructViewBase.prototype.seek;
- StructViewBase.prototype.setAll = StructViewBase.prototype.set;
- StructViewBase.prototype.toJSON = StructViewBase.prototype.toObject;
+const kInspect = Symbol.for('nodejs.util.inspect.custom');
+StructViewBase.prototype.at = StructViewBase.prototype.seek;
+StructViewBase.prototype.setAll = StructViewBase.prototype.set;
+StructViewBase.prototype.toJSON = (StructViewBase.prototype as any)[kInspect] = StructViewBase.prototype.toObject;
 
 /** Zero-copy view over a single binary struct with direct getter/setter properties for every field in `F`. */
 export type StructView<F extends FieldRecord = FieldRecord> =
@@ -1458,7 +1459,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     };
    }
  }
- StructArrayView.prototype.toJSON = StructArrayView.prototype.toObjects;
+StructArrayView.prototype.toJSON = (StructArrayView.prototype as any)[kInspect] = StructArrayView.prototype.toObjects;
 function colDesc(a: StructArrayView<any>, k: PropertyKey): FieldLayout<PrimitiveDesc<any>> {
   const lay = a.def.fields[k as string];
   if (!lay || lay.desc.kind !== 'primitive' || !lay.desc._C) {
@@ -1863,3 +1864,28 @@ export function defineStruct<F extends FieldRecord>(
 
 /** Alias for `defineStruct`. */
 export const struct = defineStruct;
+
+const _dtf = {
+  header(x: any) {
+    if (!(x instanceof MemView)) return null;
+    const n = x.def?.name || 'Struct';
+    if ('length' in x) return ['span', {}, `${n}[${x.length}] (${x.usedByteLength} B)`];
+    const ks = Object.keys(x);
+    return ['span', {}, `${n} { ${ks.slice(0, 4).map((k) => `${k}: ${JSON.stringify((x as any)[k])}`).join(', ')}${ks.length > 4 ? ', ...' : ''} }`];
+  },
+  hasBody(x: any) {
+    return x instanceof MemView;
+  },
+  body(x: any) {
+    return ['div', {}, ['object', { object: 'length' in x ? x.toObjects() : x.toObject() }]];
+  },
+};
+
+/** Registers a lazy Chrome/Edge/Firefox DevTools custom formatter (`globalThis.devtoolsFormatters`) for `StructView` and `StructArrayView`. */
+export function installDevtoolsFormatter(): typeof _dtf {
+  const g = globalThis as any;
+  const list: any[] = (g.devtoolsFormatters ??= []);
+  if (!list.includes(_dtf)) list.push(_dtf);
+  return _dtf;
+}
+if (typeof window !== 'undefined') installDevtoolsFormatter();

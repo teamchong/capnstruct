@@ -14,18 +14,11 @@ import LivePlayground from '../../components/LivePlayground.astro';
   <span class="cs-pill"><strong>~6.5 KiB Core</strong> + Rust #[repr(C)] Codegen</span>
 </div>
 
-`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
-
-**Why Data Layout Beats Switching JS Engines:** Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` or `structuredClone` by **1.3x–2.7x**, because both engines still have to allocate tens of thousands of boxed heap objects (**+6 MB to +14 MB JS heap** per call) and run garbage collection. Changing your data layout to `capnstruct` on standard Node.js yields **15x to 3,520x speedups** with **0.00 MB of JS heap allocation**—and natively handles circular object graphs (`a.next = b; b.next = a`) where `JSON.stringify` crashes with `TypeError`.
-
----
-
-## Interactive Browser Playground
-
-Run the live benchmark in your current JS engine (measuring both execution time and memory overhead), mutate binary structs and strings in place while watching the raw hex buffer update, or inspect generated **Rust `#[repr(C)]`** code:
-
 <LivePlayground />
 
+`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` view classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => T)`)**.
+
+**Why Data Layout Beats Switching JS Engines:** Switching from Node.js (V8) to Bun (JavaScriptCore) speeds up `JSON.parse` + `.filter()` or `structuredClone` by **1.3x–2.7x**, because both engines still have to allocate tens of thousands of boxed heap objects (**+6 MB to +14 MB JS heap** per call), chase out-of-line pointers across CPU cache lines, and pause for garbage collection. Changing your data layout to `capnstruct` on standard Node.js yields **6.5x to 3,520x speedups** with **0.00 MB of JS heap allocation**—and natively handles circular object graphs (`a.next = b; b.next = a`) where `JSON.stringify` crashes with `TypeError`.
 ---
 
 ## What You Can Build With `capnstruct`

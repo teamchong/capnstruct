@@ -260,10 +260,25 @@ npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
 ```
 
 ---
+## Data Layout > Switching JS Engines (Architecture & Scaling Proof)
 
-## Data Layout > Switching JS Engines (Benchmarks & Heap Memory)
+Switching from **Node.js (V8)** to **Bun (JavaScriptCore)** only yields a **~1.3x–2.7x** constant-factor tweak because **both engines are forced to construct the exact same scattered pointer-soup heap graph** whenever you call `JSON.parse()` or `structuredClone()`:
 
-Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`):
+```text
+❌ Plain JS Objects in V8 (Node.js) AND JavaScriptCore (Bun):
+[Array Backing Store] -> 8B ptr -> [Boxed JSObject Header + HiddenClass/StructureID (24-48B)] -> 8B ptr -> [UTF-8/UTF-16 String Heap Box]
+   • Every row = 1..4 separate heap allocations + pointer indirection (CPU L1/L2 cache misses)
+   • 25,000–100,000 rows = +5 MB to +14 MB of garbage-collected heap pressure per call (GC frame drops)
+   • Circular references (a.next = b; b.next = a) = JSON.stringify crashes with TypeError; deep graphs overflow structuredClone C++ stack
+
+✅ capnstruct Contiguous #[repr(C)] Layout (Same V8 or JSC Engine):
+[Row 0: 24B inline #[repr(C)] struct | Row 1: 24B inline | ... | Tail Arena: UTF-8 & slice bytes via [u32 relOffset, u32 len]]
+   • 0 per-row JS heap objects allocated (0.00 MB GC pressure)
+   • 1 reusable flyweight cursor (`cursor._o += stride`) reads sequentially through CPU L1 cache lines
+   • Strings & slices are only decoded on the rows that match your filter; circular `ref(() => Node)` pointers traverse in O(1)
+```
+
+Measured on Apple Silicon (`pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`; see [capnstruct.teamchong.net](https://capnstruct.teamchong.net) for interactive 60 FPS visual proof, scaling curves from `N = 100` to `100,000`, and filter selectivity sweeps from `0.5%` to `100%`):
 
 | Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
 | :--- | :--- | :--- | :--- | :--- |

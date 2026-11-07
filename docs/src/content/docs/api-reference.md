@@ -83,21 +83,21 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go tool compile`-verified Go zero-copy structs (with `CapnStr`, `CapnSlice`, `CapnRef`, and compile-time size/alignment/offset assertions).
 ---
 
-## Data Layout > Switching JS Engines (Benchmarks & Bundle Size)
+## Data Layout > Switching to Bun or Rust (Benchmarks & Bundle Size)
 
-Measured via `pnpm run bench` on **Node.js v24.15.0 (V8 13.6)** and **Bun v1.4.3 (JavaScriptCore)**, plus `pnpm run size`:
+Measured via `pnpm run bench` on **Node.js v24.15.0 (V8 13.6)**, **Bun v1.4.3 (JavaScriptCore)**, and **Rust 1.96 (`rustc -C opt-level=3 --target wasm32-unknown-unknown`)**, plus `pnpm run size`:
 
-| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | `capnstruct` Zero-Copy (`ms` / Heap) | Speedup vs. Node / Bun |
-| :--- | :--- | :--- | :--- | :--- |
-| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 14.08 ms / **+10.33 MB** | 5.28 ms / **+6.38 MB** | **0.0040 ms** / **+0.00 MB** | **~3,520x / ~1,320x faster (0 MB heap)** |
-| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.00 ms / **+14.24 MB** | 34.13 ms / **+5.73 MB** | **0.054 ms** (Bun: 0.027 ms) / **+0.00 MB** | **~829x–1,275x faster (0 MB heap)** |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.82 ms / **+8.18 MB** | 6.38 ms / **+5.21 MB** | **0.290 ms** (Bun: 0.269 ms) / **+0.00 MB** | **~44.2x / ~23.7x faster (0 MB heap)** |
-| **`100,000` `SpdSample` Numeric Struct Scan** (`for..of` flyweight cursor, 0 heap allocs) | 13.51 ms / **+10.33 MB** | 5.23 ms / **+6.38 MB** | **0.625 ms** (Bun: 0.530 ms) / **+0.00 MB** | **~21.6x / ~9.9x faster (0 MB heap)** |
-| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.02 ms / **+4.23 MB** | 2.09 ms / **+2.59 MB** | **0.338 ms** / **+0.00 MB** | **~14.9x / ~5.4x faster (0 MB heap)** |
-| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` throws `TypeError`!) | 3.25 ms (`structuredClone`) / **+1.76 MB** | 2.57 ms (`structuredClone`) / **+0.69 MB** | **0.390 ms** (Bun: 0.343 ms) / **+0.00 MB** | **~8.3x faster (0 MB heap, $O(1)$ stack)** |
+| Workload | Node.js (V8) Baseline (`ms` / Heap) | Bun (JSC) Baseline (`ms` / Heap) | Rust `-O3` WASM JSON / FFI | `capnstruct` Zero-Copy (JS / Rust `#[repr(C)]`) | Speedup (Layout vs. Engine/Lang) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`100,000` `SpdSample` Numeric Struct Scan** (`5.27 MiB` JSON vs `2.29 MiB` `capnstruct`) | 14.18 ms / **+10.30 MB** | 5.50 ms / **+6.87 MB** | 3.73 ms (in-WASM) / 23.0 ms (FFI) | **0.309 ms JS** (Bun: 0.170 ms) / **0.073 ms Rust** (**0 MB**) | **45.9x faster JS / 194x Rust** |
+| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate) | 12.96 ms / **+8.17 MB** | 6.77 ms / **+5.21 MB** | 4.16 ms (in-WASM JSON scan) | **0.290 ms JS** / **0.018 ms Rust** (**0 MB**) | **35.3x faster JS / 714x Rust** |
+| **JS &harr; Rust WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`) | 5.08 ms / **+3.70 MB** | 2.12 ms / **+1.72 MB** | 5.08 ms (FFI) | **0.306 ms JS** / **0.015 ms Rust** (**0 MB**) | **16.6x faster JS / 339x Rust** |
+| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place) | 45.98 ms / **+14.24 MB** | 35.54 ms / **+5.73 MB** | — | **0.046 ms JS** (Bun: 0.025 ms) / **+0.00 MB** | **~1,000x–1,420x faster (0 MB)** |
+| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`) | 13.79 ms / **+10.33 MB** | 5.68 ms / **+6.88 MB** | — | **0.0051 ms JS** / **+0.00 MB** | **~2,729x faster (0 MB heap)** |
+| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s — `JSON.stringify` & `serde_json` throw!) | 3.27 ms (`structuredClone`) / **+1.76 MB** | 2.59 ms (`structuredClone`) / **+0.69 MB** | Throws on cyclic JSON! | **0.296 ms JS** / **0.011 ms Rust `CapnRef<T>`** (**0 MB**) | **8.7x faster JS / 297x Rust** |
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :--- | :--- |
 | **Declarative Schema API (Core Runtime + All Primitives + `ref`)** | 16.79 KiB | **6.51 KiB** (6,665 B) |
 | **Full Runtime (+ `WasmArena`)** | 18.53 KiB | **7.02 KiB** (7,186 B) |
-| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 5.85 KiB | **1.97 KiB** (2,013 B) |
+| **Rust `#[repr(C)]` & Go Codegen (`capnstruct/codegen`)** | 6.52 KiB | **2.29 KiB** (2,343 B) |

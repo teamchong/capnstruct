@@ -13,7 +13,8 @@
       </div>
 
       <!-- Interactive Parameter Bar (Anti-Cherry-Pick Controls) -->
-      <div class="cs-param-bar">
+    <div class="cs-param-bar">
+      <div class="cs-param-controls">
         <div class="cs-param-item">
           <span class="cs-param-label">Dataset Scale (N):</span>
           <div class="cs-pill-group" id="cs-scale-group">
@@ -29,13 +30,15 @@
           </label>
           <input id="cs-sel-slider" type="range" min="1" max="100" value="4" class="cs-slider" />
         </div>
-      <div class="cs-param-item cs-live-hud">
-        <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">45x JS / 198x WASM</span>
+      </div>
+      <div class="cs-live-hud">
+        <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">
+          Sweeps: <span class="cs-hud-num" id="cs-sw-capn">0</span> vs <span class="cs-hud-num" id="cs-sw-rust">0</span> (Rust) vs <span class="cs-hud-num" id="cs-sw-bun">0</span> (Bun)
+        </span>
         <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.17ms vs 3.7ms (Rust) vs 5.7ms (Bun)</span>
         <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB vs +6.9 MB GC</span>
       </div>
     </div>
-
     <!-- 3 SIDE-BY-SIDE LIVE ANIMATIONS (NO TAB SWITCHING) -->
     <div class="cs-trio-grid">
       <div class="cs-canvas-wrap cs-card-v8">
@@ -739,15 +742,21 @@
   }
   .cs-param-bar {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.65rem;
-    padding: 0.6rem 0.85rem;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.65rem 0.85rem;
     margin-bottom: 0.85rem;
     border-radius: 0.55rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
+  }
+
+  .cs-param-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.65rem;
   }
   .cs-param-item {
     display: flex;
@@ -793,14 +802,23 @@
     cursor: pointer;
   }
   .cs-live-hud {
-    margin-left: auto;
-    display: flex;
-    gap: 0.35rem;
-    flex-wrap: nowrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    width: 100%;
+    padding-top: 0.45rem;
+    border-top: 1px solid var(--sl-color-hairline);
   }
+
+  @media (max-width: 920px) {
+    .cs-live-hud {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .cs-hud-badge {
-    padding: 0.22rem 0.5rem;
-    border-radius: 999px;
+    padding: 0.26rem 0.55rem;
+    border-radius: 0.4rem;
     font-family: var(--sl-font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 0.72rem;
@@ -809,18 +827,27 @@
     background: var(--sl-color-bg-nav);
     text-align: center;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+
+  .cs-hud-num {
+    display: inline-block;
+    width: 3ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
   .cs-hud-fps {
-    min-width: 4.1rem;
     color: #10b981;
     border-color: rgba(16, 185, 129, 0.4);
   }
+
   .cs-hud-ms {
-    min-width: 6.4rem;
     color: var(--sl-color-text);
   }
+
   .cs-hud-heap {
-    min-width: 7.4rem;
     color: #38bdf8;
   }
   .cs-trio-grid {
@@ -854,11 +881,11 @@
   }
   .cs-canvas-title {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.45rem 0.6rem;
-    font-size: 0.72rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.76rem;
     font-weight: 700;
     color: #f1f5f9;
     background: rgba(15, 23, 42, 0.9);
@@ -867,6 +894,7 @@
     overflow: hidden;
   }
   .cs-canvas-label {
+    width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -1002,7 +1030,9 @@
   const capnCanvas = document.getElementById('cs-anim-capn') as HTMLCanvasElement | null;
   const animCanvases = [v8Canvas, jscCanvas, capnCanvas].filter(Boolean) as HTMLCanvasElement[];
 
-  const hudFps = document.getElementById('cs-hud-fps');
+  const swCapnEl = document.getElementById('cs-sw-capn');
+  const swRustEl = document.getElementById('cs-sw-rust');
+  const swBunEl = document.getElementById('cs-sw-bun');
   const hudMs = document.getElementById('cs-hud-ms');
   const hudHeap = document.getElementById('cs-hud-heap');
   const hintV8 = document.getElementById('cs-hint-v8');
@@ -1043,11 +1073,37 @@
     simFlatY[i] = simPlainRows[i].y;
   }
 
-  document.querySelectorAll<HTMLButtonElement>('.cs-mini-btn').forEach((btn) => {
+  function updateStaticLatencyLabels() {
+    const scaleFactor = simScale / 25000;
+    const selFactor = 1 + ((simSelectivityPct - 4) / 96) * 0.35;
+    const steadyV8Ms = 14.14 * scaleFactor * selFactor;
+    const steadyJscMs = 5.65 * scaleFactor * selFactor;
+    const steadyRustMs = 3.68 * scaleFactor * selFactor;
+    const steadyCapnMs = 0.17 * scaleFactor;
+    const steadyWasmMs = 0.07 * scaleFactor;
+    if (hudMs) {
+      hudMs.textContent = `${steadyCapnMs.toFixed(2)}ms vs ${steadyRustMs.toFixed(1)}ms (Rust) vs ${steadyJscMs.toFixed(1)}ms (Bun)`;
+    }
+    if (hudHeap) {
+      hudHeap.textContent = `0.00 MB vs +${(6.87 * scaleFactor).toFixed(1)} MB GC`;
+    }
+    if (hintV8) {
+      hintV8.textContent = `${steadyJscMs.toFixed(1)} ms (V8: ${steadyV8Ms.toFixed(1)} ms) · +${(6.87 * scaleFactor).toFixed(1)} MB GC!`;
+    }
+    if (hintJsc) {
+      hintJsc.textContent = `${steadyRustMs.toFixed(1)} ms JSON / ${(23.0 * scaleFactor).toFixed(1)} ms FFI`;
+    }
+    if (hintCapn) {
+      hintCapn.textContent = `${steadyCapnMs.toFixed(2)} ms JS / ${steadyWasmMs.toFixed(2)} ms WASM · 0 MB`;
+    }
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('#cs-scale-group .cs-mini-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.cs-mini-btn').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('#cs-scale-group .cs-mini-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       simScale = parseInt(btn.dataset.scale || '25000', 10);
+      updateStaticLatencyLabels();
     });
   });
 
@@ -1055,6 +1111,7 @@
     selSlider.addEventListener('input', () => {
       simSelectivityPct = parseInt(selSlider.value || '4', 10);
       if (selValEl) selValEl.textContent = `${simSelectivityPct}%`;
+      updateStaticLatencyLabels();
     });
   }
 
@@ -1232,8 +1289,9 @@
     ctx.fillText(opts.memSub, 8, midY + 13);
 
     ctx.fillStyle = opts.color;
+    ctx.fillText('Sweeps:', w - 66, midY + 13);
     ctx.textAlign = 'right';
-    ctx.fillText(`Sweeps: ${opts.sweeps}x`, w - 8, midY + 13);
+    ctx.fillText(`${opts.sweeps}x`, w - 8, midY + 13);
     ctx.textAlign = 'left';
 
     const trackX = 8;
@@ -1323,8 +1381,8 @@
       ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, monospace';
       const barLabel =
         opts.kind === 'jsc'
-          ? `FFI / JSON Scan: ${opts.heapMB.toFixed(1)} / ${opts.maxHeapMB.toFixed(1)} MiB -> Copy!`
-          : `Heap Alloc: +${opts.heapMB.toFixed(1)} / +${opts.maxHeapMB.toFixed(1)} MB -> GC!`;
+          ? `FFI / JSON Scan: ${opts.heapMB.toFixed(1).padStart(4, ' ')} / ${opts.maxHeapMB.toFixed(1)} MiB -> Copy!`
+          : `Heap Alloc: +${opts.heapMB.toFixed(1).padStart(4, ' ')} / +${opts.maxHeapMB.toFixed(1)} MB -> GC!`;
       ctx.fillText(barLabel, trackX + 4, heapY + 9);
     } else {
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
@@ -1425,7 +1483,7 @@
     if (charsDecoded < 0) console.log(charsDecoded, matchedCount);
 
     const scaleFactor = simScale / 25000;
-    const selFactor = 0.85 + (simSelectivityPct / 100) * 0.35;
+    const selFactor = 1 + ((simSelectivityPct - 4) / 96) * 0.35;
     const speedMult = Math.max(0.5, Math.min(1.6, 1 / Math.sqrt(scaleFactor)));
     let v8Gc = false;
     let jscGc = false;
@@ -1479,24 +1537,22 @@
       jscSweeps = 0;
       capnSweeps = 0;
     }
-
+    const steadyV8Ms = 14.14 * scaleFactor * selFactor;
+    const steadyJscMs = 5.65 * scaleFactor * selFactor;
+    const steadyRustMs = 3.68 * scaleFactor * selFactor;
+    const steadyCapnMs = 0.17 * scaleFactor;
     const jitter = Math.sin(frameTick * 0.19) * 0.25;
-    const v8Ms = 14.14 * scaleFactor * selFactor + jitter + (v8Gc || v8GcStall > 4 ? 5.8 : 0);
-    const jscMs = 5.65 * scaleFactor * selFactor + jitter * 0.6 + (v8Gc || v8GcStall > 4 ? 5.2 : 0);
-    const rustMs = 3.68 * scaleFactor * selFactor + jitter * 0.3 + (jscGc || jscGcStall > 2 ? 4.4 : 0);
+    const v8Ms = steadyV8Ms + jitter + (v8Gc || v8GcStall > 4 ? 5.8 : 0);
+    const jscMs = steadyJscMs + jitter * 0.6 + (v8Gc || v8GcStall > 4 ? 5.2 : 0);
+    const rustMs = steadyRustMs + jitter * 0.3 + (jscGc || jscGcStall > 2 ? 4.4 : 0);
     const capnMs = Math.max(0.14, 0.17 * scaleFactor + rawCapnMs * 0.2);
 
     frameHistory.push({ v8Ms, jscMs, rustMs, capnMs, v8Gc, jscGc });
     if (frameHistory.length > MAX_HISTORY) frameHistory.shift();
 
-    if (frameTick % 6 === 1) {
-      if (hudFps) hudFps.textContent = `Sweeps: ${capnSweeps} vs ${jscSweeps} (Rust) vs ${v8Sweeps} (Bun)`;
-      if (hudMs) hudMs.textContent = `${capnMs.toFixed(2)}ms vs ${rustMs.toFixed(1)}ms (Rust) vs ${jscMs.toFixed(1)}ms (Bun)`;
-      if (hudHeap) hudHeap.textContent = '0.00 MB vs +6.9 MB GC';
-      if (hintV8) hintV8.textContent = `${jscMs.toFixed(1)} ms (V8: ${v8Ms.toFixed(1)}) · +6.9 MB GC!`;
-      if (hintJsc) hintJsc.textContent = `${rustMs.toFixed(1)} ms JSON / 23.0 ms FFI`;
-      if (hintCapn) hintCapn.textContent = `${capnMs.toFixed(2)} ms JS / 0.07 ms WASM · 0 MB`;
-    }
+    if (swCapnEl) swCapnEl.textContent = String(capnSweeps);
+    if (swRustEl) swRustEl.textContent = String(jscSweeps);
+    if (swBunEl) swBunEl.textContent = String(v8Sweeps);
 
     renderAnimCard(v8Canvas, {
       kind: 'v8',
@@ -1510,9 +1566,10 @@
       stallLabel: 'BUN ~2x GC STALL (+6.9 MB)!',
       memTitle: 'Bun ~2x (5.7ms) vs V8 (14.1ms)',
       memSub: 'Scattered Boxed Heap:',
-      msLabel: `Bun JSC: ${jscMs.toFixed(1)}ms | Node V8: ${v8Ms.toFixed(1)}ms`,
+      msLabel: `Bun JSC: ${steadyJscMs.toFixed(1)}ms | Node V8: ${steadyV8Ms.toFixed(1)}ms`,
       radius,
     });
+
     renderAnimCard(jscCanvas, {
       kind: 'jsc',
       color: '#a855f7',
@@ -1525,9 +1582,10 @@
       stallLabel: 'RUST FFI / JSON COPY (5.3 MiB)!',
       memTitle: 'Rust -O3 WASM: Still Scanning JSON!',
       memSub: '5.27 MiB JSON / FFI Stream:',
-      msLabel: `Rust -O3 JSON: ${rustMs.toFixed(1)}ms | FFI Copy: 23.0ms`,
+      msLabel: `Rust -O3 JSON: ${steadyRustMs.toFixed(1)}ms | FFI Copy: ${(23.0 * scaleFactor).toFixed(1)}ms`,
       radius,
     });
+
     renderAnimCard(capnCanvas, {
       kind: 'capn',
       color: '#10b981',
@@ -1538,9 +1596,9 @@
       maxHeapMB: 0,
       stalled: false,
       stallLabel: '',
-      memTitle: '45x JS / 198x Rust·Go WASM!',
+      memTitle: '45x JS / 198x Rust-Go WASM!',
       memSub: 'Contiguous #[repr(C)] L1:',
-      msLabel: `capnstruct: ${capnMs.toFixed(2)}ms JS / 0.07ms Rust·Go WASM`,
+      msLabel: `capnstruct: ${steadyCapnMs.toFixed(2)}ms JS / ${(0.07 * scaleFactor).toFixed(2)}ms Rust-Go WASM`,
       radius,
     });
 

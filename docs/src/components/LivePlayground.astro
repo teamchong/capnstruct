@@ -136,12 +136,8 @@
               <circle cx="90" cy="219.9" r="4" fill="#10b981" /><circle cx="205" cy="219.9" r="4" fill="#10b981" /><circle cx="320" cy="219.9" r="4" fill="#10b981" /><circle cx="435" cy="219.9" r="4" fill="#10b981" /><circle cx="550" cy="219.6" r="4" fill="#10b981" /><circle cx="665" cy="219.2" r="4" fill="#10b981" /><circle cx="785" cy="218.9" r="5.5" fill="#10b981" />
             <text x="772" y="213" text-anchor="end" font-size="11.5" font-weight="800" fill="#10b981">capnstruct #[repr(C)]: 0.17 ms JS / 0.08 ms Go·TinyGo / 0.07 ms Rust</text>
 
-            <!-- Honest Callout at N=100 -->
-            <text x="95" y="198" font-size="10" fill="currentColor" opacity="0.65">At N=100, all meet (~0.02ms)</text>
-          </svg>
-          <p class="cs-graph-caption">
-            <strong>Why data layout beats switching to Bun, Rust, or Go/TinyGo:</strong> Switching from Node.js (V8) to Bun (JSC) only gives ~2x, and even <strong>Rust / Go WASM</strong> parsing JSON takes <strong>3.73 ms</strong> (or <strong>23.0 ms</strong> across JS&harr;WASM FFI) because the CPU still has to scan 5.27 MiB of ASCII JSON text. Restructuring into a contiguous <code>#[repr(C)]</code> binary layout drops execution to <strong>0.17 ms in standard JS</strong>, <strong>0.084 ms in TinyGo WASM</strong>, <strong>0.107 ms in Go WASM</strong>, and <strong>0.071 ms in Rust WASM</strong> with <strong>0 MB heap allocation</strong>.
-          </p>
+              <text x="95" y="198" font-size="10" fill="currentColor" opacity="0.65">At N=100, all meet (~0.02ms)</text>
+            </svg>
           </div>
         </div>
 
@@ -199,9 +195,6 @@
               <!-- Already-Parsed In-Memory JS Objects (Dashed reference: ~0.08 ms) -->
               <polyline fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="3,3" points="110,214.0 275,214.4 445,214.1 615,214.3 775,214.2" />
             </svg>
-            <p class="cs-graph-caption">
-              <strong>Not cherry-picked at 0.4% selectivity:</strong> Even if your filter matches <strong>100% of all 25,000 rows</strong> and decodes every single UTF-8 <code>callsign</code> string on the fly, <code>capnstruct</code> in standard JS (<strong>1.19 ms on V8 / 0.88 ms on Bun</strong>) still beats <strong>Node V8 (14.2 ms)</strong>, <strong>Bun JSC (5.8 ms)</strong>, and <strong>Rust <code>-O3</code> JSON scanning (4.16 ms)</strong> &mdash; while Rust + <code>capnstruct #[repr(C)]</code> completes 100% decode in <strong>0.17 ms</strong>!
-            </p>
           </div>
         </div>
 

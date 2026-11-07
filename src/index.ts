@@ -688,7 +688,7 @@ function allocTail(v: any, bytes: number, align: number): number {
     return p;
   }
   const d = root._k(),
-    cur = root._tl ?? root._o + root.byteLength,
+    cur = root._tl ?? root._o + al(root.byteLength, 8),
     p = al(cur, align),
     end = p + bytes;
   if (end > d.byteLength) {
@@ -696,7 +696,7 @@ function allocTail(v: any, bytes: number, align: number): number {
       m.grow(Math.ceil((end - d.byteLength) / 65536));
         root._d = new DataView(m.buffer);
       } else {
-        const nb = new ArrayBuffer(Math.max(end, d.byteLength * 2, 64));
+        const nb = new ArrayBuffer(Math.max(al(end, 8), d.byteLength * 2, 64));
         new Uint8Array(nb).set(u8s(d, 0, cur));
         root._d = new DataView(nb);
       }
@@ -740,8 +740,8 @@ function mutVar(
     }
     st = allocTail(root, bytes, align);
     d = v._d = root._d;
+    if (root.def && off === root._b + root.def._fv && st - base !== al(root.byteLength, 8)) root._dirty = true;
   }
-  if (root.def && off === root._b + root.def._fv && st - base !== oldP) root._dirty = true;
   if (bytes) u8s(d, st, bytes).fill(0);
   setDesc(off, count ? st - base : 0, count, d);
   return st;
@@ -1126,8 +1126,17 @@ class MemView<F extends FieldRecord = FieldRecord> {
   /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   get bytes(): Uint8Array {
     if (this._dirty || this._dead) return this.compact();
-    const d = this._k();
-    return u8s(d, this._o, Math.max(this.byteLength, (this._tl ?? this._o + this.byteLength) - this._o));
+    const d = this._k(),
+      rawEnd = Math.max(this.byteLength, (this._tl ?? this._o + this.byteLength) - this._o),
+      end = !this._m && this._tl !== undefined ? Math.min(d.byteLength - this._o, al(rawEnd, 8)) : rawEnd;
+    if (this.byteLength && this.def._fv >= 0 && d.getUint32(this._b + this.def._fv, true) < this.byteLength) {
+      const ts = al(this.byteLength, 8);
+      if (end >= ts) {
+        if (d.getUint32(this._b + this.def._fv + 4, true)) d.setUint32(this._b + this.def._fv + 4, ts | 1, true);
+        else d.setUint32(this._b + this.def._fv, ts, true);
+      }
+    }
+    return u8s(d, this._o, end);
   }
 }
 
@@ -1808,7 +1817,7 @@ export function pack<F extends FieldRecord>(
   const n = rows.length;
   const st = def.size;
   const tb = n * st;
-  const ts = def._fv >= 0 ? al(tb + 1, 8) : tb;
+  const ts = def._fv >= 0 ? al(tb, 8) : tb;
   ensureScratch(ts + n * 64 + 64);
   sU8.fill(0, 0, ts);
   initNulls(def, sDv, 0, n, st);

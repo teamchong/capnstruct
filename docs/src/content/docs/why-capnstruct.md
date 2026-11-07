@@ -27,46 +27,9 @@ When a JavaScript or TypeScript service hits a serialization, IPC, or memory wal
   • Strings & slices are only decoded on the rows that match your filter; circular `ref(() => Node)` pointers traverse in O(1)
 ```
 
-### 2. Visual Scaling Proof Across Dataset Size (`N = 100 → 100,000`) & Filter Selectivity (`0.5% → 100%`)
+### 2. Full Benchmark & Bundle Size Suite (Node.js V8 vs. Bun JSC vs. Rust `-O3` vs. Go / TinyGo WASM)
 
-To prove this is **not a cherry-picked benchmark**, the curve below sweeps across **4 orders of magnitude of dataset scale** (`N = 100` to `N = 100,000`), comparing **Node.js v24 (V8)**, **Bun v1.4 (JSC)**, **Rust 1.96 (`rustc -O3` WASM JSON Parse)**, an **already-parsed in-memory JS object array** baseline (dashed grey line), and **`capnstruct` `#[repr(C)]` Binary Layout** (solid green line):
-
-<svg viewBox="0 0 860 260" style="width:100%;height:auto;background:var(--sl-color-bg-nav);border:1px solid var(--sl-color-hairline);border-radius:0.6rem;padding:0.5rem;margin:0.75rem 0;" role="img" aria-label="Scaling curve comparing Node.js V8, Bun JSC, Rust WASM JSON, in-memory JS array, and capnstruct from N=100 to N=100,000">
-  <line x1="70" y1="25" x2="820" y2="25" stroke="currentColor" stroke-opacity="0.12" />
-  <line x1="70" y1="75" x2="820" y2="75" stroke="currentColor" stroke-opacity="0.12" />
-  <line x1="70" y1="125" x2="820" y2="125" stroke="currentColor" stroke-opacity="0.12" />
-  <line x1="70" y1="175" x2="820" y2="175" stroke="currentColor" stroke-opacity="0.12" />
-  <line x1="70" y1="220" x2="820" y2="220" stroke="currentColor" stroke-opacity="0.28" />
-  <line x1="70" y1="104" x2="820" y2="104" stroke="#ef4444" stroke-width="1" stroke-dasharray="5,4" stroke-opacity="0.75" />
-  <text x="815" y="98" text-anchor="end" font-size="11" fill="#ef4444" font-weight="600">16.6 ms – 60 FPS Frame Budget Ceiling (Stutter Above)</text>
-  <text x="62" y="29" text-anchor="end" font-size="11" fill="currentColor" opacity="0.7">28 ms</text>
-  <text x="62" y="79" text-anchor="end" font-size="11" fill="currentColor" opacity="0.7">21 ms</text>
-  <text x="62" y="129" text-anchor="end" font-size="11" fill="currentColor" opacity="0.7">14 ms</text>
-  <text x="62" y="179" text-anchor="end" font-size="11" fill="currentColor" opacity="0.7">7 ms</text>
-  <text x="62" y="224" text-anchor="end" font-size="11" fill="currentColor" opacity="0.7">0 ms</text>
-  <text x="90" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">N=100</text>
-  <text x="205" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">1,000</text>
-  <text x="320" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">5,000</text>
-  <text x="435" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">10,000</text>
-  <text x="550" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">25,000</text>
-  <text x="665" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">50,000</text>
-  <text x="785" y="242" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.8">100,000</text>
-  <polygon points="90,219.8 205,219.8 320,218.8 435,217.7 550,213.5 665,207.0 785,194.0 785,218.9 665,219.2 550,219.6 435,219.9 320,219.9 205,220 90,220" fill="#10b981" fill-opacity="0.09" />
-  <polyline fill="none" stroke="#ef4444" stroke-width="3" points="90,219.7 205,218.2 320,211.1 435,202.0 550,173.8 665,123.5 785,25.1" />
-  <text x="772" y="38" text-anchor="end" font-size="11" font-weight="700" fill="#ef4444">Node.js V8: 27.8 ms (+10.3 MB heap)</text>
-  <polyline fill="none" stroke="#f59e0b" stroke-width="3" points="90,219.7 205,219.0 320,215.7 435,211.0 550,197.0 665,173.3 785,123.0" />
-  <text x="772" y="116" text-anchor="end" font-size="11" font-weight="700" fill="#f59e0b">Bun JSC: 13.9 ms (2x faster, +6.9 MB heap)</text>
-  <polyline fill="none" stroke="#a855f7" stroke-width="2.6" points="90,219.8 205,219.8 320,218.8 435,217.7 550,213.5 665,207.0 785,194.0" />
-  <text x="772" y="187" text-anchor="end" font-size="11" font-weight="700" fill="#a855f7">Rust -O3 JSON: 3.73 ms (23.0 ms w/ JS FFI)</text>
-  <polyline fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="3,3" points="90,219.9 205,219.9 320,219.9 435,219.9 550,219.7 665,219.5 785,219.1" />
-  <polyline fill="none" stroke="#10b981" stroke-width="3.5" points="90,219.9 205,219.9 320,219.9 435,219.9 550,219.6 665,219.2 785,218.9" />
-  <text x="772" y="213" text-anchor="end" font-size="11.5" font-weight="800" fill="#10b981">capnstruct #[repr(C)]: 0.17 ms JS / 0.08 ms Go·TinyGo / 0.07 ms Rust</text>
-  <text x="95" y="198" font-size="10" fill="currentColor" opacity="0.65">At N=100, all meet (~0.02ms)</text>
-</svg>
-
-### 3. Benchmark Summary Table (Node.js V8 vs. Bun JSC vs. Rust `-O3` vs. Go / TinyGo WASM vs. `capnstruct`)
-
-Running the exact same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 (V8)**, **Bun v1.4.3 (JSC)**, **Rust 1.96 (`rustc -O3 wasm32`)**, **Go 1.27 (`GOOS=wasip1 GOARCH=wasm`)**, and **TinyGo 0.43 (`-target=wasi -opt=2`)**:
+Running the same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 (V8)**, **Bun v1.4.3 (JSC)**, **Rust 1.96 (`rustc -O3 wasm32`)**, **Go 1.27 (`GOOS=wasip1 GOARCH=wasm`)**, and **TinyGo 0.43 (`-target=wasi -opt=2`)**, plus `pnpm run size`:
 
 | Workload                               | Node.js (V8) JSON / Clone             | Bun (JSC) JSON / Clone                | Rust `-O3` WASM JSON / FFI        | `capnstruct` Zero-Copy (JS / Go·TinyGo WASM / Rust `#[repr(C)]`)                                     | Data Layout Gain                              |
 | :------------------------------------- | :------------------------------------ | :------------------------------------ | :-------------------------------- | :--------------------------------------------------------------------------------------------------- | :-------------------------------------------- |
@@ -77,32 +40,24 @@ Running the exact same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 
 | **100k Sorted Range Query**            | 14.06 ms (**+10.33 MB** heap)         | 5.88 ms (**+6.88 MB** heap)           | -                                 | **0.0058 ms JS** (**0.00 MB** heap)                                                                  | **~2,408x faster, 0 MB heap**                 |
 | **10k Cyclic Graph Clone & Traverse**  | 3.23 ms (**+1.76 MB**, `JSON` throws) | 2.63 ms (**+0.69 MB**, `JSON` throws) | Throws on cyclic JSON!            | **0.30 ms JS** / **0.019 ms Go WASM** / **0.034 ms TinyGo** / **0.016 ms Rust** (**0 MB**)           | **8.7x faster JS / 173x Go WASM / 190x Rust** |
 
----
-
-## Design Tradeoffs in JS Binary Formats
-
-Libraries like **Apache Arrow (`apache-arrow`)**, **FlatBuffers**, and **Cap'n Proto** are designed for large-scale cross-language analytics or multi-segment RPC, which leads to different tradeoffs when used in everyday JavaScript and WebAssembly applications:
-
-| Area                                  | Typical Binary Format Tradeoff (`apache-arrow` / FlatBuffers)                                                                                            | How `capnstruct` Approaches It                                                                                                                                                                                                                                                                                                                                                    |
-| :------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Mutability & Querying**          | Buffers are generally read-only once built. Updating a field or querying a time window requires unpacking into JS objects or rebuilding a `RecordBatch`. | **In-Place Mutation + Zero-Heap Querying**: Primitives mutate in-place in `O(1)`. Variable-length `str`, `slice`, and `ref` fields overwrite in-place when `newBytes <= oldBytes`, extend in-place at the tail tip, or bump-allocate in the tail arena. `rows.rangeBy()`, `rows.filterBytes()`, and `rows.concatBytes()` query and slice binary tables with 0 per-row JS objects. |
-| **2. Circular References (`ref`)**    | Tree/table-only schemas or complex offset-table builders that require manual node index management for graphs.                                           | **Native Cyclic Graph Packing & Traversal**: `ref(() => Node)` and `slice(() => Node)` pack circular JS object graphs (`a.next = b; b.next = a`) automatically, traverse cycles in `O(1)` with zero allocations, and reconstruct circular JS references in `.toObject()`.                                                                                                         |
-| **3. Row Access Overhead**            | Row wrappers that rely on JS `Proxy` traps or chunked dictionary lookups can make row-by-row iteration slower than `JSON.parse`.                         | **Compiled Monomorphic View Class (No `Proxy`)**: `defineStruct()` compiles a class with prototype getters/setters and pre-warmed V8 in-object property slots, plus a reusable flyweight cursor (`for (const row of rows)` and `cursor.seek(i)`).                                                                                                                                 |
-| **4. Developer Ergonomics**           | Often requires dedicated builder APIs (`Utf8Builder`, `Float64Vector`, `RecordBatchWriter`) instead of standard TypeScript objects.                      | **Plain JS Object Syntax + Inline Types**: Define `{ id: u32, icao: fixedStr(6), lat: scaled(i32, 1e6), alt: sentinel(i16, -32768), next: ref(() => Node) }`, read/write `row.icao`, spread `{ ...row }`, `Object.keys(row)`, and `JSON.stringify(row)` with static TypeScript inference.                                                                                         |
-| **5. Wire Safety & Bundle Footprint** | Full IPC readers, builders, and schema runtimes often weigh 100-150+ KiB minified+gzipped.                                                               | **~6.5 KiB Core Runtime + Wire Bounds Defense**: Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` amplification budget in `toObject()` / `toObjects()` while preserving valid cycles.                                                                                                    |
+| Entrypoint                                                                                 | Minified  | Minified + Gzip (`level: 9`)              |
+| :----------------------------------------------------------------------------------------- | :-------- | :---------------------------------------- |
+| **Core (`capnstruct`)** -- `defineStruct`, `StructArrayView`, `ref`, `slice`, `WasmArena`  | 18.53 KiB | **7.02 KiB** (**6.51 KiB** schema core)   |
+| **Codegen (`capnstruct/codegen`)** -- Rust `#[repr(C)]` + Go / TinyGo WASM generator       | 7.44 KiB  | **2.53 KiB** (2,595 B)                    |
 
 ---
 
-## Wire Layout: `#[repr(C)]` + Relative Tail Arena
+## Design Tradeoffs vs. Apache Arrow, FlatBuffers & Cap'n Proto
 
-Full Apache Arrow IPC and Cap'n Proto wire formats include features that many JS + Rust WASM projects don't need:
+Libraries like **Apache Arrow** (`apache-arrow`), **FlatBuffers**, and **Cap'n Proto** are designed for cross-language analytics or multi-segment RPC, which leads to different tradeoffs in everyday JavaScript and WebAssembly applications:
 
-- **Apache Arrow IPC** includes FlatBuffers schema headers, 64-byte aligned validity bitmaps, offset buffers, and dictionary batches. In Rust/C WASM, reading a struct requires an Arrow reader rather than casting a pointer.
-- **Cap'n Proto Wire** uses 64-bit multi-segment pointers and separate data/pointer sections to support pointer-table schema evolution.
-- **`capnstruct` (`#[repr(C)]` + Relative Tail Arena)** uses standard C/Rust `#[repr(C)]` struct layout with 8-byte `[u32 relOffset, u32 len]` relative pointers into a contiguous tail arena:
-  - In Rust/C WASM: zero dependencies (`core::slice::from_raw_parts(ptr as *const MyStruct, len)`).
-  - In JS/TS: direct `DataView` load per field read (`dv.getFloat64(this._o + 8, true)`).
-  - For Arrow / DuckDB / WebGPU interop: `rows.column('lat')` extracts a `Float64Array` / `Int32Array` column in O(1) when `stride === field.size` (or a contiguous `TypedArray` copy when strided).
+| Area                             | Typical Binary Format Tradeoff (`apache-arrow` / FlatBuffers / Cap'n Proto)                                            | How `capnstruct` Approaches It                                                                                                                                                                                                                                                                      |
+| :------------------------------- | :--------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Mutability & Querying**     | Buffers are read-only once built. Updating a field or querying a time window requires unpacking into JS objects or rebuilding a `RecordBatch`. | **In-Place Mutation + Zero-Heap Querying**: Primitives mutate in-place in `O(1)`. Variable-length `str`, `slice`, and `ref` fields overwrite in-place when `newBytes <= oldBytes`, extend at the tail tip, or bump-allocate in the tail arena. `rows.rangeBy()`, `rows.filterBytes()`, and `rows.concatBytes()` query and slice binary tables with 0 per-row JS objects. |
+| **2. Circular References (`ref`)** | Tree/table-only schemas or manual node index management for graphs.                                                  | **Native Cyclic Graph Packing & Traversal**: `ref(self)` and `slice(self)` pack circular JS object graphs (`a.next = b; b.next = a`) automatically, traverse cycles in `O(1)` with zero allocations, and reconstruct circular JS references in `.toObject()`.                                      |
+| **3. Row Access & Wire Headers** | Arrow IPC includes FlatBuffers schema headers, validity bitmaps, and dictionary batches; Cap'n Proto uses 64-bit multi-segment pointers. | **Zero-Header `#[repr(C)]` + Monomorphic View Class**: Fixed-only structs have 0 header bytes and 0 pointers (`core::slice::from_raw_parts` in Rust WASM); variable fields use 8-byte `[u32 relOffset, u32 len]` relative pointers.                                                                 |
+| **4. Developer Ergonomics**      | Dedicated builder APIs (`Utf8Builder`, `Float64Vector`, `RecordBatchWriter`) instead of standard TypeScript objects.   | **Plain JS Object Syntax + Inline Types**: Define `{ id: u32, icao: fixedStr(6), lat: scaled(i32, 1e6), alt: sentinel(i16, -32768), next: ref(self) }`, read/write `row.icao`, spread `{ ...row }`, and `JSON.stringify(row)` with 100% inferred TypeScript types.                                  |
+| **5. Wire Safety & Bundle Footprint** | Full IPC readers, builders, and schema runtimes often weigh 100-150+ KiB minified+gzipped.                        | **~6.5 KiB Core + Wire Bounds Defense**: Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` amplification budget in `toObject()` / `toObjects()` while preserving valid cycles.                              |
 
 ---
 

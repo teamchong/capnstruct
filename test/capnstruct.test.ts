@@ -1418,5 +1418,53 @@ describe('capnstruct', () => {
       expect(go).toContain('Parent CapnRef[TreeNode]');
       expect(go).toContain('Children CapnSlice[TreeNode]');
     });
+
+    it('produces identical zero-gap layout between create(init).bytes, pack([init]), view(bytes), and array(bytes).at(0)', () => {
+      const LiveTrackHeader = defineStruct('LiveTrackHeader', {
+        pt_off: u32,
+        pt_cnt: u32,
+        hex: fixedStr(8),
+        flight: fixedStr(12),
+      });
+      const LiveTrackPoint = defineStruct('LiveTrackPoint', {
+        t_ds: u32,
+        lat: scaled(i32, 1e5),
+        lon: scaled(i32, 1e5),
+      });
+      const TrackBundle = defineStruct('TrackBundle', {
+        base_sec: f64,
+        headers: slice(LiveTrackHeader),
+        points: slice(LiveTrackPoint),
+      });
+
+      const hdrs = LiveTrackHeader.alloc(1);
+      hdrs.at(0).pt_off = 0;
+      hdrs.at(0).pt_cnt = 2;
+      hdrs.at(0).hex = 'A1B2C3';
+      hdrs.at(0).flight = 'UAL123';
+
+      const pts = LiveTrackPoint.alloc(2);
+      pts.at(0).t_ds = 10;
+      pts.at(0).lat = 37.6188;
+      pts.at(0).lon = -122.375;
+      pts.at(1).t_ds = 20;
+      pts.at(1).lat = 37.62;
+      pts.at(1).lon = -122.38;
+
+      const created = TrackBundle.create({ base_sec: 1700000000, headers: hdrs, points: pts });
+      const createdBytes = created.bytes;
+      const packedBytes = TrackBundle.pack([{ base_sec: 1700000000, headers: hdrs, points: pts }]);
+
+      expect(Array.from(createdBytes)).toEqual(Array.from(packedBytes));
+      // First tail slice starts immediately at TrackBundle.size (24), not 32
+      expect(new DataView(createdBytes.buffer, createdBytes.byteOffset, createdBytes.byteLength).getUint32(8, true)).toBe(24);
+      expect(TrackBundle.view(createdBytes).toObject()).toEqual(TrackBundle.array(createdBytes).at(0).toObject());
+
+      // 8-byte single-str struct array length inference
+      const Msg = defineStruct({ s: str });
+      const msgBytes = Msg.pack([{ s: 'hello' }]);
+      expect(Msg.array(msgBytes).length).toBe(1);
+      expect(Msg.view(msgBytes).s).toBe('hello');
+    });
   });
 });

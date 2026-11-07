@@ -1,6 +1,6 @@
 ---
 title: API Reference & Wire Format
-description: Complete API reference, binary wire layout specification, and Node.js / V8 benchmark results for capnstruct.
+description: Complete binary wire layout specification and TypeScript / WebAssembly API reference for capnstruct.
 ---
 
 ## Binary Wire Format Specification
@@ -83,23 +83,3 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `rows.bytes`: Returns a wire-ready `Uint8Array` (automatically calling `.compact()` if dirty).
 - `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go build` / `tinygo build`-verified Go zero-copy structs (with `CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`, `CapnStr`, `CapnSlice[T]`, `CapnRef[T]`, `//go:wasmexport capn_alloc` & `capn_reset` when `{ wasm: true }` / `--go-wasm`, and compile-time size/alignment/offset assertions).
 
----
-
-## Data Layout > Switching to Bun, Rust, or Go/TinyGo (Benchmarks & Bundle Size)
-
-Measured via `pnpm run bench` on **Node.js v24.15.0 (V8 13.6)**, **Bun v1.4.3 (JavaScriptCore)**, **Rust 1.96 (`rustc -O3 wasm32`)**, **Go 1.27 (`GOOS=wasip1 GOARCH=wasm`)**, and **TinyGo 0.43 (`-target=wasi -opt=2`)**, plus `pnpm run size`:
-
-| Workload                                                                                                                           | Node.js (V8) Baseline (`ms` / Heap)        | Bun (JSC) Baseline (`ms` / Heap)           | Rust `-O3` WASM JSON / FFI        | `capnstruct` Zero-Copy (JS / Go·TinyGo WASM / Rust `#[repr(C)]`)                                     | Speedup (Layout vs. Engine/Lang)              |
-| :--------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------- | :----------------------------------------- | :-------------------------------- | :--------------------------------------------------------------------------------------------------- | :-------------------------------------------- |
-| **`100,000` `SpdSample` Numeric Struct Scan** (`5.27 MiB` JSON vs `2.29 MiB` `capnstruct`)                                         | 14.14 ms / **+10.30 MB**                   | 5.65 ms / **+6.87 MB**                     | 3.68 ms (in-WASM) / 23.7 ms (FFI) | **0.31 ms JS** (Bun: 0.16 ms) / **0.084 ms TinyGo** / **0.107 ms Go** / **0.071 ms Rust** (**0 MB**) | **45x faster JS / 168x TinyGo / 198x Rust**   |
-| **Sparse Viewport BBox Filter + Lazy UTF-8 Decode** (`25,000` `Flight` Telemetry rows × 13 fields, ~0.4% hit rate)                 | 13.24 ms / **+8.17 MB**                    | 7.36 ms / **+5.21 MB**                     | 4.16 ms (in-WASM JSON scan)       | **0.39 ms JS** / **0.031 ms Go WASM** / **0.034 ms TinyGo** / **0.020 ms Rust** (**0 MB**)           | **34x faster JS / 428x Go WASM / 651x Rust**  |
-| **JS &harr; WASM Boundary Scan** (`25,000` `QpPoint` structs in `WebAssembly.Memory`: `JSON`/`serde` FFI vs `WasmArena`)           | 5.48 ms / **+3.70 MB**                     | 2.10 ms / **+1.72 MB**                     | 5.48 ms (FFI)                     | **0.34 ms JS** / **0.036 ms Rust** (**0 MB**)                                                        | **16x faster JS / 153x Rust**                 |
-| **Web Worker `postMessage` Round-Trip + Update** (`25,000` `Telemetry` rows: `structuredClone` vs `SharedArrayBuffer` in-place)    | 45.94 ms / **+14.24 MB**                   | 35.50 ms / **+5.73 MB**                    | -                                 | **0.046 ms JS** (Bun: 0.028 ms) / **0.00 MB**                                                        | **~1,000x-1,270x faster (0 MB)**              |
-| **Zero-Heap Time-Window Range Query** (`100,000` sorted rows: `JSON.parse` + `.filter()` vs `.rangeBy('id', min, max).bytes`)      | 14.06 ms / **+10.33 MB**                   | 5.88 ms / **+6.88 MB**                     | -                                 | **0.0058 ms JS** (**0.00 MB** heap)                                                                  | **~2,408x faster (0 MB heap)**                |
-| **Cyclic Graph Clone & Traversal** (`10,000` doubly-linked `RingNode`s: `JSON.stringify` / `serde_json` / `encoding/json` throw!)  | 3.23 ms (`structuredClone`) / **+1.76 MB** | 2.63 ms (`structuredClone`) / **+0.69 MB** | Throws on cyclic JSON!            | **0.30 ms JS** / **0.019 ms Go WASM** / **0.034 ms TinyGo** / **0.016 ms Rust** (**0 MB**)           | **8.7x faster JS / 173x Go WASM / 190x Rust** |
-
-| Entrypoint                                                              | Minified  | Minified + Gzip (`level: 9`) |
-| :---------------------------------------------------------------------- | :-------- | :--------------------------- |
-| **Declarative Schema API (Core Runtime + All Primitives + `ref`)**      | 16.79 KiB | **6.51 KiB** (6,666 B)       |
-| **Full Runtime (+ `WasmArena`)**                                        | 18.53 KiB | **7.02 KiB** (7,186 B)       |
-| **Rust `#[repr(C)]` & Go / TinyGo WASM Codegen (`capnstruct/codegen`)** | 7.44 KiB  | **2.53 KiB** (2,595 B)       |

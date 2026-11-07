@@ -84,15 +84,14 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
 
   if (flags.str) {
     blocks.push(
-      `#[repr(C)]\n${deriveAttr}${vis}struct CapnStr {\n    ${vis}off: u32,\n    ${vis}len: u32,\n}\n\nimpl CapnStr {\n    #[inline]\n    ${vis}fn as_bytes<'a>(&self, base: &'a [u8]) -> &'a [u8] {\n        let start = self.off as usize;\n        let end = start + (self.len as usize);\n        &base[start..end]\n    }\n\n    #[inline]\n    ${vis}fn as_str<'a>(&self, base: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> {\n        core::str::from_utf8(self.as_bytes(base))\n    }\n}`,
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnStr {\n    ${vis}off: u32,\n    ${vis}len: u32,\n}\nimpl CapnStr {\n    #[inline]\n    ${vis}fn as_bytes<'a>(&self, base: &'a [u8]) -> &'a [u8] {\n        let start = self.off as usize;\n        let end = start.checked_add(self.len as usize).expect("CapnStr out of bounds");\n        &base[start..end]\n    }\n\n    #[inline]\n    ${vis}fn as_str<'a>(&self, base: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> {\n        core::str::from_utf8(self.as_bytes(base))\n    }\n}`,
     );
   }
   if (flags.slice) {
     blocks.push(
-      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n    ${vis}off: u32,\n    ${vis}len: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnSlice<T> {\n    #[inline]\n    ${vis}unsafe fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n        if self.len == 0 {\n            return &[];\n        }\n        unsafe {\n            core::slice::from_raw_parts(\n                base.as_ptr().add(self.off as usize) as *const T,\n                self.len as usize,\n            )\n        }\n    }\n}`,
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n    ${vis}off: u32,\n    ${vis}len: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\nimpl<T> CapnSlice<T> {\n    #[inline]\n    ${vis}unsafe fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n        if self.len == 0 {\n            return &[];\n        }\n        let start = self.off as usize;\n        let byte_len = (self.len as usize).checked_mul(core::mem::size_of::<T>()).expect("CapnSlice overflow");\n        let end = start.checked_add(byte_len).expect("CapnSlice out of bounds");\n        assert!(end <= base.len(), "CapnSlice out of bounds");\n        unsafe {\n            core::slice::from_raw_parts(\n                base.as_ptr().add(start) as *const T,\n                self.len as usize,\n            )\n        }\n    }\n}`,
     );
   }
-
   for (const def of defs) {
     const name = def.name || 'AnonStruct';
     const lines: string[] = [`#[repr(C)]`, `${deriveAttr}${vis}struct ${name} {`];

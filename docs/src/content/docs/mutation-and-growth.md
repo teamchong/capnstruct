@@ -41,8 +41,9 @@ users.at(1).set({ scores: [1, 2, 3, 4, 5, 6, 7, 8] });
 
 Each `str` or `slice(T)` field stores an 8-byte descriptor `[u32 relOffsetFromStructBase, u32 elementCount]` in the fixed struct body:
 
-1. **In-Place Overwrite (O(1), 0 allocations)**: When `newByteLength <= oldByteLength`, `capnstruct` writes the new UTF-8 bytes or slice elements directly into the existing tail slot, updates `len` in the 8-byte descriptor, and records any leftover bytes (`oldByteLength - newByteLength`) in the view's dead-byte counter.
-2. **Tail Arena Bump-Allocation**: When `newByteLength > oldByteLength`, `capnstruct` bump-allocates a new aligned region at the end of the tail arena (automatically doubling the backing `ArrayBuffer` or growing the `WasmArena` if capacity is exceeded), writes the new data there, and updates `[relOffset, len]` in the struct's 8-byte descriptor.
+1. **In-Place Overwrite (`O(1)`, 0 allocations)**: When `newByteLength <= oldByteLength`, `capnstruct` writes the new UTF-8 bytes or slice elements directly into the existing tail slot, updates `len` in the 8-byte descriptor, and only records dead bytes (`oldByteLength - newByteLength`) when strictly shorter (`newByteLength === oldByteLength` leaves `0` dead bytes).
+2. **Tail-Tip In-Place Extension (`O(1)`, 0 dead bytes)**: When `newByteLength > oldByteLength` and the existing variable-length slot sits at the very end of the tail arena, `capnstruct` extends the existing slot in place with `0` dead bytes instead of orphaning the old allocation.
+3. **Tail Arena Bump-Allocation**: When `newByteLength > oldByteLength` and the slot is not at the tail tip, `capnstruct` bump-allocates a new aligned region at the end of the tail arena (automatically doubling the backing `ArrayBuffer` or growing the `WasmArena` if capacity is exceeded), writes the new data there, and updates `[relOffset, len]` in the struct's 8-byte descriptor.
 
 ---
 
@@ -59,7 +60,7 @@ const tightWireBytes: Uint8Array = users.compact();
 console.log(users.compactionRatio); // 0
 ```
 
-Accessing `users.bytes` on a dirty variable-length array **automatically compacts** the buffer so you always send a clean `Uint8Array` over the network.
+Both `StructView` and `StructArrayView` inherit `.compactionRatio` and `.compact()`. Accessing `.bytes` on any view with dead or dirty tail bytes **automatically compacts** the buffer so you always send a clean `Uint8Array` over the network.
 
 ---
 

@@ -20,8 +20,8 @@ Every `capnstruct` buffer is a standard C/Rust `#[repr(C)]` flat array followed 
 
 1. **Alignment & Padding**: Each field is aligned to `field.align` (`offset = (offset + align - 1) & ~(align - 1)`). The struct's total `size` (`stride`) is rounded up to `max(field.align)`.
 2. **Relative Tail Descriptors (`str` and `slice(T)`)**: Stored inline as 8 bytes `[u32 relOffset, u32 length]` (little-endian). When `length === 0`, `relOffset` is `0`. When `length > 0`, the payload starts at `structBaseOffset + relOffset`.
-3. **Zero-Header Row Count Recovery**: For fixed-size structs, `rowCount = byteLength / def.size`. For variable-length structs packed via `pack()`, the first variable-length descriptor in row 0 points to the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in O(1) without a separate framing header.
-
+3. **Zero-Header Row Count Recovery**: For fixed-size structs, `rowCount = byteLength / def.size`. For variable-length structs packed via `pack()`, the first variable-length descriptor in row 0 points to the start of the tail arena (`tailStart`), allowing `StructDef.array(bytes)` to recover `rowCount = Math.floor(tailStart / def.size)` in `O(1)` without a separate framing header.
+4. **Wire-Safety Bounds & Amplification Defense**: `Uint8Array` sub-views are clamped to `[byteOffset .. byteOffset + byteLength]` so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory. Every `[relOffset, length]` descriptor is checked against `[structEnd .. bufferEnd]` (`RangeError('Out of bounds')`), and `toObject()` / `toObjects()` enforce an `8x` traversal budget (min 64 KiB) against cyclic or aliased pointer amplification attacks.
 ---
 
 ## Core API Reference
@@ -47,7 +47,9 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class.
 - `<field>`: Getter and setter for every field in `F` (primitives, nested structs, `fixedArray`, `str`, and `slice`).
 - `view.set(field, value)` / `view.set(partialObject)` / `view.setAll(partialObject)`: Updates one or more fields in place.
 - `view.toObject()` / `view.toJSON()`: Materializes a plain JS object `{ ... }`.
-- `view.bytes`: Underlying `Uint8Array` slice (auto-compacts if dirty).
+- `view.compactionRatio`: Ratio (`0..1`) of dead tail bytes to total used bytes.
+- `view.compact()`: Strips dead tail bytes and rebinds the `StructView` in-place to a tight `Uint8Array`.
+- `view.bytes`: Underlying `Uint8Array` slice (auto-compacts if dirty or containing dead tail bytes).
 
 ### `StructArrayView<F>`
 
@@ -79,6 +81,6 @@ Measured via `pnpm run bench` and `pnpm run size`:
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime)** | 11.81 KiB | **4.46 KiB** (4,568 B) |
-| **Full Runtime (+ `WasmArena`)** | 13.55 KiB | **4.97 KiB** (5,086 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) |
+| **Declarative Schema API (Core Runtime)** | 12.43 KiB | **4.69 KiB** (4,807 B) |
+| **Full Runtime ( + `WasmArena`)** | 14.17 KiB | **5.20 KiB** (5,323 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.68 KiB | **1.14 KiB** (1,166 B) |

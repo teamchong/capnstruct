@@ -21,9 +21,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 import LivePlayground from '../../components/LivePlayground.astro';
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>&lt; 4.5 KiB</strong> Minified + Gzipped</span>
+  <span class="cs-pill"><strong>&lt; 4.8 KiB</strong> Minified + Gzipped</span>
   <span class="cs-pill"><strong>0 ms Parse Step</strong> Direct DataView Reads</span>
   <span class="cs-pill"><strong>In-Place Mutation</strong> Strings, Slices &amp; .push()/.pop()</span>
+  <span class="cs-pill"><strong>Wire-Safe Bounds</strong> Pointer &amp; Amplification Defense</span>
   <span class="cs-pill"><strong>TypedArray Columns</strong> For Arrow / WebGPU / SIMD</span>
   <span class="cs-pill"><strong>C / Rust #[repr(C)]</strong> Compatible Wire Layout</span>
 </div>
@@ -83,12 +84,12 @@ const wireBytes: Uint8Array = rows.bytes;
     Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots (no `Proxy` traps), reading and writing fields directly in the underlying `DataView`.
   </Card>
   <Card title="In-Place Mutation & .push()" icon="pencil">
-    Assign `row.callsign = 'NEW'` or `row.set({ tags: [1, 2, 3] })` directly on a binary view. Shorter or equal-length values overwrite in-place in O(1); longer values append to the tail arena and compact on demand.
+    Assign `row.callsign = 'NEW'` or `row.set({ tags: [1, 2, 3] })` directly on a binary view. Shorter or equal-length values overwrite in-place (`0` dead bytes when equal); tail-tip values extend in-place; non-tip growth bump-allocates and `.bytes` auto-compacts on access.
   </Card>
   <Card title="Columnar TypedArray Views" icon="bars">
     Call `rows.column('lat')` to extract a contiguous `Float64Array` or `Int32Array` (zero-copy when stride equals field size) or bulk-write a column via `rows.setColumn('lat', values)`.
   </Card>
-  <Card title="WASM & Rust #[repr(C)]" icon="puzzle">
-    Uses standard C/Rust `#[repr(C)]` struct alignment with 8-byte `[u32 relOffset, u32 len]` tail descriptors, auto-rebinds views when `WebAssembly.Memory.grow()` runs, and generates `rustc`-checked Rust structs.
+  <Card title="Wire-Safe & Rust #[repr(C)]" icon="puzzle">
+    Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against bounds and amplification attacks, auto-rebinds views on `WebAssembly.Memory.grow()`, and generates overflow-checked `#[repr(C)]` Rust structs.
   </Card>
 </CardGrid>

@@ -399,10 +399,19 @@ function resolveSource(s: BufferSourceInput, byteOffset = 0): ResolvedSource {
   const v = ArrayBuffer.isView(s);
   const m = isMemOrArena(s) ? s : null;
   const b = v ? s.buffer : m ? m.buffer : (s as unknown as ArrayBufferLike);
+  const len = v ? s.byteLength : b.byteLength;
+  if (byteOffset < 0 || byteOffset > len) oob();
   return {
-    d: new DataView(b),
-    o: (v ? s.byteOffset : 0) + byteOffset,
-    max: (v ? s.byteLength : b.byteLength) - byteOffset,
+    d:
+      s instanceof DataView
+        ? s
+        : v
+          ? new DataView(b, s.byteOffset, len)
+          : m && '_d' in m
+            ? m.sync()._d
+            : new DataView(b),
+    o: byteOffset,
+    max: len - byteOffset,
     m,
   };
 }
@@ -456,35 +465,37 @@ function mutVar(
   let d = v._k();
   const oldP = d.getUint32(off, true),
     oldB = d.getUint32(off + 4, true) * elSize,
-    bytes = count * elSize;
+    bytes = count * elSize,
+    cur = root._tl ?? root._o + root.byteLength;
   let st = base + oldP;
+  const atTip = oldB > 0 && st + oldB === cur;
   if (bytes <= oldB) {
-    if (oldB > bytes) root._dead = (root._dead ?? 0) + (oldB - bytes);
+    if (oldB > bytes) {
+      if (atTip && !root._m) root._tl = st + bytes;
+      else root._dead = (root._dead ?? 0) + (oldB - bytes);
+    }
   } else {
-    if (oldB) root._dead = (root._dead ?? 0) + oldB;
+    if (atTip) {
+      root._tl = st;
+      if (root._m && '_u8' in root._m && root._m.offset === cur) root._m.offset = st;
+    } else if (oldB) {
+      root._dead = (root._dead ?? 0) + oldB;
+    }
     st = allocTail(root, bytes, align);
-    d = (v._d = root._d);
-    if (root.def && off === root._b + root.def._fv) root._dirty = true;
+    d = v._d = root._d;
   }
+  if (root.def && off === root._b + root.def._fv && st - base !== oldP) root._dirty = true;
   if (bytes) new Uint8Array(d.buffer, d.byteOffset + st, bytes).fill(0);
-  setDesc(off, count ? st - base : 0, count, d);
+  setDesc(off, st > base ? st - base : 0, count, d);
   return st;
 }
 
 function upgradeView(v: any): void {
-  if (v._ws >= v.def.size) return;
-  if (v._a) {
-    v._a.compact();
-    return;
-  }
-  const p = allocTail(v, v.def.size, v.def.align),
-    d = v._k();
-  new Uint8Array(d.buffer, d.byteOffset + p, v._ws).set(
-    new Uint8Array(d.buffer, d.byteOffset + v._o, v._ws),
-  );
-  v._o = p;
-  v._ws = v.byteLength = v.def.size;
+  if (v._ws < v.def.size) (v._a ?? v).compact();
 }
+
+let _budget = 0;
+
 function readVal(
   v: InternalStructView,
   desc: FieldDesc,
@@ -492,29 +503,31 @@ function readVal(
   plain: boolean,
   len?: number,
 ): unknown {
-  const d = v._k();
-  const k = desc.kind;
+  const d = v._k(),
+    k = desc.kind;
   if (len !== undefined) {
-    const sz = desc.size;
-    const tot = d.byteOffset + off;
+    const sz = desc.size,
+      tot = d.byteOffset + off;
     if (!plain && k === 'primitive' && desc.type !== 'bool' && tot % sz === 0) {
       return new desc._C(d.buffer, tot, len);
     }
     if (!plain && k === 'struct') {
-      const sav = new StructArrayView(desc, d.buffer, tot, len, v._b);
+      const sav = new StructArrayView(desc, d, off, len, v._b);
       sav._m = v._m;
       (sav as any)._a = (v as any)._a ?? v;
       return sav;
     }
+    if (plain && (_budget -= len * sz) < 0) oob();
     return Array.from({ length: len }, (_, i) =>
       readVal(v, desc, off + i * sz, plain),
     );
   }
   if (k === 'primitive') return desc._g(d, off);
   if (k === 'str') {
-    const l = d.getUint32(off + 4, true);
+    const p = v._b + d.getUint32(off, true),
+      l = d.getUint32(off + 4, true);
     if (!l) return '';
-    const p = v._b + d.getUint32(off, true);
+    if ((p < v._o + v._ws && p + l > v._o) || p + l > d.byteLength || (plain && (_budget -= l) < 0)) oob();
     let s = '';
     if (l <= 48) {
       for (let i = 0; i < l; i++) {
@@ -526,27 +539,31 @@ function readVal(
         s += String.fromCharCode(c);
       }
     }
-    return (
-      s || textDecoder.decode(new Uint8Array(d.buffer, d.byteOffset + p, l))
-    );
+    return s || textDecoder.decode(new Uint8Array(d.buffer, d.byteOffset + p, l));
   }
   if (k === 'array' || k === 'slice') {
     const n = k === 'array' ? desc.length : d.getUint32(off + 4, true);
-    return readVal(
-      v,
-      desc.element,
-      k === 'array' ? off : n ? v._b + d.getUint32(off, true) : 0,
-      plain,
-      n,
-    );
+    let p = off;
+    if (k === 'slice') {
+      const r = d.getUint32(off, true);
+      if (!n) p = v._o + v._ws;
+      else {
+        p = v._b + r;
+        const bl = n * desc.element.size;
+        if ((p < v._o + v._ws && p + bl > v._o) || p + bl > d.byteLength) oob();
+      }
+    }
+    return readVal(v, desc.element, p, plain, n);
   }
   if (!plain) {
     const nv = new desc._V(d, v._b, off, v._m);
+    nv._ws = desc.size;
     (nv as any)._a = (v as any)._a ?? v;
     return nv;
   }
   const out: Record<string, unknown> = {};
   const ws = v._ws ?? desc.size;
+  if ((_budget -= ws) < 0) oob();
   for (const f of desc.fieldList) {
     out[f.name] =
       f.offset + f.size > ws
@@ -618,6 +635,8 @@ function writeVal(
     for (const f of desc.fieldList) {
       if (rec[f.name] !== undefined) {
         writeVal(v, f.desc, rec[f.name], base, off + f.offset);
+      } else if (!v && off === base && f.offset === desc._fv) {
+        setDesc(off + f.offset, tail - base, 0);
       }
     }
   }
@@ -674,13 +693,20 @@ class MemView<F extends FieldRecord = FieldRecord> {
 
   /** Byte offset of this view inside `buffer`. */
   get byteOffset(): number {
-    return this._o;
+    return this._k().byteOffset + this._o;
+  }
+
+  /** Ratio (`0..1`) of dead tail bytes to total used bytes. */
+  get compactionRatio(): number {
+    const r: any = (this as any)._a ?? this,
+      used = r._tl !== undefined ? r._tl - r._o : r.byteLength;
+    return used > 0 ? Math.min(1, (r._dead ?? 0) / used) : 0;
   }
 
   /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   get bytes(): Uint8Array {
     if (this._dirty && 'compact' in this) {
-      return (this as unknown as StructArrayView<F>).compact();
+      return (this as any).compact();
     }
     const d = this._k(),
       end = this._tl !== undefined ? this._tl - this._o : this.byteLength;
@@ -726,7 +752,21 @@ export class StructViewBase<
 
   /** Materializes this binary struct view into a plain JavaScript object. */
   toObject(): PlainStructValues<F> {
+    _budget = Math.max(this._k().byteLength * 8, 65536);
     return readVal(this as unknown as InternalStructView, this.def, this._o, true) as PlainStructValues<F>;
+  }
+
+  /** Re-packs only live fields and tail data into a tight `Uint8Array` and rebinds this view in-place. */
+  compact(): Uint8Array {
+    const packed = pack(this.def as StructDef<F>, [this.toObject() as unknown as Partial<StructInput<F>>]),
+      d = new DataView(packed.buffer, packed.byteOffset, packed.byteLength),
+      sz = this.def.size;
+    this.byteLength = this._ws = sz;
+    this._tl = packed.byteLength;
+    this._dead = 0;
+    this._dirty = false;
+    this._set(d, 0, 0, null);
+    return packed;
   }
 
   /** Serializes this struct view to a plain object for `JSON.stringify()`. */
@@ -790,8 +830,8 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     const n = normOpts(byteOffset, count, baseOffset, wireStride);
     const sz = n.s ?? def.size, r = resolveSource(source, n.o);
     const hasVar = def._fv >= 0 && def._fv < sz;
-    const f = n.c === undefined && r.max >= 8 && hasVar ? r.d.getUint32(r.o + def._fv, true) : 0;
-    const len = n.c ?? (((f >= sz && f <= r.max ? f : r.max) / sz) | 0);
+    const f = n.c === undefined && r.max >= sz && hasVar ? r.d.getUint32(r.o + def._fv, true) : 0;
+    const len = n.c ?? (f >= sz && f <= r.max ? f / sz : r.max / sz) | 0;
     const tot = len * sz;
     if (len < 0 || r.o < 0 || r.max < tot) oob();
     Object.assign(this, {
@@ -897,8 +937,9 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   /** Removes and returns the last row as a plain JS object (or `undefined` if empty). */
   pop(): PlainStructValues<F> | undefined {
     if (!this.length) return undefined;
-    const lastIdx = --this.length,
-      val = readVal(
+    const lastIdx = --this.length;
+    _budget = Math.max(this._k().byteLength * 8, 65536);
+    const val = readVal(
         this as unknown as InternalStructView,
         this.def,
         this._o + lastIdx * this.stride,
@@ -913,12 +954,6 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       this._cap = this.length;
     }
     return val;
-  }
-
-  /** Ratio (`0..1`) of dead tail bytes to total used bytes. */
-  get compactionRatio(): number {
-    const used = (this._tl ?? this.byteLength) - this._b;
-    return used > 0 ? Math.min(1, (this._dead ?? 0) / used) : 0;
   }
 
   /** Re-packs only live rows and tail data into a tight `Uint8Array` and rebinds this view in-place. */

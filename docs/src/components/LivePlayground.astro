@@ -702,13 +702,17 @@
         nameInput.value = u.name;
         nameInput.title = 'Edit row.name (in-place when <= current UTF-8 length, tail-append when longer)';
         nameInput.addEventListener('change', () => {
+          const prevDead = (usersView as any)._dead ?? 0;
           const prevLen = new TextEncoder().encode(usersView.at(i).name).byteLength;
           const nextLen = new TextEncoder().encode(nameInput.value).byteLength;
           usersView.at(i).name = nameInput.value;
+          const nextDead = (usersView as any)._dead ?? 0;
           renderMutator(
             nextLen <= prevLen
               ? `row[${i}].name overwritten in-place (0 allocs)`
-              : `row[${i}].name bump-allocated in tail arena`
+              : nextDead === prevDead
+                ? `row[${i}].name extended in-place at tail tip (0 dead bytes)`
+                : `row[${i}].name bump-allocated in tail arena`
           );
         });
 

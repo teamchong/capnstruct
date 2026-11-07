@@ -15,9 +15,9 @@ When you pass thousands of structured records over `fetch`, a WebSocket, `postMe
 
 - **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads.
 - **Zero-Allocation Flyweight Iteration**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects.
-- **In-Place `str` & `slice(T)` Mutation**: Stores 8-byte `[u32 relOffset, u32 len]` descriptors inline and decodes UTF-8 strings or nested slices on demand. Assigning `row.callsign = 'NEW'` overwrites in-place in O(1) when `newBytes <= oldBytes`, or appends to the tail arena when longer.
-- **Growable `StructArrayView` (`.push()`, `.pop()`, `.compact()`, `.bytes`)**: Append and remove rows on binary views, inspect tail fragmentation via `view.compactionRatio`, and strip dead tail bytes via `view.compact()`.
-- **Columnar `TypedArray` Projections & Schema Evolution**: Extract contiguous `Float64Array`/`Int32Array` columns via `view.column('field')` (zero-copy when stride equals field size) for Apache Arrow / WebGPU / SIMD interop, and read or upgrade older binary buffers with newer schemas.
+- **In-Place `str` & `slice(T)` Mutation + Tail-Tip Extension**: Stores 8-byte `[u32 relOffset, u32 len]` descriptors inline and decodes UTF-8 strings or nested slices on demand. Assigning `row.callsign = 'NEW'` overwrites in-place in `O(1)` when `newBytes <= oldBytes`, extends in-place with `0` dead bytes when the field sits at the tail tip, or bump-allocates in the tail arena when longer.
+- **Growable Views & Universal Auto-Compaction (`.push()`, `.pop()`, `.compact()`, `.bytes`)**: Append and remove rows on binary views, inspect tail fragmentation via `view.compactionRatio`, and strip dead tail bytes via `view.compact()` (or automatically on `view.bytes` access for both `StructView` and `StructArrayView`).
+- **Wire-Safe Pointer Bounds & Amplification Defense**: Clamps `Uint8Array` sub-slice windows so untrusted descriptors cannot bleed into surrounding `ArrayBuffer` memory, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` traversal budget during `toObject()` / `toObjects()` to block cyclic or aliased pointer DoS attacks with zero overhead on hot primitive paths.
 - **WebAssembly (`WasmArena`) & Rust `#[repr(C)]` Codegen**: Uses standard C/Rust `#[repr(C)]` alignment, automatically re-binds views when `WebAssembly.Memory.grow()` detaches the buffer, and generates `rustc`-verified Rust structs via `capnstruct/codegen` or the `capnstruct` CLI.
 
 ## Quick Start
@@ -159,8 +159,8 @@ metrics.at(0).tag = 'gpu';
 
 // Longer strings/slices automatically bump-allocate in the tail arena
 metrics.at(0).tag = 'cluster-node-01-gpu-telemetry';
-
-// Accessing `.bytes` (or calling `.compact()`) strips dead tail bytes for clean wire transfer
+// Accessing .bytes (or calling .compact()) on any StructView or StructArrayView
+// automatically strips dead tail bytes for clean wire transfer
 const wireBytes = metrics.bytes;
 ```
 
@@ -242,9 +242,9 @@ Measured on Node.js (`pnpm run bench` and `pnpm run size`):
 
 | Entrypoint | Minified | Minified + Gzip (`level: 9`) |
 | :--- | :---: | :---: |
-| **Declarative Schema API (Core Runtime)** | 11.81 KiB | **4.46 KiB** (4,568 B) |
-| **Full Runtime (+ `WasmArena`)** | 13.55 KiB | **4.97 KiB** (5,086 B) |
-| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.36 KiB | **1.06 KiB** (1,082 B) |
+| **Declarative Schema API (Core Runtime)** | 12.43 KiB | **4.69 KiB** (4,807 B) |
+| **Full Runtime ( + `WasmArena`)** | 14.17 KiB | **5.20 KiB** (5,323 B) |
+| **Rust `#[repr(C)]` Codegen (`capnstruct/codegen`)** | 2.68 KiB | **1.14 KiB** (1,166 B) |
 
 ---
 

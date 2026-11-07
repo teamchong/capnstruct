@@ -40,7 +40,7 @@ console.log(points.at(0).x, points.at(0).label); // 1.5, 'radar-0'
 
 ## 2. Rust `#[repr(C)]` Codegen & CLI
 
-`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct definitions—including `CapnStr`, `CapnSlice<T>`, explicit `_padN` alignment padding fields, and `core::mem::{size_of, align_of, offset_of!}` compile-time assertions—directly from your TypeScript schemas.
+`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct definitions—including overflow-checked `CapnStr::as_bytes` / `CapnSlice<T>::as_slice` accessors (`checked_add` / `checked_mul` + slice bounds assertions), explicit `_padN` alignment padding fields, and `core::mem::{size_of, align_of, offset_of!}` compile-time assertions—directly from your TypeScript schemas.
 
 ### Programmatic API
 

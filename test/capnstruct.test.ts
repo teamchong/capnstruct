@@ -581,7 +581,8 @@ describe('capnstruct', () => {
       expect(rustCode).toContain('pub struct CapnStr');
       expect(rustCode).toContain('pub struct CapnSlice<T>');
       expect(rustCode).toContain('core::mem::offset_of!(OutHit, fids) == 40');
-
+      expect(rustCode).toContain('checked_add');
+      expect(rustCode).toContain('checked_mul');
       // Compile with rustc to verify all compile-time size_of, align_of, and offset_of! assertions pass
       const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-rust-'));
       try {
@@ -815,6 +816,90 @@ describe('capnstruct', () => {
         { x: 10, y: 20 },
         { x: 40, y: 50 },
       ]);
+    });
+  });
+
+  describe('Wire-Safety Pointer Bounds, Sub-Slice Window Clamping & Amplification Defense', () => {
+    const Msg = defineStruct('Msg', {
+      id: u32,
+      text: str,
+      nums: slice(u32),
+    });
+
+    it('rejects corrupted str and slice [off, len] descriptors pointing past buffer or before descriptor', () => {
+      const bytes = pack(Msg, [{ id: 1, text: 'hello', nums: [10, 20] }]);
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+      // Corrupt str length to read past buffer end
+      const badLen = bytes.slice();
+      new DataView(badLen.buffer).setUint32(Msg.offsetOf('text') + 4, 999999, true);
+      expect(() => Msg.view(badLen).text).toThrow(RangeError);
+
+      // Corrupt str offset to point into the fixed header before the descriptor
+      const badOff = bytes.slice();
+      new DataView(badOff.buffer).setUint32(Msg.offsetOf('text'), 2, true);
+      expect(() => Msg.view(badOff).text).toThrow(RangeError);
+
+      // Corrupt slice offset with u32 max to test 32-bit addition without wraparound
+      const badSlice = bytes.slice();
+      new DataView(badSlice.buffer).setUint32(Msg.offsetOf('nums'), 0xffffffff, true);
+      new DataView(badSlice.buffer).setUint32(Msg.offsetOf('nums') + 4, 4, true);
+      expect(() => Msg.view(badSlice).nums).toThrow(RangeError);
+      expect(dv.byteLength).toBeGreaterThan(0);
+    });
+
+    it('clamps Uint8Array sub-slice window so corrupt pointers cannot bleed into trailing ArrayBuffer memory', () => {
+      const valid = pack(Msg, [{ id: 7, text: 'safe', nums: [1, 2] }]);
+      const backing = new ArrayBuffer(valid.byteLength + 128);
+      new Uint8Array(backing, 0, valid.byteLength).set(valid);
+      // Write secret data in the trailing 128 bytes of the shared ArrayBuffer
+      new TextEncoder().encodeInto('TOP_SECRET_DATA', new Uint8Array(backing, valid.byteLength));
+
+      const subView = new Uint8Array(backing, 0, valid.byteLength);
+      // Corrupt str descriptor to point into the trailing 128 bytes of the shared ArrayBuffer
+      new DataView(backing).setUint32(Msg.offsetOf('text'), valid.byteLength, true);
+      new DataView(backing).setUint32(Msg.offsetOf('text') + 4, 15, true);
+      expect(() => Msg.view(subView).text).toThrow(RangeError);
+    });
+
+    it('blocks cyclic and aliased pointer amplification attacks during .toObject() / .toObjects()', () => {
+      const Node = defineStruct('Node', {
+        items: slice(u32),
+      });
+      const Row = defineStruct('Row', {
+        nodes: slice(Node),
+      });
+      const bytes = pack(Row, [{ nodes: [{ items: [1, 2, 3, 4] }] }]);
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      // Corrupt Row.nodes length to claim 100,000 structs in a tiny buffer
+      dv.setUint32(4, 100_000, true);
+      expect(() => Row.view(bytes).toObject()).toThrow(RangeError);
+    });
+
+    it('extends tail-tip allocations in place with 0 dead bytes and supports StructView.compact()', () => {
+      const v = Msg.create({ id: 42, text: 'hi', nums: [1, 2] });
+      expect(v.compactionRatio).toBe(0);
+
+      // Exact-fit overwrite produces 0 dead bytes
+      v.text = 'yo';
+      expect(v.text).toBe('yo');
+      expect(v.compactionRatio).toBe(0);
+
+      // Tail-tip growth on the last variable-length field ('nums') extends in-place with 0 dead bytes!
+      v.set('nums', [1, 2, 3, 4, 5, 6]);
+      expect(Array.from(v.nums)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(v.compactionRatio).toBe(0);
+
+      // Growing non-tip field ('text') creates dead bytes which .compact() or .bytes automatically strips
+      v.text = 'longer string that moves to new tail tip';
+      expect(v.compactionRatio).toBeGreaterThan(0);
+      const wire = v.bytes;
+      expect(v.compactionRatio).toBe(0);
+      expect(Msg.view(wire).toObject()).toEqual({
+        id: 42,
+        text: 'longer string that moves to new tail tip',
+        nums: [1, 2, 3, 4, 5, 6],
+      });
     });
   });
 });

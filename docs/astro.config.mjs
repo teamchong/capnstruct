@@ -11,7 +11,7 @@ export default defineConfig({
     starlight({
       title: 'capnstruct',
       tagline:
-        'Read and mutate Uint8Array and WebAssembly.Memory buffers like plain TypeScript objects',
+        'Zero-copy #[repr(C)] binary structs, views, and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU',
       social: [
         {
           icon: 'github',
@@ -22,27 +22,27 @@ export default defineConfig({
       customCss: ['./src/styles/custom.css'],
       sidebar: [
         {
-          label: 'Start Here',
+          label: 'Overview',
           items: [
-            { label: 'Overview & Live Playground', link: '/' },
-            { label: 'Real-World Pain Points & Recipes', link: '/pain-points/' },
-            { label: 'Why capnstruct?', link: '/why-capnstruct/' },
+            { label: 'Introduction & Playground', link: '/' },
             { label: 'Getting Started', link: '/getting-started/' },
+            { label: 'Use Cases & Recipes', link: '/pain-points/' },
+            { label: 'Design & Tradeoffs', link: '/why-capnstruct/' },
           ],
         },
         {
-          label: 'Core Capabilities',
+          label: 'Guides',
           items: [
             {
-              label: 'Live Mutation & Growable Views',
+              label: 'In-Place Mutation & Tail Arena',
               link: '/mutation-and-growth/',
             },
             {
-              label: 'Columnar Arrow/SIMD & Schema Evolution',
+              label: 'Columnar Views & Schema Evolution',
               link: '/columnar-and-evolution/',
             },
             {
-              label: 'WebAssembly & Rust #[repr(C)] Codegen',
+              label: 'WASM & Rust / C / WGSL Codegen',
               link: '/wasm-and-rust/',
             },
           ],

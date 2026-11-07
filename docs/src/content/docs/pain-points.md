@@ -1,10 +1,9 @@
 ---
-title: Real-World Pain Points & Recipes
-description: How to use capnstruct to eliminate Web Worker structuredClone stalls, wasm-bindgen FFI overhead, and 100k-row virtual table memory spikes.
+title: Use Cases & Production Recipes
+description: Copy-pasteable recipes for Web Worker SharedArrayBuffers, Rust/C WebAssembly shared memory, binary protocol headers, and 100k-row virtual tables.
 ---
 
-Here are the three most common production bottlenecks where swapping in `capnstruct` removes tens of milliseconds of serialization and garbage-collection overhead.
-
+Practical patterns for replacing `JSON.parse`, `structuredClone`, `serde-wasm-bindgen`, and manual `DataView` offset arithmetic with zero-copy `capnstruct` views.
 ---
 
 ## 1. Eliminating the Web Worker `postMessage` (`structuredClone`) Freeze (~1,200x Faster)

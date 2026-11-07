@@ -1,18 +1,15 @@
 # capnstruct
 
-Read and mutate `Uint8Array` and `WebAssembly.Memory` buffers like plain TypeScript objects. No `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
+Zero-copy `#[repr(C)]` binary structs, views, and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU. Read and mutate **single binary structs, protocol headers, nested messages, `WebAssembly.Memory` arenas, `SharedArrayBuffer` state, and binary tables** in place—with no `JSON.parse` step, no per-row object allocations, and no manual `DataView` byte-offset math.
 
 **Live Documentation & Interactive Browser Playground:** [https://capnstruct.teamchong.net](https://capnstruct.teamchong.net)
 
 ## Why `capnstruct`?
 
-When you pass thousands of structured records over `fetch`, a WebSocket, `postMessage` to a Web Worker, or into WebAssembly:
+1. **`JSON.stringify` / `JSON.parse` and `structuredClone` are expensive at scale**: Parsing 100,000 records allocates 100,000 separate V8 heap objects (often 8x larger than the raw wire bytes) and eagerly decodes every UTF-8 string. Updating a single field or querying a time window requires re-serializing the entire payload.
+2. **Raw `Uint8Array` / `DataView` has zero parse cost, but is brittle by hand**: Reading a binary packet or WASM memory buffer directly is fast (`dv.getFloat64(base + 16, true)`), but maintaining manual byte offsets, alignment padding, variable-length string pointers, and `WebAssembly.Memory.grow()` re-binding by hand is error-prone.
 
-1. **`JSON.stringify` / `JSON.parse` is easy to write, but expensive at scale**: Parsing 100,000 rows allocates 100,000 separate JS objects on the heap and eagerly decodes every UTF-8 string—even if your loop only checks two numbers. Updating a single field requires re-serializing the entire payload.
-2. **A `Uint8Array` has zero parse cost, but is painful to use by hand**: Reading a binary buffer directly is fast (`dv.getFloat64(base + i * 24 + 8, true)`), but maintaining manual byte offsets is brittle and gives up normal property assignment (`row.callsign = 'NEW'`) and `.push()` / `.pop()`.
-
-`capnstruct` lets you define a schema once and work with a `Uint8Array` or `WebAssembly.Memory` buffer using ordinary JavaScript syntax (**< 5.8 KiB minified + gzipped**):
-
+`capnstruct` lets you define a schema once and work with any `Uint8Array`, `ArrayBuffer`, or `WebAssembly.Memory` buffer using ordinary TypeScript syntax (**< 5.8 KiB minified + gzipped**):
 - **Compiled Property Accessors (No `Proxy`)**: Each `defineStruct()` compiles a view class with prototype getters/setters and pre-allocated V8 property slots so field reads compile down to direct `DataView` loads.
 - **Zero-Allocation Flyweight Iteration & Seeking**: `for (const row of view)` reuses a single cursor instance (`cursor._o += stride`) across millions of rows without allocating per-row JS objects, and `cursor.seek(i)` / `cursor.at(i)` repositions the cursor in $O(1)$.
 - **Zero-Heap Queryable Tables (`.rangeBy()`, `.subarray()`, `.filterBytes()`, `.concatBytes()`)**: Run $O(\log N)$ binary search (`lowerBound`, `upperBound`, `rangeBy`) directly on a sorted binary column (~5,000x faster than `JSON.parse` + `.filter()`), slice zero-copy sub-tables via `.subarray()`, filter matching binary rows without per-row JS objects via `.filterBytes()`, and bulk-merge binary chunks via `.concatBytes()`.

@@ -13,7 +13,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "capnstruct": "./dist/cli.js"
+    "capnstruct": "dist/cli.js"
   },
   "exports": {
     ".": {

@@ -1,7 +1,7 @@
 {
   "name": "capnstruct",
   "version": "0.1.0",
-  "description": "Read and mutate Uint8Array and WebAssembly.Memory buffers like plain TypeScript objects, with zero-copy TypedArray columns and C/Rust #[repr(C)] layout.",
+  "description": "Zero-Copy #[repr(C)] Structs for Web Workers, SharedArrayBuffer & WebAssembly — the missing shared-memory struct layer between JS, Workers, and Rust/Go WASM.",
   "license": "MIT",
   "homepage": "https://capnstruct.teamchong.net",
   "repository": {

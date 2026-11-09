@@ -121,13 +121,13 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
 
   if (flags.slice) {
     blocks.push(
-      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n    ${vis}off: u32,\n    ${vis}len: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnSlice<T> {\n    #[inline]\n    ${vis}unsafe fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n        if self.len == 0 {\n            return &[];\n        }\n        let start = self.off as usize;\n        let byte_len = (self.len as usize).checked_mul(core::mem::size_of::<T>()).expect("CapnSlice overflow");\n        let end = start.checked_add(byte_len).expect("CapnSlice out of bounds");\n        assert!(end <= base.len(), "CapnSlice out of bounds");\n        unsafe {\n            core::slice::from_raw_parts(\n                base.as_ptr().add(start) as *const T,\n                self.len as usize,\n            )\n        }\n    }\n}`,
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnSlice<T> {\n  ${vis}off: u32,\n  ${vis}len: u32,\n  ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnSlice<T> {\n  #[inline]\n  ${vis}fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] {\n    if self.len == 0 {\n      return &[];\n    }\n    let start = self.off as usize;\n    let byte_len = (self.len as usize).checked_mul(core::mem::size_of::<T>()).expect("CapnSlice overflow");\n    let end = start.checked_add(byte_len).expect("CapnSlice out of bounds");\n    assert!(end <= base.len(), "CapnSlice out of bounds");\n    unsafe { core::slice::from_raw_parts(base.as_ptr().add(start) as *const T, self.len as usize) }\n  }\n}`,
     );
   }
 
   if (flags.ref) {
     blocks.push(
-      `#[repr(C)]\n${deriveAttr}${vis}struct CapnRef<T> {\n    ${vis}off: u32,\n    ${vis}present: u32,\n    ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnRef<T> {\n    #[inline]\n    ${vis}unsafe fn as_ref<'a>(&self, base: &'a [u8]) -> Option<&'a T> {\n        if self.present == 0 {\n            return None;\n        }\n        let start = self.off as usize;\n        let end = start.checked_add(core::mem::size_of::<T>()).expect("CapnRef out of bounds");\n        assert!(end <= base.len(), "CapnRef out of bounds");\n        unsafe { Some(&*(base.as_ptr().add(start) as *const T)) }\n    }\n}`,
+      `#[repr(C)]\n${deriveAttr}${vis}struct CapnRef<T> {\n  ${vis}off: u32,\n  ${vis}present: u32,\n  ${vis}_marker: core::marker::PhantomData<T>,\n}\n\nimpl<T> CapnRef<T> {\n  #[inline]\n  ${vis}fn as_ref<'a>(&self, base: &'a [u8]) -> Option<&'a T> {\n    if self.present == 0 {\n      return None;\n    }\n    let start = self.off as usize;\n    let end = start.checked_add(core::mem::size_of::<T>()).expect("CapnRef out of bounds");\n    assert!(end <= base.len(), "CapnRef out of bounds");\n    unsafe { Some(&*(base.as_ptr().add(start) as *const T)) }\n  }\n}`,
     );
   }
 
@@ -151,6 +151,9 @@ export function toRustReprC(schemas: SchemaCollection, options: RustCodegenOptio
       lines.push(`  ${vis}_pad${padIdx++}: [u8; ${def.size - cur}],`);
     }
     lines.push('}');
+    lines.push(
+      `impl ${name} {\n  #[inline]\n  ${vis}fn as_slice(base: &[u8], len: usize) -> &[Self] {\n    if len == 0 { return &[]; }\n    let end = len.checked_mul(core::mem::size_of::<Self>()).expect("CapnSlice overflow");\n    assert!(end <= base.len(), "CapnSlice out of bounds");\n    unsafe { core::slice::from_raw_parts(base.as_ptr() as *const Self, len) }\n  }\n}`,
+    );
 
     if (emitAsserts) {
       lines.push(`const _: () = {`);

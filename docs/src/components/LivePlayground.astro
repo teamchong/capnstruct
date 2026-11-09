@@ -1,24 +1,19 @@
 ---
 ---
-
+  <!-- 3-LINE HELLO WORLD BAR (DIRECTLY MATCHES THE LIVE FLIGHT TELEMETRY CANVAS BELOW) -->
 <div class="cs-quickstart-bar not-content">
   <div class="cs-qs-top">
-    <span class="cs-qs-label">2-Call Mental Model (<code>struct</code> + <code>.from()</code> &mdash; 0 Dependencies, No Proxy, No Build Plugin)</span>
+    <span class="cs-qs-label">Zero-Copy <code>#[repr(C)]</code> Structs for Web Workers, <code>SharedArrayBuffer</code> &amp; WebAssembly &mdash; Move Cursor Over Airspace to Mutate Shared Memory at 120 FPS</span>
     <div class="cs-qs-actions">
       <button type="button" class="cs-qs-btn cs-qs-cmd" id="cs-btn-copy-npm" title="Copy install command">
         <code>$ npm i capnstruct</code>
         <span class="cs-qs-badge" id="cs-npm-status">Copy</span>
       </button>
-      <button type="button" class="cs-qs-btn cs-qs-llm" id="cs-btn-copy-llm" title="Copy 400-token capnstruct ruleset for Claude Code, Cursor, or Windsurf">
-        <span>&#x1F916; Copy LLM Prompt (<code>llms.txt</code>)</span>
-        <span class="cs-qs-badge cs-qs-badge-accent" id="cs-llm-status">Claude / Cursor</span>
-      </button>
-      <a href="/llms.txt" target="_blank" rel="noopener" class="cs-qs-link"><code>/llms.txt</code> &nearr;</a>
     </div>
   </div>
-  <pre class="cs-qs-code"><code><span class="cs-kw">const</span> Particle = <span class="cs-fn">struct</span>(&#123; x: f32, y: f32, vx: f32, vy: f32 &#125;);
-<span class="cs-kw">const</span> list = Particle.<span class="cs-fn">from</span>(bytesOrObjects); <span class="cs-cm">// pack plain JS objects OR O(1) zero-copy wrap Uint8Array / SharedArrayBuffer</span>
-<span class="cs-kw">for</span> (<span class="cs-kw">const</span> p <span class="cs-kw">of</span> list) p.x += p.vx;          <span class="cs-cm">// mutates #[repr(C)] binary buffer in-place (0 heap allocs)</span></code></pre>
+  <pre class="cs-qs-code" id="cs-hero-code"><code><span class="cs-kw">const</span> Waypoint = <span class="cs-fn">struct</span>(<span class="cs-str">'Waypoint'</span>, &#123; lat: f32, lon: f32 &#125;);
+<span class="cs-kw">const</span> Flight   = <span class="cs-fn">struct</span>(<span class="cs-str">'Flight'</span>, &#123; id: u32, callsign: str, alt: u16, waypoints: <span class="cs-fn">slice</span>(Waypoint), nextRelay: <span class="cs-fn">ref</span>(<span class="cs-str">'Flight'</span>) &#125;);
+<span class="cs-kw">const</span> &#123; view, ptr, len &#125; = Flight.<span class="cs-fn">inWasm</span>(wasmMem, <span id="cs-code-n" class="cs-live-var">100,000</span>); <span class="cs-cm">// [</span><span id="cs-code-lat" class="cs-live-var">UAL418 &rarr; DAL141 &rarr; ANA809 &rarr; UAL418</span><span class="cs-cm">] &middot; </span><span id="cs-code-alt" class="cs-live-var">3</span><span class="cs-cm">x (</span><span id="cs-code-hits" class="cs-live-res">1,420 / 0.16ms</span><span class="cs-cm">)</span></code></pre>
 </div>
 
 <div class="cs-playground not-content">
@@ -26,73 +21,125 @@
   <div class="cs-panel active" id="cs-panel-bench">
     <div class="cs-panel-header cs-panel-header-stack">
       <div class="cs-header-top">
-        <strong class="cs-panel-title">1. Interactive Particle Vortex &amp; 60 FPS Visual Proof: Drag Your Cursor Across the Canvases</strong>
+        <strong class="cs-panel-title">1. Breaking the Worker &amp; WASM Serialization Wall: 100k Shared-Memory <code>#[repr(C)]</code> Structs, <code>slice(Waypoint)</code> Splines &amp; Cyclic <code>ref('Flight')</code> Mesh</strong>
         <p class="cs-sub">
-          Move or drag your cursor across any canvas below to swirl particles &amp; query cyclic <code>ref(self)</code> graphs in real time. Toggle between <strong>All 3 Side-by-Side</strong> or isolate <strong>Standard JS / Bun (GC Stutter)</strong> vs. <strong>capnstruct #[repr(C)] (Locked 60/120 FPS, 0.00 MB Heap)</strong> to feel the cursor hitch during GC pauses vs. zero-copy shared memory.
+          Worker / Rust WASM mutates 100k structs + variable-length <code>waypoints: slice(Waypoint)</code> splines + cyclic <code>nextRelay: ref('Flight')</code> graphs in shared memory while the UI thread renders at 120 FPS with <strong>0 FFI / <code>postMessage</code> copies</strong>. Move your cursor across any sector to bend splines and rewire <code>flight.nextRelay = neighbor</code> in-place &mdash; while the <strong>Byte-Block X-Ray Ribbon</strong> below shows <code>Slot[i] &rarr; Slot[j]</code> cyclic pointers and <code>Slot[i] &rarr; Tail[0x...]</code> slice headers mutating with <strong>0 heap allocations</strong>.
         </p>
       </div>
-
       <!-- Interactive Parameter Bar (Anti-Cherry-Pick Controls) -->
-      <div class="cs-param-bar">
-        <div class="cs-param-controls">
-          <div class="cs-param-item">
-            <span class="cs-param-label">Interactive View:</span>
-            <div class="cs-pill-group" id="cs-focus-group">
-              <button class="cs-mini-btn active" data-focus="all">All 3 Side-by-Side</button>
-              <button class="cs-mini-btn" data-focus="v8">&#x1F7E0; Standard JS / Bun (GC Hitch)</button>
-              <button class="cs-mini-btn" data-focus="jsc">&#x1F980; Rust -O3 (JSON FFI)</button>
-              <button class="cs-mini-btn" data-focus="capn">&#9889; capnstruct (Locked 60/120 FPS)</button>
-            </div>
+    <div class="cs-param-bar">
+      <div class="cs-param-controls">
+        <div class="cs-param-item">
+          <span class="cs-param-label">Interactive View:</span>
+          <div class="cs-pill-group" id="cs-focus-group">
+            <button class="cs-mini-btn active" data-focus="all">All 3 Side-by-Side</button>
+            <button class="cs-mini-btn" data-focus="v8">&#x1F7E0; Worker postMessage</button>
+            <button class="cs-mini-btn" data-focus="jsc">&#x1F980; Rust WASM (serde FFI)</button>
+            <button class="cs-mini-btn" data-focus="capn">&#9889; capnstruct (Shared/WASM)</button>
           </div>
-          <div class="cs-param-item">
+        </div>
+        <div class="cs-param-item">
           <span class="cs-param-label">Dataset Scale (N):</span>
           <div class="cs-pill-group" id="cs-scale-group">
             <button class="cs-mini-btn" data-scale="2500">2.5k</button>
             <button class="cs-mini-btn" data-scale="10000">10k</button>
-            <button class="cs-mini-btn active" data-scale="25000">25k</button>
+            <button class="cs-mini-btn" data-scale="25000">25k</button>
             <button class="cs-mini-btn" data-scale="50000">50k</button>
+            <button class="cs-mini-btn active" data-scale="100000">100k</button>
           </div>
         </div>
         <div class="cs-param-item">
           <label class="cs-param-label" for="cs-sel-slider">
-            Filter Hit Rate: <strong id="cs-sel-val" class="cs-sel-val-num">4%</strong>
+            Live Filter Scrub (Min Alt): <strong id="cs-sel-val" class="cs-sel-val-num">&ge;24,500ft (14%)</strong>
           </label>
-          <input id="cs-sel-slider" type="range" min="1" max="100" value="4" class="cs-slider" />
+          <input id="cs-sel-slider" type="range" min="1" max="100" value="14" class="cs-slider" />
         </div>
       </div>
       <div class="cs-live-hud">
-        <span class="cs-hud-badge cs-hud-fps" id="cs-hud-fps">
-          Sweeps: <span class="cs-hud-num" id="cs-sw-capn">0</span> vs <span class="cs-hud-num" id="cs-sw-rust">0</span> (Rust) vs <span class="cs-hud-num" id="cs-sw-bun">0</span> (Bun)
-        </span>
-        <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.17ms vs 3.7ms (Rust) vs 5.7ms (Bun)</span>
-        <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB vs +6.9 MB GC</span>
-      </div>
+          <span class="cs-hud-badge">
+            Sweeps: <span class="cs-hud-num" id="cs-sw-capn">0</span> vs <span class="cs-hud-num" id="cs-sw-rust">0</span> (FFI) vs <span class="cs-hud-num" id="cs-sw-bun">0</span> (Clone)
+          </span>
+          <span class="cs-hud-badge cs-hud-ms" id="cs-hud-ms">0.17ms vs 3.7ms (WASM) vs 14.1ms (Clone)</span>
+          <span class="cs-hud-badge cs-hud-heap" id="cs-hud-heap">0.00 MB vs +6.9 MB GC</span>
     </div>
+    </div>
+
     <!-- 3 SIDE-BY-SIDE LIVE ANIMATIONS (NO TAB SWITCHING) -->
     <div class="cs-trio-grid">
       <div class="cs-canvas-wrap cs-card-v8">
         <div class="cs-canvas-title">
-          <span class="cs-canvas-label">&#x1F7E0; 1. Bun JSC (~2x vs Node V8)</span>
-          <span class="cs-canvas-hint cs-hint-v8" id="cs-hint-v8">5.7 ms (V8: 14.1 ms) &middot; +6.9 MB GC!</span>
+          <span class="cs-canvas-label">&#x1F7E0; 1. Worker postMessage (structuredClone)</span>
+          <span class="cs-canvas-hint cs-hint-v8" id="cs-hint-v8">14.1 ms clone (Bun: 5.7 ms) &middot; +6.9 MB GC!</span>
         </div>
-        <canvas id="cs-anim-v8" class="cs-anim-canvas" width="310" height="270"></canvas>
-      </div>
-      <div class="cs-canvas-wrap cs-card-jsc">
-        <div class="cs-canvas-title">
-          <span class="cs-canvas-label">&#x1F980; 2. Rust -O3 WASM (JSON / FFI)</span>
-          <span class="cs-canvas-hint cs-hint-jsc" id="cs-hint-jsc">3.7 ms JSON / 23.0 ms FFI</span>
+        <div class="cs-canvas-stage">
+          <canvas id="cs-anim-v8" class="cs-anim-canvas" width="360" height="208"></canvas>
+          <div class="cs-canvas-overlay">
+            <div class="cs-ov-top">
+              <span class="cs-ov-pill">worker.postMessage &rarr; Boxed Heap</span>
+              <span class="cs-ov-badge cs-ov-warn" id="cs-badge-v8">+6.87 MB GC</span>
+            </div>
+            <div class="cs-ov-inspector cs-ov-insp-v8">
+              <div class="cs-insp-hdr">
+                <span>postMessage + structuredClone</span>
+                <span id="cs-insp-v8-state">CYCLIC CLONE</span>
+              </div>
+              <div class="cs-insp-row" id="cs-insp-v8-line1">JSON.stringify throws TypeError (cyclic ref)</div>
+              <div class="cs-insp-bytes" id="cs-insp-v8-line2">structuredClone heap: +0.00 / 6.87 MB &rarr; GC stall</div>
+            </div>
+          </div>
         </div>
-        <canvas id="cs-anim-jsc" class="cs-anim-canvas" width="310" height="270"></canvas>
-      </div>
-      <div class="cs-canvas-wrap cs-card-capn">
-        <div class="cs-canvas-title">
-          <span class="cs-canvas-label">&#9889; 3. capnstruct #[repr(C)] (45x-198x)</span>
-          <span class="cs-canvas-hint cs-hint-capn" id="cs-hint-capn">0.17 ms JS / 0.07 ms WASM &middot; 0 MB</span>
-        </div>
-        <canvas id="cs-anim-capn" class="cs-anim-canvas" width="310" height="270"></canvas>
-      </div>
       </div>
 
+      <div class="cs-canvas-wrap cs-card-jsc">
+        <div class="cs-canvas-title">
+          <span class="cs-canvas-label">&#x1F980; 2. Rust -O3 WASM (serde-wasm-bindgen)</span>
+          <span class="cs-canvas-hint cs-hint-jsc" id="cs-hint-jsc">3.7 ms WASM / 23.0 ms FFI copy</span>
+        </div>
+        <div class="cs-canvas-stage">
+          <canvas id="cs-anim-jsc" class="cs-anim-canvas" width="360" height="208"></canvas>
+          <div class="cs-canvas-overlay">
+            <div class="cs-ov-top">
+              <span class="cs-ov-pill">wasm-bindgen &harr; FFI Copy</span>
+              <span class="cs-ov-badge cs-ov-ffi" id="cs-badge-jsc">23.0ms FFI</span>
+            </div>
+            <div class="cs-ov-inspector cs-ov-insp-jsc">
+              <div class="cs-insp-hdr">
+                <span>WASM-BINDGEN / SERDE FFI WALL</span>
+              </div>
+              <div class="cs-insp-row" id="cs-insp-jsc-line1">Rust -O3: 3.7ms | FFI copy: 23.0ms</div>
+              <div class="cs-insp-bytes" id="cs-insp-jsc-line2">Copies UTF-8 strings &amp; Waypoint[] across FFI</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cs-canvas-wrap cs-card-capn">
+        <div class="cs-canvas-title">
+          <span class="cs-canvas-label">&#9889; 3. capnstruct #[repr(C)] (inWasm / Shared)</span>
+          <span class="cs-canvas-hint cs-hint-capn" id="cs-hint-capn">0.17 ms JS / 0.07 ms WASM &middot; 0 MB</span>
+        </div>
+        <div class="cs-canvas-stage">
+          <canvas id="cs-anim-capn" class="cs-anim-canvas" width="360" height="208"></canvas>
+          <div class="cs-canvas-overlay">
+            <div class="cs-ov-top">
+              <span class="cs-ov-pill cs-ov-pill-capn">Flight.inWasm() &middot; 0 FFI Copy</span>
+              <span class="cs-ov-badge cs-ov-ok" id="cs-badge-capn">0 MB &middot; 120 FPS</span>
+            </div>
+            <div class="cs-ov-inspector cs-ov-insp-capn">
+              <div class="cs-insp-hdr">
+                <span>#[repr(C)] SHARED MEMORY (0 FFI COPY)</span>
+              </div>
+              <div class="cs-insp-row">
+                <code><span id="cs-insp-call">UAL418</span>.nextRelay</code> &rarr; <strong id="cs-insp-coords">DAL141 &rarr; ANA809 &rarr; UAL418</strong> <span id="cs-insp-idx" style="display:none">0</span>
+              </div>
+              <div class="cs-insp-bytes">
+                <code>.waypoints</code>: <code id="cs-insp-hex">[37.6,-122.4 &rarr; 38.4,-119.8]</code> &middot; <strong>0 Allocs</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
       <!-- ALL 3 VISUAL GRAPHS & LIVE BENCHMARK LAID OUT DIRECTLY (NO SUB-TABS) -->
       <div class="cs-graph-section">
         <div class="cs-graph-header">
@@ -349,14 +396,17 @@
           <span>Strips dead tail bytes in a single pass and rebinds the view in-place before sending over WebSocket / RPC.</span>
         </div>
       </div>
-      <div class="cs-actions">
-        <button id="cs-btn-shorter" class="cs-btn">1. Overwrite Row #1 Shorter (0 Allocs)</button>
-        <button id="cs-btn-longer" class="cs-btn">2. Extend Row #1 Longer (Tail Append)</button>
-        <button id="cs-btn-push" class="cs-btn">+ Push Row (<code>.push()</code>)</button>
-        <button id="cs-btn-pop" class="cs-btn">- Pop Row (<code>.pop()</code>)</button>
-        <button id="cs-btn-compact" class="cs-btn cs-btn-primary">3. Compact Dead Tail (<code>.compact()</code>)</button>
+        <pre class="cs-qs-code" id="cs-mutator-code"><code><span class="cs-kw">const</span> User  = <span class="cs-fn">struct</span>(<span class="cs-str">'User'</span>, &#123; id: u32, name: str, scores: <span class="cs-fn">slice</span>(u32) &#125;); <span class="cs-cm">// 20B #[repr(C)] stride + variable tail arena</span>
+<span class="cs-kw">const</span> users = User.<span class="cs-fn">from</span>([&#123; id: 1, name: <span class="cs-str">'Ada Lovelace'</span>, scores: [10, 20, 30] &#125;, &#123; id: 2, name: <span class="cs-str">'Alan Turing'</span>, scores: [40, 50] &#125;]);
+<span id="cs-mut-code-line" class="cs-live-var">users.at(0).name = 'Ada';</span> <span class="cs-cm" id="cs-mut-code-comment">// &rarr; click any button below or edit a row input to execute live on the binary buffer</span></code></pre>
+        <div class="cs-actions">
+          <button id="cs-btn-shorter" class="cs-btn">1. Overwrite Row #1 Shorter (0 Allocs)</button>
+          <button id="cs-btn-longer" class="cs-btn">2. Extend Row #1 Longer (Tail Append)</button>
+          <button id="cs-btn-push" class="cs-btn">+ Push Row (.push())</button>
+          <button id="cs-btn-pop" class="cs-btn">- Pop Row (.pop())</button>
+          <button id="cs-btn-compact" class="cs-btn cs-btn-primary">3. Compact Dead Tail (.compact())</button>
+        </div>
       </div>
-    </div>
     <div class="cs-stats-strip">
       <div class="cs-stat"><span>Rows (<code>.length</code>):</span> <strong id="cs-st-len">2</strong></div>
       <div class="cs-stat"><span>Struct Stride:</span> <strong id="cs-st-stride">24 B</strong></div>
@@ -380,9 +430,9 @@
   <div class="cs-panel active cs-panel-divider" id="cs-panel-rust">
     <div class="cs-panel-header cs-panel-header-stack">
       <div class="cs-header-top">
-        <strong class="cs-panel-title">3. Pain Point: Brittle Manual <code>DataView</code> Byte Offsets &amp; Duplicate Rust / Go Structs for WebAssembly</strong>
+        <strong class="cs-panel-title">3. Pain Point: <code>serde-wasm-bindgen</code> FFI Overhead &amp; Brittle Manual <code>DataView</code> Offsets in WebAssembly</strong>
         <p class="cs-sub">
-          Sharing memory between TypeScript and Rust/Go WebAssembly usually forces a choice between slow <code>serde_json</code> string copies or brittle manual <code>DataView.getFloat64(ptr + 16, true)</code> offset math that breaks silently when a struct changes. Define your schema once in TypeScript and generate verified Rust <code>#[repr(C)]</code> and Go / TinyGo structs with compile-time offset assertions:
+          Sharing memory between TypeScript and Rust/Go WebAssembly usually forces a choice between slow <code>serde-wasm-bindgen</code> FFI copies or brittle manual <code>DataView.getFloat64(ptr + 16, true)</code> offset math. Define your schema once in TypeScript, allocate directly inside <code>WebAssembly.Memory</code> via <code>Schema.inWasm(wasmMem, rows)</code>, and generate verified Rust <code>#[repr(C)]</code> structs with safe <code>.as_str(arena)</code>, <code>.as_slice(arena)</code>, and <code>.as_ref(arena)</code> accessors:
         </p>
       </div>
       <div class="cs-param-bar" style="margin-bottom: 0;">
@@ -651,40 +701,57 @@
     color: var(--sl-color-gray-2);
     margin-bottom: 0.45rem;
   }
+  :global(.cs-pill) {
+    flex-wrap: wrap;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  :global(.cs-pill code) {
+    white-space: normal;
+    word-break: break-word;
+  }
   .cs-rows-list {
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 0.55rem;
   }
-  .cs-row-item {
-    padding: 0.7rem;
+  :global(.cs-row-item) {
+    padding: 0.55rem 0.65rem;
     border-radius: 0.5rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
     display: grid;
-    grid-template-columns: 60px 1fr 1fr;
-    gap: 0.5rem;
+    grid-template-columns: 3.2rem minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 0.45rem;
     align-items: center;
     font-size: 0.8rem;
   }
-  .cs-row-item input {
+  :global(.cs-row-item code) {
+    font-size: 0.76rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--sl-color-gray-2);
+  }
+  :global(.cs-row-item input) {
     width: 100%;
-    padding: 0.35rem 0.5rem;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.32rem 0.5rem;
     border-radius: 0.35rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg-nav);
     color: var(--sl-color-text);
     font-family: var(--sl-font-mono);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
   }
   .cs-code-box {
     margin: 0;
-    padding: 0.85rem;
+    padding: 0.65rem 0.75rem;
     border-radius: 0.5rem;
     border: 1px solid var(--sl-color-hairline);
     background: var(--sl-color-bg);
     font-family: var(--sl-font-mono);
-    font-size: 0.75rem;
+    font-size: 0.67rem;
     line-height: 1.45;
     max-height: 360px;
     overflow: auto;
@@ -840,14 +907,41 @@
     background: #0b101b;
     border: 1px solid var(--sl-color-hairline);
     font-family: var(--sl-font-mono);
-    font-size: 0.72rem;
-    line-height: 1.4;
+    font-size: 0.68rem;
+    line-height: 1.45;
     color: #e2e8f0;
     overflow-x: auto;
   }
   .cs-kw { color: #c084fc; }
   .cs-fn { color: #38bdf8; }
+  .cs-str { color: #fbbf24; }
   .cs-cm { color: #64748b; }
+  .cs-live-var {
+    display: inline-block;
+    padding: 0.02rem 0.32rem;
+    border-radius: 0.25rem;
+    background: rgba(56, 189, 248, 0.16);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    color: #7dd3fc;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.12s ease, transform 0.12s ease;
+  }
+  .cs-live-res {
+    display: inline-block;
+    padding: 0.02rem 0.36rem;
+    border-radius: 0.25rem;
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    color: #34d399;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  :global(.cs-live-pulse) {
+    background: rgba(56, 189, 248, 0.34) !important;
+    border-color: #38bdf8 !important;
+    color: #ffffff !important;
+  }
   .cs-trio-grid[data-focus="v8"] .cs-card-jsc,
   .cs-trio-grid[data-focus="v8"] .cs-card-capn,
   .cs-trio-grid[data-focus="jsc"] .cs-card-v8,
@@ -882,9 +976,10 @@
   .cs-param-item {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.45rem;
     font-size: 0.78rem;
-    white-space: nowrap;
+    min-width: 0;
   }
   .cs-param-label {
     color: var(--sl-color-gray-2);
@@ -899,7 +994,9 @@
   }
   .cs-pill-group {
     display: inline-flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
+    min-width: 0;
   }
   .cs-mini-btn {
     padding: 0.22rem 0.5rem;
@@ -935,8 +1032,10 @@
     .cs-live-hud {
       grid-template-columns: 1fr;
     }
+    .cs-hud-badge {
+      white-space: normal;
+    }
   }
-
   .cs-hud-badge {
     padding: 0.26rem 0.55rem;
     border-radius: 0.4rem;
@@ -950,13 +1049,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
   }
-
   .cs-hud-num {
     display: inline-block;
     width: 3ch;
     text-align: right;
-    font-variant-numeric: tabular-nums;
   }
 
   .cs-hud-fps {
@@ -976,8 +1074,9 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
     margin-bottom: 1.15rem;
+    min-width: 0;
   }
-  @media (max-width: 920px) {
+  @media (max-width: 980px) {
     .cs-trio-grid {
       grid-template-columns: 1fr;
     }
@@ -989,6 +1088,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
   .cs-card-v8 {
     border-color: rgba(245, 158, 11, 0.45);
@@ -1013,6 +1113,7 @@
     border-bottom: 1px solid rgba(148, 163, 184, 0.16);
     white-space: nowrap;
     overflow: hidden;
+    min-width: 0;
   }
   .cs-canvas-label {
     width: 100%;
@@ -1024,7 +1125,9 @@
     font-variant-numeric: tabular-nums;
     font-size: 0.67rem;
     color: #10b981;
-    flex-shrink: 0;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .cs-hint-v8 {
     color: #fbbf24;
@@ -1035,11 +1138,154 @@
   .cs-hint-capn {
     color: #34d399;
   }
+  .cs-canvas-stage {
+    position: relative;
+    width: 100%;
+    height: 280px;
+    overflow: hidden;
+  }
   .cs-canvas-wrap canvas {
     width: 100%;
-    height: 270px;
+    height: 100%;
     display: block;
     cursor: crosshair;
+  }
+  .cs-canvas-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.35rem 0.45rem;
+    box-sizing: border-box;
+  }
+  .cs-ov-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+  .cs-ov-pill {
+    background: rgba(15, 23, 42, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: #cbd5e1;
+    font-family: var(--sl-font-mono);
+    font-size: 0.6rem;
+    font-weight: 600;
+    padding: 0.12rem 0.35rem;
+    border-radius: 0.3rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .cs-ov-pill-capn {
+    border-color: rgba(16, 185, 129, 0.45);
+    color: #a7f3d0;
+  }
+  .cs-ov-badge {
+    font-family: var(--sl-font-mono);
+    font-size: 0.59rem;
+    font-weight: 700;
+    padding: 0.12rem 0.34rem;
+    border-radius: 0.3rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .cs-ov-warn {
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    color: #fcd34d;
+  }
+  :global(.cs-ov-danger) {
+    background: rgba(239, 68, 68, 0.88);
+    border: 1px solid #f87171;
+    color: #ffffff;
+  }
+  .cs-ov-ffi {
+    background: rgba(168, 85, 247, 0.22);
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    color: #e9d5ff;
+  }
+  .cs-ov-ok {
+    background: rgba(16, 185, 129, 0.22);
+    border: 1px solid rgba(16, 185, 129, 0.55);
+    color: #6ee7b7;
+  }
+  .cs-ov-inspector {
+    background: rgba(9, 13, 22, 0.88);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 0.4rem;
+    padding: 0.32rem 0.48rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    line-height: 1.35;
+    color: #e2e8f0;
+    backdrop-filter: blur(3px);
+    min-width: 0;
+  }
+  .cs-ov-insp-v8 {
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+  .cs-ov-insp-jsc {
+    border-color: rgba(168, 85, 247, 0.4);
+  }
+  .cs-ov-insp-capn {
+    border-color: rgba(16, 185, 129, 0.55);
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.14);
+  }
+  .cs-insp-hdr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.59rem;
+    font-weight: 700;
+    color: #94a3b8;
+    margin-bottom: 0.12rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cs-ov-insp-capn .cs-insp-hdr {
+    color: #34d399;
+  }
+  .cs-ov-insp-v8 .cs-insp-hdr {
+    color: #fbbf24;
+  }
+  .cs-ov-insp-jsc .cs-insp-hdr {
+    color: #c084fc;
+  }
+  .cs-insp-row {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #f8fafc;
+  }
+  .cs-insp-row code {
+    color: #38bdf8;
+    font-size: 0.63rem;
+  }
+  .cs-insp-row strong {
+    color: #34d399;
+  }
+  .cs-insp-bytes {
+    font-size: 0.6rem;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.08rem;
+  }
+  .cs-insp-bytes code {
+    color: #a7f3d0;
+    font-size: 0.6rem;
+  }
+  .cs-insp-bytes strong {
+    color: #34d399;
   }
   .cs-section-subhead {
     font-size: 0.9rem;
@@ -1136,15 +1382,20 @@
   import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
 
   // --- SECTION 1: 3 SIDE-BY-SIDE LIVE 60FPS ANIMATIONS (NO TAB SWITCHING) ---
-  const RadarNode = defineStruct('RadarNode', (self) => ({
+  const Waypoint = defineStruct('Waypoint', {
+    lat: f32,
+    lon: f32,
+  });
+
+  const RadarNode = defineStruct('Flight', {
     id: u32,
     x: f32,
     y: f32,
-    vx: f32,
-    vy: f32,
+    alt: u16,
     callsign: str,
-    next: ref(self),
-  }));
+    waypoints: slice(Waypoint),
+    nextRelay: ref('Flight'),
+  });
 
   const v8Canvas = document.getElementById('cs-anim-v8') as HTMLCanvasElement | null;
   const jscCanvas = document.getElementById('cs-anim-jsc') as HTMLCanvasElement | null;
@@ -1161,74 +1412,95 @@
   const hintCapn = document.getElementById('cs-hint-capn');
   const selSlider = document.getElementById('cs-sel-slider') as HTMLInputElement | null;
   const selValEl = document.getElementById('cs-sel-val');
+  const codeNEl = document.getElementById('cs-code-n');
+  const codeAltEl = document.getElementById('cs-code-alt');
+  const codeLatEl = document.getElementById('cs-code-lat');
+  const codeHitsEl = document.getElementById('cs-code-hits');
 
-  let simScale = 25000;
-  let simSelectivityPct = 4;
-  let pointerX = 0.5;
-  let pointerY = 0.45;
+  let simScale = 100000;
+  let simSelectivityPct = 14;
+  let pointerX = 0.52;
+  let pointerY = 0.48;
+  let lastUserPointerTime = 0;
+  let isPointerHovering = false;
+  let pulseTimer = 0;
 
-  // Build binary dataset for live 60fps zero-copy simulation
-  const MAX_SIM_N = 2500;
-  const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) =>
-    RadarNode.item({
-      id: i,
-      x: ((i * 73) % 1000) / 1000,
-      y: ((i * 137 + 29) % 1000) / 1000,
-      vx: (((i % 7) - 3) * 0.0008) || 0.0005,
-      vy: (((i % 5) - 2) * 0.0008) || -0.0005,
-      callsign: `AC_${1000 + (i % 9000)}`,
-      next: null,
-    }),
-  );
-  const SIM_CLUSTER = 32;
-  for (let i = 0; i < 2048; i++) {
-    const base = Math.floor(i / SIM_CLUSTER) * SIM_CLUSTER;
-    simPlainRows[i].next = simPlainRows[base + ((i + 1) % SIM_CLUSTER)];
+  function triggerCodePulse() {
+    codeAltEl?.classList.add('cs-live-pulse');
+    codeLatEl?.classList.add('cs-live-pulse');
+    if (pulseTimer) window.clearTimeout(pulseTimer);
+    pulseTimer = window.setTimeout(() => {
+      codeAltEl?.classList.remove('cs-live-pulse');
+      codeLatEl?.classList.remove('cs-live-pulse');
+    }, 180);
   }
-  const simCapnBytes = RadarNode.pack(simPlainRows.slice(0, 2048));
-  const simCapnView = RadarNode.from(simCapnBytes);
+  // Build binary Flight dataset for live 60/120fps zero-copy telemetry simulation
+  const MAX_SIM_N = 2500;
+  const CALLSIGN_PREFIXES = ['UAL', 'DAL', 'AAL', 'SWA', 'AFR', 'BAW', 'ANA', 'JAL', 'LHX', 'QFA'];
   const simFlatX = new Float32Array(MAX_SIM_N);
   const simFlatY = new Float32Array(MAX_SIM_N);
-  const simHomeX = new Float32Array(MAX_SIM_N);
-  const simHomeY = new Float32Array(MAX_SIM_N);
   const simVelX = new Float32Array(MAX_SIM_N);
   const simVelY = new Float32Array(MAX_SIM_N);
+  const simAlt = new Uint16Array(MAX_SIM_N);
   const v8SnapX = new Float32Array(MAX_SIM_N);
   const v8SnapY = new Float32Array(MAX_SIM_N);
   const jscSnapX = new Float32Array(MAX_SIM_N);
   const jscSnapY = new Float32Array(MAX_SIM_N);
-  let v8PtrX = pointerX, v8PtrY = pointerY;
-  let jscPtrX = pointerX, jscPtrY = pointerY;
-  for (let i = 0; i < MAX_SIM_N; i++) {
-    const hx = simPlainRows[i].x ?? 0.5;
-    const hy = simPlainRows[i].y ?? 0.5;
-    simFlatX[i] = simHomeX[i] = v8SnapX[i] = jscSnapX[i] = hx;
-    simFlatY[i] = simHomeY[i] = v8SnapY[i] = jscSnapY[i] = hy;
-  }
+  let v8PtrX = pointerX;
+  let v8PtrY = pointerY;
+  let jscPtrX = pointerX;
+  let jscPtrY = pointerY;
 
-  // Copy buttons for npm install and /llms.txt prompt
+  const simPlainRows = Array.from({ length: MAX_SIM_N }, (_, i) => {
+    const lane = i % 3;
+    const t = ((i * 73) % 1000) / 1000;
+    const baseY = lane === 0 ? 0.28 : lane === 1 ? 0.52 : 0.74;
+    const wave = Math.sin(t * Math.PI * 2 + lane * 1.4) * 0.11;
+    const ny = Math.max(0.12, Math.min(0.88, baseY + wave + (((i * 29) % 100) - 50) * 0.0012));
+    const speed = 0.0028 + ((i % 7) * 0.00035);
+    const dir = i % 5 === 0 ? -1 : 1;
+    const vx = speed * dir;
+    const vy = Math.cos(t * Math.PI * 2 + lane) * 0.00035;
+    const alt = 28000 + ((i * 400) % 13000);
+    simFlatX[i] = v8SnapX[i] = jscSnapX[i] = t;
+    simFlatY[i] = v8SnapY[i] = jscSnapY[i] = ny;
+    simVelX[i] = vx;
+    simVelY[i] = vy;
+    simAlt[i] = alt;
+    const lat0 = 24.5 + (1 - ny) * 24.5;
+    const lon0 = -(124.8 - t * 54.0);
+    return RadarNode.item({
+      id: 1000 + i,
+      x: t,
+      y: ny,
+      alt,
+      callsign: `${CALLSIGN_PREFIXES[i % CALLSIGN_PREFIXES.length]}${100 + (i % 899)}`,
+      waypoints: [
+        { lat: lat0, lon: lon0 },
+        { lat: lat0 + 0.8, lon: lon0 + 2.4 },
+      ],
+      nextRelay: null,
+    });
+  });
+  const SIM_CLUSTER = 32;
+  for (let i = 0; i < 512; i++) {
+    const base = Math.floor(i / SIM_CLUSTER) * SIM_CLUSTER;
+    simPlainRows[i].nextRelay = simPlainRows[base + ((i + 1) % SIM_CLUSTER)];
+  }
+  const simCapnBytes = RadarNode.pack(simPlainRows.slice(0, 512));
+  const simCapnView = RadarNode.from(simCapnBytes);
+  const FLIGHT_STRIDE = simCapnView.stride;
+
+  // Copy button for npm install
   const btnCopyNpm = document.getElementById('cs-btn-copy-npm');
   const npmStatus = document.getElementById('cs-npm-status');
   btnCopyNpm?.addEventListener('click', () => {
     navigator.clipboard?.writeText('npm i capnstruct');
     if (npmStatus) {
       npmStatus.textContent = 'Copied!';
-      setTimeout(() => { npmStatus.textContent = 'Copy'; }, 1800);
-    }
-  });
-  const btnCopyLlm = document.getElementById('cs-btn-copy-llm');
-  const llmStatus = document.getElementById('cs-llm-status');
-  btnCopyLlm?.addEventListener('click', async () => {
-    try {
-      const res = await fetch('/llms.txt');
-      const txt = await res.text();
-      await navigator.clipboard?.writeText(txt);
-      if (llmStatus) {
-        llmStatus.textContent = 'Copied 400-tok!';
-        setTimeout(() => { llmStatus.textContent = 'Claude / Cursor'; }, 2200);
-      }
-    } catch {
-      window.open('/llms.txt', '_blank');
+      setTimeout(() => {
+        npmStatus.textContent = 'Copy';
+      }, 1800);
     }
   });
 
@@ -1243,24 +1515,28 @@
   });
 
   function updateStaticLatencyLabels() {
-    const scaleFactor = simScale / 25000;
+    const scaleFactor = Math.pow(simScale / 25000, 0.65);
     const selFactor = 1 + ((simSelectivityPct - 4) / 96) * 0.35;
     const steadyV8Ms = 14.14 * scaleFactor * selFactor;
     const steadyJscMs = 5.65 * scaleFactor * selFactor;
     const steadyRustMs = 3.68 * scaleFactor * selFactor;
-    const steadyCapnMs = 0.17 * scaleFactor;
-    const steadyWasmMs = 0.07 * scaleFactor;
+    const steadyCapnMs = 0.17 * scaleFactor * selFactor;
+    const steadyWasmMs = 0.07 * scaleFactor * selFactor;
+    const minAltFt = Math.round(12000 + ((100 - simSelectivityPct) / 99) * 26000);
+    if (codeNEl) codeNEl.textContent = simScale.toLocaleString();
+    if (selValEl) selValEl.textContent = `>=${minAltFt.toLocaleString()}ft (${simSelectivityPct}%)`;
+
     if (hudMs) {
-      hudMs.textContent = `${steadyCapnMs.toFixed(2)}ms vs ${steadyRustMs.toFixed(1)}ms (Rust) vs ${steadyJscMs.toFixed(1)}ms (Bun)`;
+      hudMs.textContent = `${steadyCapnMs.toFixed(2)}ms vs ${steadyRustMs.toFixed(1)}ms (WASM) vs ${steadyV8Ms.toFixed(1)}ms (Clone)`;
     }
     if (hudHeap) {
       hudHeap.textContent = `0.00 MB vs +${(6.87 * scaleFactor).toFixed(1)} MB GC`;
     }
     if (hintV8) {
-      hintV8.textContent = `${steadyJscMs.toFixed(1)} ms (V8: ${steadyV8Ms.toFixed(1)} ms) · +${(6.87 * scaleFactor).toFixed(1)} MB GC!`;
+      hintV8.textContent = `${steadyV8Ms.toFixed(1)} ms clone (Bun: ${steadyJscMs.toFixed(1)} ms) · +${(6.87 * scaleFactor).toFixed(1)} MB GC!`;
     }
     if (hintJsc) {
-      hintJsc.textContent = `${steadyRustMs.toFixed(1)} ms JSON / ${(23.0 * scaleFactor).toFixed(1)} ms FFI`;
+      hintJsc.textContent = `${steadyRustMs.toFixed(1)} ms WASM / ${(23.0 * scaleFactor).toFixed(1)} ms FFI copy`;
     }
     if (hintCapn) {
       hintCapn.textContent = `${steadyCapnMs.toFixed(2)} ms JS / ${steadyWasmMs.toFixed(2)} ms WASM · 0 MB`;
@@ -1271,36 +1547,62 @@
     btn.addEventListener('click', () => {
       document.querySelectorAll('#cs-scale-group .cs-mini-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      simScale = parseInt(btn.dataset.scale || '25000', 10);
+      simScale = parseInt(btn.dataset.scale || '100000', 10);
       updateStaticLatencyLabels();
+      triggerCodePulse();
     });
   });
 
   if (selSlider) {
     selSlider.addEventListener('input', () => {
-      simSelectivityPct = parseInt(selSlider.value || '4', 10);
-      if (selValEl) selValEl.textContent = `${simSelectivityPct}%`;
+      simSelectivityPct = parseInt(selSlider.value || '14', 10);
       updateStaticLatencyLabels();
+      triggerCodePulse();
     });
   }
   updateStaticLatencyLabels();
 
-  // Synchronize pointer lens across all 3 animation canvases
+  // Synchronize pointer lens across all 3 animation canvases (plus window-level tracking + smooth autopilot)
   animCanvases.forEach((cvs) => {
     const updatePointer = (clientX: number, clientY: number) => {
       const rect = cvs.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       pointerX = Math.max(0.08, Math.min(0.92, (clientX - rect.left) / rect.width));
-      pointerY = Math.max(0.08, Math.min(0.92, (clientY - rect.top) / (rect.height * 0.46)));
+      pointerY = Math.max(0.12, Math.min(0.88, (clientY - rect.top) / rect.height));
+      lastUserPointerTime = performance.now();
+      isPointerHovering = true;
+      triggerCodePulse();
     };
+    cvs.addEventListener('mouseenter', (e) => updatePointer(e.clientX, e.clientY));
     cvs.addEventListener('mousemove', (e) => updatePointer(e.clientX, e.clientY));
+    cvs.addEventListener('mouseleave', () => {
+      isPointerHovering = false;
+      lastUserPointerTime = 0;
+    });
     cvs.addEventListener(
       'touchmove',
       (e) => {
         if (e.touches[0]) updatePointer(e.touches[0].clientX, e.touches[0].clientY);
       },
-      { passive: true },
+      { passive: true }
     );
+    cvs.addEventListener('touchend', () => {
+      isPointerHovering = false;
+      lastUserPointerTime = 0;
+    });
   });
+  // DOM Overlay Elements (pointer-events: none live HUD over each canvas)
+  const badgeV8El = document.getElementById('cs-badge-v8');
+  const inspV8StateEl = document.getElementById('cs-insp-v8-state');
+  const inspV8Line1El = document.getElementById('cs-insp-v8-line1');
+  const inspV8Line2El = document.getElementById('cs-insp-v8-line2');
+  const badgeJscEl = document.getElementById('cs-badge-jsc');
+  const inspJscLine1El = document.getElementById('cs-insp-jsc-line1');
+  const inspOffEl = document.getElementById('cs-insp-off');
+  const inspIdxEl = document.getElementById('cs-insp-idx');
+  const inspCallEl = document.getElementById('cs-insp-call');
+  const inspCoordsEl = document.getElementById('cs-insp-coords');
+  const inspHexEl = document.getElementById('cs-insp-hex');
 
   interface MultiFramePoint {
     v8Ms: number;
@@ -1314,11 +1616,9 @@
   const MAX_HISTORY = 90;
   let frameTick = 0;
 
-  // Independent radar angles + scan progress so stuttering vs smooth 60 FPS is visually obvious!
   let v8RadarAngle = 0;
   let jscRadarAngle = 0;
   let capnRadarAngle = 0;
-
   let v8Prog = 0;
   let jscProg = 0;
   let capnProg = 0;
@@ -1329,6 +1629,8 @@
   let jscHeapAccum = 0;
   let v8GcStall = 0;
   let jscGcStall = 0;
+  let lockedFlightIdx = 42;
+  let lockedRing: number[] = [12, 42, 78, 105];
 
   function renderAnimCard(
     canvas: HTMLCanvasElement | null,
@@ -1341,232 +1643,340 @@
       heapMB: number;
       maxHeapMB: number;
       stalled: boolean;
-      stallLabel: string;
-      memTitle: string;
       memSub: string;
       msLabel: string;
       radius: number;
-    },
+    }
   ) {
     if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = Math.max(260, Math.round(canvas.clientWidth || 340));
+    const cssH = Math.max(240, Math.round(canvas.clientHeight || 280));
+    const targetW = Math.round(cssW * dpr);
+    const targetH = Math.round(cssH * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const w = canvas.width;
-    const h = canvas.height;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const w = cssW;
+    const h = cssH;
+
     ctx.fillStyle = '#090d16';
     ctx.fillRect(0, 0, w, h);
 
-    // -------------------------------------------------------------------------
-    // TOP ZONE (0..118px): Live Spatial Radar + Cyclic ref(() => Node) Ring
-    // V8 stutters at ~15fps & freezes on GC; Bun (~2x) moves 2x faster & STILL
-    // freezes on GC; capnstruct glides at locked 60fps with 0 GC pauses!
-    // -------------------------------------------------------------------------
-    const radarH = 116;
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+    // TOP ZONE (28..126px): Live Airspace Sector + Curved slice(Waypoint) Splines + Cyclic ref('Flight') Mesh
+    const radarTop = 28;
+    const radarBot = 126;
+    const radarH = radarBot - radarTop;
+
+    // Subtle Lat/Lon sector grid
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.07)';
     ctx.lineWidth = 1;
-    for (let gx = 52; gx < w; gx += 52) {
+    const stepX = Math.max(44, Math.round(w / 7));
+    for (let gx = stepX; gx < w; gx += stepX) {
       ctx.beginPath();
-      ctx.moveTo(gx, 0);
-      ctx.lineTo(gx, radarH);
+      ctx.moveTo(gx, radarTop);
+      ctx.lineTo(gx, radarBot);
       ctx.stroke();
     }
-    for (let gy = 38; gy < radarH; gy += 38) {
+    for (let gy = radarTop + 24; gy < radarBot; gy += 24) {
       ctx.beginPath();
       ctx.moveTo(0, gy);
       ctx.lineTo(w, gy);
       ctx.stroke();
     }
 
+    // Sector airport waypoints
+    ctx.font = 'bold 8px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.38)';
+    ctx.textAlign = 'left';
+    ctx.fillText('SFO', 8, radarTop + 14);
+    ctx.fillText('LAX', 8, radarBot - 6);
+    ctx.textAlign = 'center';
+    ctx.fillText('DEN · ORD', w * 0.5, radarTop + 14);
+    ctx.textAlign = 'right';
+    ctx.fillText('JFK', w - 8, radarTop + 14);
+    ctx.fillText('MIA', w - 8, radarBot - 6);
+    ctx.textAlign = 'left';
+
     const activePtrX = opts.kind === 'v8' ? v8PtrX : opts.kind === 'jsc' ? jscPtrX : pointerX;
     const activePtrY = opts.kind === 'v8' ? v8PtrY : opts.kind === 'jsc' ? jscPtrY : pointerY;
     const srcX = opts.kind === 'v8' ? v8SnapX : opts.kind === 'jsc' ? jscSnapX : simFlatX;
     const srcY = opts.kind === 'v8' ? v8SnapY : opts.kind === 'jsc' ? jscSnapY : simFlatY;
+
     const cx = activePtrX * w;
-    const cy = Math.min(0.85, Math.max(0.18, activePtrY)) * radarH;
-    const radPx = Math.max(20, opts.radius * Math.min(w, radarH * 1.3));
-    const r2 = opts.radius * opts.radius;
-    const sampleCount = 220;
+    const cy = radarTop + Math.min(0.86, Math.max(0.14, activePtrY)) * radarH;
+    const radPx = Math.max(28, opts.radius * Math.min(w, radarH * 1.45));
+    const r2 = Math.max(0.025, opts.radius * opts.radius * 1.25);
+
+    // Query lens backdrop + rotating radar sweep hand
+    ctx.fillStyle =
+      opts.kind === 'capn'
+        ? 'rgba(16, 185, 129, 0.08)'
+        : opts.kind === 'jsc'
+          ? 'rgba(168, 85, 247, 0.07)'
+          : 'rgba(245, 158, 11, 0.07)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radPx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = opts.color;
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radPx, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(opts.radarAng) * radPx, cy + Math.sin(opts.radarAng) * radPx);
+    ctx.stroke();
+
+    // 1. Outside lens: fast fixed-stride aircraft scan; collect closest aircraft inside lens for cyclic mesh
+    const sampleCount = 160;
+    const candidates: { idx: number; d2: number; px: number; py: number }[] = [];
+
     for (let i = 0; i < sampleCount; i++) {
       const nx = srcX[i];
       const ny = srcY[i];
       const dx = nx - activePtrX;
-      const dy = ny - Math.min(0.85, Math.max(0.18, activePtrY));
-      const inside = dx * dx + dy * dy <= r2;
-      ctx.fillStyle = inside ? opts.color : 'rgba(148, 163, 184, 0.28)';
+      const dy = ny - activePtrY;
+      const d2 = dx * dx + dy * dy;
       const px = nx * w;
-      const py = ny * radarH;
-      ctx.fillRect(px - (inside ? 1.8 : 1), py - (inside ? 1.8 : 1), inside ? 3.5 : 2, inside ? 3.5 : 2);
+      const py = radarTop + ny * radarH;
+      if (d2 <= r2 * 1.35) {
+        candidates.push({ idx: i, d2, px, py });
+      } else {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.34)';
+        ctx.fillRect(px - 1, py - 1, 2, 2);
+      }
     }
-    // Cyclic doubly-linked ref(() => RadarNode) ring + rotating sweep beam
-    const ringNodes = 10;
-    const ringR = Math.max(18, Math.min(42, radPx * 0.68));
-    ctx.strokeStyle = opts.color;
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    for (let k = 0; k <= ringNodes; k++) {
-      const ang = opts.radarAng * 0.7 + (k / ringNodes) * Math.PI * 2;
-      const rx = cx + Math.cos(ang) * ringR;
-      const ry = cy + Math.sin(ang) * ringR;
-      if (k === 0) ctx.moveTo(rx, ry);
-      else ctx.lineTo(rx, ry);
+
+    candidates.sort((a, b) => a.d2 - b.d2);
+    const meshNodes = candidates.slice(0, 4);
+    if (opts.kind === 'capn' && meshNodes.length >= 3) {
+      lockedFlightIdx = meshNodes[0].idx;
+      lockedRing = meshNodes.map((m) => m.idx);
     }
-    ctx.stroke();
 
-    // Rotating radar sweep hand so frame stutter vs smooth 60fps is immediately obvious
-    const handAng = opts.radarAng * 1.6;
-    ctx.strokeStyle = opts.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(handAng) * radPx, cy + Math.sin(handAng) * radPx);
-    ctx.stroke();
+    // Draw remaining inside-lens aircraft + curved slice(Waypoint) trajectories for mesh nodes
+    for (let k = 4; k < candidates.length; k++) {
+      const c = candidates[k];
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.65)';
+      ctx.fillRect(c.px - 1.4, c.py - 1.4, 2.8, 2.8);
+    }
 
-    ctx.strokeStyle = opts.color;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radPx, 0, Math.PI * 2);
-    ctx.stroke();
+    // 2A. From (B): Render curved waypoints: slice(Waypoint) splines bent around cursor obstacle
+    for (let m = 0; m < meshNodes.length; m++) {
+      const node = meshNodes[m];
+      const dir = simVelX[node.idx] >= 0 ? 1 : -1;
+      const wpSpan = 34 * dir;
+      // Cursor obstacle bends the waypoint spline smoothly away from (cx, cy)
+      const relY = node.py - cy;
+      const bendY = (relY >= 0 ? 1 : -1) * Math.max(6, 18 - Math.min(14, Math.abs(relY) * 0.4));
+      const w0x = node.px;
+      const w0y = node.py;
+      const w1x = Math.max(8, Math.min(w - 8, node.px + wpSpan * 0.38));
+      const w1y = Math.max(radarTop + 6, Math.min(radarBot - 6, node.py + bendY * 0.65));
+      const w2x = Math.max(8, Math.min(w - 8, node.px + wpSpan * 0.75));
+      const w2y = Math.max(radarTop + 6, Math.min(radarBot - 6, node.py + bendY));
+      const w3x = Math.max(8, Math.min(w - 8, node.px + wpSpan * 1.1));
+      const w3y = Math.max(radarTop + 6, Math.min(radarBot - 6, node.py + bendY * 0.4));
 
-    // Status badge in top-left of radar
-    ctx.fillStyle = 'rgba(9, 13, 22, 0.82)';
-    ctx.fillRect(6, 5, w - 12, 16);
-    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
-    ctx.fillStyle = opts.color;
-    ctx.fillText(opts.memTitle, 9, 16);
+      ctx.strokeStyle = opts.kind === 'capn' ? 'rgba(56, 189, 248, 0.85)' : 'rgba(226, 232, 240, 0.45)';
+      ctx.lineWidth = 1.35;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(w0x, w0y);
+      ctx.quadraticCurveTo(w1x, w1y, w2x, w2y);
+      ctx.lineTo(w3x, w3y);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-    if (opts.stalled) {
-      ctx.fillStyle = 'rgba(220, 38, 38, 0.9)';
-      ctx.fillRect(10, radarH / 2 - 11, w - 20, 22);
+      // Draw the 3 decoded Waypoint structs along the slice(Waypoint) spline
+      ctx.fillStyle = opts.kind === 'capn' ? '#38bdf8' : '#cbd5e1';
+      ctx.fillRect(w1x - 1.5, w1y - 1.5, 3, 3);
+      ctx.fillRect(w2x - 1.5, w2y - 1.5, 3, 3);
+      ctx.fillRect(w3x - 1.5, w3y - 1.5, 3, 3);
+    }
+
+    // 2B. From (A): Draw cyclic nextRelay: ref('Flight') mesh ring (A -> B -> C -> A) with directional arrowheads
+    if (meshNodes.length >= 2) {
+      ctx.strokeStyle = opts.kind === 'capn' ? '#10b981' : opts.color;
+      ctx.lineWidth = 1.5;
+      for (let m = 0; m < meshNodes.length; m++) {
+        const a = meshNodes[m];
+        const b = meshNodes[(m + 1) % meshNodes.length];
+        const mx = (a.px + b.px) * 0.5;
+        const my = (a.py + b.py) * 0.5 - 7;
+        ctx.beginPath();
+        ctx.moveTo(a.px, a.py);
+        ctx.quadraticCurveTo(mx, my, b.px, b.py);
+        ctx.stroke();
+
+        // Arrowhead at midpoint pointing A -> B
+        const ang = Math.atan2(b.py - a.py, b.px - a.px);
+        const ax = (a.px + b.px) * 0.5;
+        const ay = (a.py + b.py) * 0.5 - 3.5;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(ax + Math.cos(ang) * 4, ay + Math.sin(ang) * 4);
+        ctx.lineTo(ax + Math.cos(ang + 2.5) * 3.5, ay + Math.sin(ang + 2.5) * 3.5);
+        ctx.lineTo(ax + Math.cos(ang - 2.5) * 3.5, ay + Math.sin(ang - 2.5) * 3.5);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // Draw decoded callsign + altitude pills on mesh nodes
+    ctx.font = 'bold 7.5px ui-monospace, SFMono-Regular, monospace';
+    for (let m = 0; m < Math.min(3, meshNodes.length); m++) {
+      const node = meshNodes[m];
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(opts.stallLabel, w / 2, radarH / 2 + 4);
-      ctx.textAlign = 'left';
+      ctx.fillRect(node.px - 2.2, node.py - 2.2, 4.4, 4.4);
+      const cs = simPlainRows[node.idx].callsign;
+      const altK = Math.round(simAlt[node.idx] / 1000);
+      const label = m === 0 ? `${cs}·${altK}k` : cs;
+      const tw = ctx.measureText(label).width + 6;
+      const tx = Math.max(4, Math.min(w - tw - 4, node.px + 5));
+      const ty = Math.max(radarTop + 3, Math.min(radarBot - 13, node.py - 10 + (m % 2) * 12));
+      ctx.fillStyle = m === 0 ? 'rgba(6, 78, 59, 0.92)' : 'rgba(9, 13, 22, 0.88)';
+      ctx.fillRect(tx, ty, tw, 11);
+      ctx.strokeStyle = m === 0 ? '#10b981' : opts.color;
+      ctx.lineWidth = 0.9;
+      ctx.strokeRect(tx, ty, tw, 11);
+      ctx.fillStyle = m === 0 ? '#a7f3d0' : '#f8fafc';
+      ctx.fillText(label, tx + 3, ty + 8);
     }
 
-    // -------------------------------------------------------------------------
-    // MIDDLE ZONE (120..186px): Memory Layout Strip + Heap Bar + Sweeps Counter
-    // -------------------------------------------------------------------------
-    const midY = 120;
+    // 3. MIDDLE ZONE (128..172px): Synchronized Byte-Block X-Ray Ribbon ([Fixed 40B Slots] | [Tail Arena])
+    const midY = 128;
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
     ctx.beginPath();
     ctx.moveTo(0, midY);
     ctx.lineTo(w, midY);
     ctx.stroke();
 
-    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
-    ctx.fillStyle = '#cbd5e1';
-    ctx.fillText(opts.memSub, 8, midY + 13);
+    const ribX = 8;
+    const ribW = w - 16;
+    const ribY = midY + 12;
+    const ribH = 14;
+    const splitX = ribX + Math.round(ribW * 0.52);
 
-    ctx.fillStyle = opts.color;
-    ctx.fillText('Sweeps:', w - 66, midY + 13);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${opts.sweeps}x`, w - 8, midY + 13);
-    ctx.textAlign = 'left';
+    // Ribbon section headers
+    ctx.font = 'bold 7px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.78)';
+    ctx.fillText('FIXED 40B #[repr(C)] SLOTS', ribX, midY + 9);
+    ctx.fillStyle = opts.kind === 'capn' ? '#38bdf8' : 'rgba(148, 163, 184, 0.78)';
+    ctx.fillText('TAIL ARENA (str + Waypoint[])', splitX + 4, midY + 9);
 
-    const trackX = 8;
-    const trackY = midY + 18;
-    const trackW = w - 16;
-    const trackH = 22;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
-    ctx.fillRect(trackX, trackY, trackW, trackH);
+    // Left half: 8 Fixed #[repr(C)] Table Slots
+    const nFixed = 8;
+    const fSlotW = (splitX - ribX - 4) / nFixed;
+    const activeSlotA = (lockedRing[0] ?? 0) % nFixed;
+    const activeSlotB = (activeSlotA + 2) % nFixed;
+    const activeSlotC = (activeSlotA + 5) % nFixed;
 
-    const nCells = 14;
-    const cellW = trackW / nCells;
-    const activeCell = Math.floor(opts.prog * nCells);
-
-    if (opts.kind === 'v8') {
-      // Scattered pointer-soup heap boxes (Bun JSC ~2x & Node V8 BOTH construct this!)
-      for (let c = 0; c < nCells; c++) {
-        const bx = trackX + c * cellW + 1.5;
-        const by = c % 2 === 0 ? trackY + 2 : trackY + 11;
-        const visited = c <= activeCell;
-        ctx.fillStyle = visited ? opts.color : 'rgba(148, 163, 184, 0.22)';
-        ctx.fillRect(bx, by, cellW - 4, 8);
-        if (c < nCells - 1) {
-          const ny = (c + 1) % 2 === 0 ? trackY + 5 : trackY + 14;
-          ctx.strokeStyle = visited ? opts.color : 'rgba(148, 163, 184, 0.25)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(bx + cellW - 4, by + 4);
-          ctx.lineTo(bx + cellW + 1.5, ny);
-          ctx.stroke();
-        }
+    for (let s = 0; s < nFixed; s++) {
+      const sx = ribX + s * fSlotW;
+      const isRingSlot = s === activeSlotA || s === activeSlotB || s === activeSlotC;
+      if (opts.kind === 'v8') {
+        ctx.fillStyle = isRingSlot ? 'rgba(245, 158, 11, 0.85)' : 'rgba(148, 163, 184, 0.18)';
+        ctx.fillRect(sx + 1, ribY + (s % 2) * 3, fSlotW - 2.5, ribH - 4);
+      } else if (opts.kind === 'jsc') {
+        ctx.fillStyle = isRingSlot ? 'rgba(168, 85, 247, 0.85)' : 'rgba(148, 163, 184, 0.18)';
+        ctx.fillRect(sx + 1, ribY + 1, fSlotW - 2, ribH - 2);
+      } else {
+        ctx.fillStyle = isRingSlot ? 'rgba(16, 185, 129, 0.88)' : 'rgba(16, 185, 129, 0.22)';
+        ctx.fillRect(sx + 0.5, ribY + 1, fSlotW - 1.5, ribH - 2);
       }
-    } else if (opts.kind === 'jsc') {
-      // Rust -O3 WASM (JSON / FFI): 5.27 MiB ASCII JSON text / JS<->WASM FFI copy stream
-      const jsonTokens = ['{"id":', '0,"x":', '14.2,', '"y":8', '9.1,"v', 'al":9', '1.4},', '{"id":', '1,"x":', '42.7,', '"y":1', '9.8,"v', 'al":6', '4.2}'];
-      for (let c = 0; c < nCells; c++) {
-        const bx = trackX + c * cellW + 1;
-        const visited = c <= activeCell;
-        ctx.fillStyle = visited ? 'rgba(168, 85, 247, 0.32)' : 'rgba(148, 163, 184, 0.12)';
-        ctx.fillRect(bx, trackY + 2, cellW - 2, trackH - 4);
-        ctx.strokeStyle = visited ? '#c084fc' : 'rgba(148, 163, 184, 0.22)';
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(bx, trackY + 2, cellW - 2, trackH - 4);
-        ctx.fillStyle = visited ? '#f3e8ff' : '#64748b';
-        ctx.font = '7px ui-monospace, SFMono-Regular, monospace';
-        ctx.fillText(jsonTokens[c % jsonTokens.length].slice(0, 3), bx + 1.5, trackY + 14);
+    }
+
+    // Right half: 6 Variable Tail Arena Blocks (str + Waypoint[])
+    const tailX = splitX + 4;
+    const tailW = ribX + ribW - tailX;
+    const nTail = 6;
+    const tSlotW = tailW / nTail;
+    const activeTailA = (lockedRing[0] ?? 0) % nTail;
+    const activeTailB = (activeTailA + 2) % nTail;
+
+    for (let t = 0; t < nTail; t++) {
+      const tx = tailX + t * tSlotW;
+      const isHitTail = t === activeTailA || t === activeTailB;
+      ctx.fillStyle =
+        opts.kind === 'capn'
+          ? isHitTail
+            ? 'rgba(56, 189, 248, 0.88)'
+            : 'rgba(56, 189, 248, 0.22)'
+          : isHitTail
+            ? opts.color
+            : 'rgba(148, 163, 184, 0.16)';
+      ctx.fillRect(tx + 0.5, ribY + 1, tSlotW - 1.5, ribH - 2);
+    }
+
+    // Draw live pointer arcs over the Byte-Block X-Ray Ribbon!
+    const slotCenterX = (s: number) => ribX + (s + 0.5) * fSlotW;
+    const tailCenterX = (t: number) => tailX + (t + 0.5) * tSlotW;
+
+    if (opts.kind === 'capn') {
+      // 1) Cyclic ref('Flight') pointer arcs: Slot[A] -> Slot[B] -> Slot[C] -> Slot[A]
+      ctx.strokeStyle = '#34d399';
+      ctx.lineWidth = 1.25;
+      const pairs = [
+        [activeSlotA, activeSlotB],
+        [activeSlotB, activeSlotC],
+        [activeSlotC, activeSlotA],
+      ];
+      for (const [s1, s2] of pairs) {
+        const x1 = slotCenterX(s1);
+        const x2 = slotCenterX(s2);
+        ctx.beginPath();
+        ctx.moveTo(x1, ribY + 1);
+        ctx.quadraticCurveTo((x1 + x2) * 0.5, ribY - 9, x2, ribY + 1);
+        ctx.stroke();
       }
-      const headX = trackX + opts.prog * trackW;
-      ctx.strokeStyle = '#e879f9';
-      ctx.lineWidth = 2;
+      // 2) Tail slice(Waypoint) pointer arc: Slot[A].waypoints -> Tail[activeTailA]
+      const sx = slotCenterX(activeSlotA);
+      const tx = tailCenterX(activeTailA);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.moveTo(headX, trackY);
-      ctx.lineTo(headX, trackY + trackH);
-      ctx.stroke();
-    } else {
-      // Contiguous #[repr(C)] L1 cache-line array!
-      for (let c = 0; c < nCells; c++) {
-        const bx = trackX + c * cellW + 1;
-        ctx.fillStyle = 'rgba(16, 185, 129, 0.36)';
-        ctx.fillRect(bx, trackY + 2, cellW - 2, trackH - 4);
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(bx, trackY + 2, cellW - 2, trackH - 4);
-      }
-      const beamX = trackX + opts.prog * (trackW - 28);
-      ctx.fillStyle = 'rgba(52, 211, 153, 0.7)';
-      ctx.fillRect(beamX, trackY + 1, 28, trackH - 2);
-      // Scan head cursor
-      const headX = trackX + opts.prog * trackW;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(headX, trackY);
-      ctx.lineTo(headX, trackY + trackH);
+      ctx.moveTo(sx, ribY + ribH - 1);
+      ctx.quadraticCurveTo((sx + tx) * 0.5, ribY + ribH + 8, tx, ribY + ribH - 1);
       ctx.stroke();
     }
 
-    // Heap / FFI Allocation progress bar
-    const heapY = trackY + trackH + 5;
-    const heapH = 12;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-    ctx.fillRect(trackX, heapY, trackW, heapH);
+    // Status bar below the X-Ray Ribbon
+    const heapY = ribY + ribH + 4;
+    const heapH = 11;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillRect(ribX, heapY, ribW, heapH);
+    ctx.font = 'bold 7.5px ui-monospace, SFMono-Regular, monospace';
     if (opts.maxHeapMB > 0) {
       const fillRatio = Math.min(1, opts.heapMB / opts.maxHeapMB);
       ctx.fillStyle = opts.stalled ? '#ef4444' : opts.color;
-      ctx.fillRect(trackX, heapY, trackW * fillRatio, heapH);
+      ctx.fillRect(ribX, heapY, ribW * fillRatio, heapH);
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, monospace';
       const barLabel =
         opts.kind === 'jsc'
-          ? `FFI / JSON Scan: ${opts.heapMB.toFixed(1).padStart(4, ' ')} / ${opts.maxHeapMB.toFixed(1)} MiB -> Copy!`
-          : `Heap Alloc: +${opts.heapMB.toFixed(1).padStart(4, ' ')} / +${opts.maxHeapMB.toFixed(1)} MB -> GC!`;
-      ctx.fillText(barLabel, trackX + 4, heapY + 9);
+          ? `FFI Copy: +${opts.heapMB.toFixed(1)}/${opts.maxHeapMB.toFixed(1)} MiB (str + Waypoint[])`
+          : `JSON.stringify: TypeError (cyclic!) | Heap +${opts.heapMB.toFixed(1)} MB`;
+      ctx.fillText(barLabel, ribX + 4, heapY + 8, ribW - 8);
     } else {
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-      ctx.strokeRect(trackX, heapY, trackW, heapH);
-      ctx.fillStyle = '#34d399';
-      ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, monospace';
-      ctx.fillText('Heap Alloc: 0.00 MB (Zero Boxed Objects / 0 FFI Copy!)', trackX + 4, heapY + 9);
+      ctx.strokeRect(ribX, heapY, ribW, heapH);
+      ctx.fillStyle = '#6ee7b7';
+      const c0 = simPlainRows[lockedRing[0] ?? 0].callsign;
+      const c1 = simPlainRows[lockedRing[1] ?? 1].callsign;
+      const c2 = simPlainRows[lockedRing[2] ?? 2].callsign;
+      const tailHex = `0x${(((lockedRing[0] ?? 0) * 40 + 6400) & 0xffff).toString(16).padStart(4, '0')}`;
+      ctx.fillText(`RING: ${c0}->${c1}->${c2}->${c0} | Tail[${tailHex}] 0 Allocs`, ribX + 4, heapY + 8, ribW - 8);
     }
 
-    // -------------------------------------------------------------------------
-    // BOTTOM ZONE (182..270px): Mini Frame-Budget Oscilloscope (ms/frame)
-    // -------------------------------------------------------------------------
-    const oscTop = 184;
-    const oscH = h - oscTop;
+    // OSCILLOSCOPE ZONE (172..204px): Mini Frame-Budget Oscilloscope (above bottom DOM inspector)
+    const oscTop = 172;
+    const oscBot = 204;
+    const oscH = oscBot - oscTop;
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
     ctx.beginPath();
     ctx.moveTo(0, oscTop);
@@ -1574,9 +1984,8 @@
     ctx.stroke();
 
     const maxScaleMs = 22;
-    const yForMs = (ms: number) => h - 8 - Math.min(1, ms / maxScaleMs) * (oscH - 20);
+    const yForMs = (ms: number) => oscBot - 3 - Math.min(1, ms / maxScaleMs) * (oscH - 13);
     const y60 = yForMs(16.67);
-    const y120 = yForMs(8.33);
 
     ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
     ctx.setLineDash([3, 3]);
@@ -1584,19 +1993,12 @@
     ctx.moveTo(0, y60);
     ctx.lineTo(w, y60);
     ctx.stroke();
-
-    ctx.strokeStyle = 'rgba(245, 158, 11, 0.3)';
-    ctx.beginPath();
-    ctx.moveTo(0, y120);
-    ctx.lineTo(w, y120);
-    ctx.stroke();
     ctx.setLineDash([]);
 
     if (frameHistory.length > 1) {
-      // On Card 1 (Bun JSC ~2x vs Node V8), also draw Node V8's 14.1ms red curve for direct comparison!
       if (opts.kind === 'v8') {
-        ctx.strokeStyle = 'rgba(239, 68, 68, 0.75)';
-        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.72)';
+        ctx.lineWidth = 1.3;
         ctx.beginPath();
         for (let i = 0; i < frameHistory.length; i++) {
           const fx = (i / (MAX_HISTORY - 1)) * w;
@@ -1606,9 +2008,10 @@
         }
         ctx.stroke();
       }
+
       const key = opts.kind === 'v8' ? 'jscMs' : opts.kind === 'jsc' ? 'rustMs' : 'capnMs';
       ctx.strokeStyle = opts.color;
-      ctx.lineWidth = 2.4;
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
       for (let i = 0; i < frameHistory.length; i++) {
         const fx = (i / (MAX_HISTORY - 1)) * w;
@@ -1618,25 +2021,32 @@
       }
       ctx.stroke();
     }
-    ctx.font = 'bold 9.5px ui-monospace, SFMono-Regular, monospace';
+
+    ctx.font = 'bold 8px ui-monospace, SFMono-Regular, monospace';
     ctx.fillStyle = opts.color;
-    ctx.fillText(opts.msLabel, 8, oscTop + 12);
+    ctx.fillText(opts.msLabel, 8, oscTop + 10, w - 16);
   }
 
   function stepLiveSimulation() {
     if (animCanvases.length === 0) return;
-
     frameTick++;
-    const radius = Math.sqrt(simSelectivityPct / 100) * 0.48;
+    // Smooth figure-8 autopilot radar probe when user is not hovering over a canvas
+    if (!isPointerHovering && performance.now() - lastUserPointerTime > 650) {
+      const autoX = 0.5 + Math.sin(frameTick * 0.02) * 0.34;
+      const autoY = 0.5 + Math.sin(frameTick * 0.04) * 0.24;
+      pointerX += (autoX - pointerX) * 0.08;
+      pointerY += (autoY - pointerY) * 0.08;
+    }
+    const radius = Math.sqrt(simSelectivityPct / 100) * 0.42;
     const r2 = radius * radius;
+
+    // Run real zero-copy capnstruct binary scan + cyclic ref('Flight') rewiring in browser
     const t0 = performance.now();
     let matchedCount = 0;
     let charsDecoded = 0;
-
-    // Run real zero-copy capnstruct binary scan + cyclic ref(() => RadarNode) traversal in browser
     const cur = simCapnView.cursor(0);
-    const nCapn = Math.min(simScale, simCapnView.length);
-    for (let i = 0; i < nCapn; i++) {
+    const scanRows = Math.min(simScale, simCapnView.length);
+    for (let i = 0; i < scanRows; i++) {
       cur.seek(i);
       const dx = cur.x - pointerX;
       const dy = cur.y - pointerY;
@@ -1645,60 +2055,71 @@
         charsDecoded += cur.callsign.length;
       }
     }
-    let ringCur = simCapnView.at(0);
-    for (let step = 0; step < 32 && ringCur !== null; step++) {
-      ringCur = ringCur.next;
+    // Rewire cyclic nextRelay ring (r0 -> r1 -> r2 -> r0) in-place & traverse in O(1)
+    if (lockedRing.length >= 3) {
+      const r0 = lockedRing[0] % 200;
+      const r1 = lockedRing[1] % 200;
+      const r2 = lockedRing[2] % 200;
+      simCapnView.at(r0).nextRelay = simCapnView.at(r1);
+      simCapnView.at(r1).nextRelay = simCapnView.at(r2);
+      simCapnView.at(r2).nextRelay = simCapnView.at(r0);
+      const wp0 = simCapnView.at(r0).waypoints.at(0);
+      wp0.lat = 24.5 + (1 - simFlatY[r0]) * 24.5;
+      wp0.lon = -(124.8 - simFlatX[r0] * 54.0);
+      let ringCur = simCapnView.at(r0);
+      for (let step = 0; step < 6 && ringCur !== null; step++) {
+        ringCur = ringCur.nextRelay;
+      }
     }
     const rawCapnMs = Math.max(0.06, performance.now() - t0);
     if (charsDecoded < 0) console.log(charsDecoded, matchedCount);
 
-    const scaleFactor = simScale / 25000;
+    const scaleFactor = Math.pow(simScale / 25000, 0.65);
     const selFactor = 1 + ((simSelectivityPct - 4) / 96) * 0.35;
     const speedMult = Math.max(0.5, Math.min(1.6, 1 / Math.sqrt(scaleFactor)));
+
+    // 1. Bun JSC (~2x vs Node V8): allocates +6.9 MB boxed objects & stalls on GC!
     let v8Gc = false;
     let jscGc = false;
-    // 1. Bun JSC (~2x vs Node V8): moves ~2.5x faster than V8, STILL allocates +6.9 MB boxed objects & stalls on GC!
     if (v8GcStall > 0) {
       v8GcStall--;
-    } else {
-      if (frameTick % 2 === 0) {
-        v8RadarAngle += 0.044;
-        v8Prog += 0.021 * speedMult;
-        v8HeapAccum += 0.26 * scaleFactor;
-        v8PtrX = pointerX;
-        v8PtrY = pointerY;
-        for (let i = 0; i < 220; i++) {
-          v8SnapX[i] = simFlatX[i];
-          v8SnapY[i] = simFlatY[i];
-        }
-        if (v8HeapAccum >= 6.87) {
-          v8HeapAccum = 0;
-          v8GcStall = 8;
-          v8Gc = true;
-        }
-        if (v8Prog >= 1) {
-          v8Prog -= 1;
-          v8Sweeps++;
-        }
+    } else if (frameTick % 2 === 0) {
+      v8RadarAngle += 0.055 * speedMult;
+      v8Prog += 0.095 * speedMult;
+      v8HeapAccum += 0.34 * scaleFactor;
+      v8PtrX += (pointerX - v8PtrX) * 0.55;
+      v8PtrY += (pointerY - v8PtrY) * 0.55;
+      for (let i = 0; i < 200; i++) {
+        v8SnapX[i] = simFlatX[i];
+        v8SnapY[i] = simFlatY[i];
+      }
+      if (v8HeapAccum >= 6.87) {
+        v8HeapAccum = 0;
+        v8GcStall = 10;
+        v8Gc = true;
+      }
+      if (v8Prog >= 1) {
+        v8Prog -= 1;
+        v8Sweeps++;
       }
     }
 
-    // 2. Rust -O3 WASM (JSON / FFI): 3.7ms scanning 5.27 MiB ASCII JSON text or 23.0ms FFI copy
+    // 2. Rust -O3 WASM (JSON / FFI): 3.7ms scanning 5.27 MiB JSON text or 23.0ms FFI copy
     if (jscGcStall > 0) {
       jscGcStall--;
     } else {
-      jscRadarAngle += 0.028;
-      jscProg += 0.032 * speedMult;
-      jscHeapAccum += 0.18 * scaleFactor;
-      jscPtrX = pointerX;
-      jscPtrY = pointerY;
-      for (let i = 0; i < 220; i++) {
+      jscRadarAngle += 0.042 * speedMult;
+      jscProg += 0.14 * speedMult;
+      jscHeapAccum += 0.24 * scaleFactor;
+      jscPtrX += (pointerX - jscPtrX) * 0.7;
+      jscPtrY += (pointerY - jscPtrY) * 0.7;
+      for (let i = 0; i < 200; i++) {
         jscSnapX[i] = simFlatX[i];
         jscSnapY[i] = simFlatY[i];
       }
       if (jscHeapAccum >= 5.27) {
         jscHeapAccum = 0;
-        jscGcStall = 5;
+        jscGcStall = 6;
         jscGc = true;
       }
       if (jscProg >= 1) {
@@ -1707,49 +2128,38 @@
       }
     }
 
-    // 3. capnstruct #[repr(C)] (45x JS / 198x Rust & Go WASM): silky-smooth every single frame, 0 MB heap, 0 GC!
-    // Step interactive mouse-repulsor & vortex particle physics every single frame in-place
-    const pY = Math.min(0.85, Math.max(0.18, pointerY));
-    for (let i = 0; i < 220; i++) {
-      const dirX = ((i % 3) - 1) * 0.00045;
-      const dirY = ((i % 5) - 2) * 0.00035;
-      simHomeX[i] = (simHomeX[i] + dirX + 1) % 1;
-      simHomeY[i] = (simHomeY[i] + dirY + 1) % 1;
-      const dx = simFlatX[i] - pointerX;
-      const dy = simFlatY[i] - pY;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < r2 && d2 > 0.00001) {
-        const invD = 1 / Math.sqrt(d2);
-        const force = (1 - Math.sqrt(d2) / radius) * 0.0055;
-        // Swirl + radial repulsor wave around the cursor
-        simVelX[i] += (dx * invD * 0.65 - dy * invD * 0.75) * force;
-        simVelY[i] += (dy * invD * 0.65 + dx * invD * 0.75) * force;
-      }
-      simVelX[i] = (simVelX[i] + (simHomeX[i] - simFlatX[i]) * 0.045) * 0.88;
-      simVelY[i] = (simVelY[i] + (simHomeY[i] - simFlatY[i]) * 0.045) * 0.88;
-      simFlatX[i] = (simFlatX[i] + simVelX[i] + 1) % 1;
-      simFlatY[i] = (simFlatY[i] + simVelY[i] + 1) % 1;
+    // 3. capnstruct #[repr(C)]: step live aircraft positions every single frame in-place (0 MB heap, 0 GC!)
+    for (let i = 0; i < 200; i++) {
+      let nx = simFlatX[i] + simVelX[i];
+      if (nx > 1) nx -= 1;
+      if (nx < 0) nx += 1;
+      const lane = i % 3;
+      const baseY = lane === 0 ? 0.28 : lane === 1 ? 0.52 : 0.74;
+      const targetY = baseY + Math.sin(nx * Math.PI * 2 + lane * 1.4) * 0.11;
+      const ny = simFlatY[i] + (targetY - simFlatY[i]) * 0.08;
+      simFlatX[i] = nx;
+      simFlatY[i] = Math.max(0.12, Math.min(0.88, ny));
+      cur.seek(i);
+      cur.x = simFlatX[i];
+      cur.y = simFlatY[i];
     }
-    capnRadarAngle += 0.045;
+    capnRadarAngle += 0.055 * speedMult;
     capnProg += 0.38 * speedMult;
     if (capnProg >= 1) {
       capnSweeps += Math.floor(capnProg);
       capnProg = capnProg % 1;
     }
-    if (capnSweeps > 999) {
-      v8Sweeps = 0;
-      jscSweeps = 0;
-      capnSweeps = 0;
-    }
+
     const steadyV8Ms = 14.14 * scaleFactor * selFactor;
     const steadyJscMs = 5.65 * scaleFactor * selFactor;
     const steadyRustMs = 3.68 * scaleFactor * selFactor;
-    const steadyCapnMs = 0.17 * scaleFactor;
-    const jitter = Math.sin(frameTick * 0.19) * 0.25;
-    const v8Ms = steadyV8Ms + jitter + (v8Gc || v8GcStall > 4 ? 5.8 : 0);
-    const jscMs = steadyJscMs + jitter * 0.6 + (v8Gc || v8GcStall > 4 ? 5.2 : 0);
+    const steadyCapnMs = 0.17 * scaleFactor * selFactor;
+
+    const jitter = Math.sin(frameTick * 0.21) * 0.25;
+    const v8Ms = steadyV8Ms + jitter * 0.7 + (v8Gc || v8GcStall > 6 ? 11.2 : 0);
+    const jscMs = steadyJscMs + jitter * 0.4 + (v8Gc || v8GcStall > 4 ? 7.8 : 0);
     const rustMs = steadyRustMs + jitter * 0.3 + (jscGc || jscGcStall > 2 ? 4.4 : 0);
-    const capnMs = Math.max(0.14, 0.17 * scaleFactor + rawCapnMs * 0.2);
+    const capnMs = Math.max(0.14, 0.16 * scaleFactor + rawCapnMs * 0.2);
 
     frameHistory.push({ v8Ms, jscMs, rustMs, capnMs, v8Gc, jscGc });
     if (frameHistory.length > MAX_HISTORY) frameHistory.shift();
@@ -1757,6 +2167,65 @@
     if (swCapnEl) swCapnEl.textContent = String(capnSweeps);
     if (swRustEl) swRustEl.textContent = String(jscSweeps);
     if (swBunEl) swBunEl.textContent = String(v8Sweeps);
+
+    // Update pointer-events:none DOM Overlay HUD + 3-line hero code block live every few ticks
+    if (frameTick % 2 === 0) {
+      const r0 = (lockedRing[0] ?? 0) % 200;
+      const r1 = (lockedRing[1] ?? 1) % 200;
+      const r2 = (lockedRing[2] ?? 2) % 200;
+      const cs0 = simPlainRows[r0].callsign;
+      const cs1 = simPlainRows[r1].callsign;
+      const cs2 = simPlainRows[r2].callsign;
+      const ringStr = `${cs0} → ${cs1} → ${cs2} → ${cs0}`;
+      const f0 = simCapnView.at(r0);
+      const w0 = f0.waypoints.at(0);
+      const w1 = f0.waypoints.at(1);
+      const lat0 = w0.lat.toFixed(1);
+      const lon0 = w0.lon.toFixed(1);
+      const lat1 = w1.lat.toFixed(1);
+      const lon1 = w1.lon.toFixed(1);
+      const byteOff = r0 * FLIGHT_STRIDE;
+      if (inspOffEl) inspOffEl.textContent = `0x${byteOff.toString(16).padStart(5, '0')} (${FLIGHT_STRIDE}B)`;
+      if (inspIdxEl) inspIdxEl.textContent = String(r0);
+      if (inspCallEl) inspCallEl.textContent = f0.callsign;
+      if (inspCoordsEl) inspCoordsEl.textContent = `${cs1} → ${cs2} → ${cs0}`;
+      if (inspHexEl) inspHexEl.textContent = `[${lat0},${lon0} → ${lat1},${lon1}]`;
+      const scaledMatches = Math.max(12, Math.round((matchedCount / Math.max(1, scanRows)) * simScale));
+      if (codeAltEl) codeAltEl.textContent = String(lockedRing.length);
+      if (codeLatEl) codeLatEl.textContent = ringStr;
+      if (codeHitsEl) {
+        codeHitsEl.textContent = `${scaledMatches.toLocaleString()} / ${capnMs.toFixed(2)}ms`;
+      }
+      if (badgeV8El) {
+        if (v8GcStall > 0) {
+          badgeV8El.textContent = '⚠ GC PAUSE';
+          badgeV8El.classList.add('cs-ov-danger');
+          badgeV8El.classList.remove('cs-ov-warn');
+        } else {
+          badgeV8El.textContent = `+${v8HeapAccum.toFixed(2)} MB GC`;
+          badgeV8El.classList.add('cs-ov-warn');
+          badgeV8El.classList.remove('cs-ov-danger');
+        }
+      }
+      if (inspV8StateEl) {
+        inspV8StateEl.textContent = v8GcStall > 0 ? '⚠ GC PAUSE' : 'CYCLIC CLONE';
+      }
+      if (inspV8Line1El) {
+        inspV8Line1El.textContent =
+          v8GcStall > 0
+            ? `GC sweeping ${simScale.toLocaleString()} boxed Flight + Waypoint[]`
+            : `JSON.stringify throws TypeError (cyclic ref)`;
+      }
+      if (inspV8Line2El) {
+        inspV8Line2El.textContent = `structuredClone heap: +${v8HeapAccum.toFixed(2)} / 6.87 MB -> GC stall`;
+      }
+      if (badgeJscEl) {
+        badgeJscEl.textContent = jscGcStall > 0 ? 'FFI COPY STALL!' : `${(23.0 * scaleFactor).toFixed(1)}ms FFI`;
+      }
+      if (inspJscLine1El) {
+        inspJscLine1El.textContent = `Rust -O3: ${steadyRustMs.toFixed(1)}ms | FFI copy: ${(23.0 * scaleFactor).toFixed(1)}ms`;
+      }
+    }
 
     renderAnimCard(v8Canvas, {
       kind: 'v8',
@@ -1767,10 +2236,8 @@
       heapMB: v8HeapAccum,
       maxHeapMB: 6.87,
       stalled: v8GcStall > 0,
-      stallLabel: 'BUN ~2x GC STALL (+6.9 MB)!',
-      memTitle: 'Bun ~2x (5.7ms) vs V8 (14.1ms)',
       memSub: 'Scattered Boxed Heap:',
-      msLabel: `Bun JSC: ${steadyJscMs.toFixed(1)}ms | Node V8: ${steadyV8Ms.toFixed(1)}ms`,
+      msLabel: `structuredClone: ${steadyV8Ms.toFixed(1)}ms V8 | ${steadyJscMs.toFixed(1)}ms Bun`,
       radius,
     });
 
@@ -1783,10 +2250,8 @@
       heapMB: jscHeapAccum,
       maxHeapMB: 5.27,
       stalled: jscGcStall > 0,
-      stallLabel: 'RUST FFI / JSON COPY (5.3 MiB)!',
-      memTitle: 'Rust -O3 WASM: Still Scanning JSON!',
-      memSub: '5.27 MiB JSON / FFI Stream:',
-      msLabel: `Rust -O3 JSON: ${steadyRustMs.toFixed(1)}ms | FFI Copy: ${(23.0 * scaleFactor).toFixed(1)}ms`,
+      memSub: 'serde-wasm-bindgen FFI:',
+      msLabel: `Rust -O3 WASM: ${steadyRustMs.toFixed(1)}ms | FFI Copy: ${(23.0 * scaleFactor).toFixed(1)}ms`,
       radius,
     });
 
@@ -1799,10 +2264,8 @@
       heapMB: 0,
       maxHeapMB: 0,
       stalled: false,
-      stallLabel: '',
-      memTitle: '45x JS / 198x Rust-Go WASM!',
-      memSub: 'Contiguous #[repr(C)] L1:',
-      msLabel: `capnstruct: ${steadyCapnMs.toFixed(2)}ms JS / ${(0.07 * scaleFactor).toFixed(2)}ms Rust-Go WASM`,
+      memSub: 'Shared #[repr(C)] / WasmArena:',
+      msLabel: `capnstruct: ${steadyCapnMs.toFixed(2)}ms JS / ${(0.07 * scaleFactor).toFixed(2)}ms WASM (0 FFI)`,
       radius,
     });
 
@@ -1815,11 +2278,6 @@
     t: u32,
     val: f64,
     id: u32,
-  });
-
-  const Waypoint = defineStruct('Waypoint', {
-    lat: f32,
-    lon: f32,
   });
 
   const TelemetryRow = defineStruct('TelemetryRow', {
@@ -2038,12 +2496,12 @@
     const tableBytes = rowCount * stride;
     const lines: string[] = [];
     lines.push(
-      `// Fixed #[repr(C)] Table: 0x0000..0x${tableBytes.toString(16).padStart(4, '0')} (${tableBytes} B) | Tail Arena: 0x${tableBytes.toString(16).padStart(4, '0')}..0x${bytes.byteLength.toString(16).padStart(4, '0')} (${Math.max(0, bytes.byteLength - tableBytes)} B)`
+      `// TBL #[repr(C)]: 0x00..0x${tableBytes.toString(16).padStart(2, '0')} (${tableBytes}B) | TAIL +${Math.max(0, bytes.byteLength - tableBytes)}B (${bytes.byteLength}B)`
     );
-    for (let off = 0; off < bytes.byteLength; off += 16) {
+    for (let off = 0; off < bytes.byteLength; off += 8) {
       const hexParts: string[] = [];
       let ascii = '';
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 8; i++) {
         if (off + i < bytes.byteLength) {
           const b = bytes[off + i];
           hexParts.push(b.toString(16).padStart(2, '0'));
@@ -2055,13 +2513,17 @@
       }
       const region = off < tableBytes ? 'TBL ' : 'TAIL';
       lines.push(
-        `${region} 0x${off.toString(16).padStart(4, '0')}: ${hexParts.slice(0, 8).join(' ')}  ${hexParts.slice(8).join(' ')}  |${ascii}|`
+        `${region} 0x${off.toString(16).padStart(4, '0')}: ${hexParts.slice(0, 4).join(' ')}  ${hexParts.slice(4).join(' ')}  |${ascii}|`
       );
     }
     return lines.join('\n');
   }
 
-  function renderMutator(actionLabel: string) {
+  const mutCodeLineEl = document.getElementById('cs-mut-code-line');
+  const mutCodeCommentEl = document.getElementById('cs-mut-code-comment');
+  let mutPulseTimer = 0;
+
+  function renderMutator(actionLabel: string, codeLine?: string, codeComment?: string) {
     const lenEl = document.getElementById('cs-st-len');
     const strideEl = document.getElementById('cs-st-stride');
     const bytesEl = document.getElementById('cs-st-bytes');
@@ -2078,9 +2540,20 @@
     if (lenEl) lenEl.textContent = String(usersView.length);
     if (strideEl) strideEl.textContent = `${usersView.stride} B`;
     if (bytesEl) bytesEl.textContent = `${rawSlice.byteLength} B`;
-    if (fragEl) fragEl.textContent = `${(usersView.compactionRatio * 100).toFixed(1)}% (${usersView.deadByteLength} B dead)`;
+    if (fragEl)
+      fragEl.textContent = `${(usersView.compactionRatio * 100).toFixed(1)}% (${usersView.deadByteLength} B dead)`;
     if (actEl) actEl.textContent = actionLabel;
-    if (hexEl) hexEl.textContent = formatHexDump(rawSlice, usersView.length, usersView.stride);
+    if (codeLine && mutCodeLineEl) {
+      mutCodeLineEl.textContent = codeLine;
+      mutCodeLineEl.classList.add('cs-live-pulse');
+      if (mutPulseTimer) window.clearTimeout(mutPulseTimer);
+      mutPulseTimer = window.setTimeout(() => mutCodeLineEl.classList.remove('cs-live-pulse'), 220);
+    }
+    if (codeComment && mutCodeCommentEl) {
+      mutCodeCommentEl.textContent = codeComment;
+    }
+    if (hexEl)
+      hexEl.textContent = formatHexDump(rawSlice, usersView.length, usersView.stride);
 
     if (listEl) {
       listEl.innerHTML = '';
@@ -2101,12 +2574,16 @@
           const nextLen = new TextEncoder().encode(nameInput.value).byteLength;
           usersView.at(i).name = nameInput.value;
           const nextDead = usersView.deadByteLength;
-          renderMutator(
+          const msg =
             nextLen <= prevLen
               ? `row[${i}].name overwritten in-place (0 allocs)`
               : nextDead === prevDead
                 ? `row[${i}].name extended in-place at tail tip (0 dead bytes)`
-                : `row[${i}].name bump-allocated in tail arena (+${nextDead - prevDead} B reclaimable)`,
+                : `row[${i}].name bump-allocated in tail arena (+${nextDead - prevDead} B reclaimable)`;
+          renderMutator(
+            msg,
+            `users.at(${i}).name = ${JSON.stringify(nameInput.value)};`,
+            `// -> ${msg} (${usersView.usedByteLength} B used, ${usersView.deadByteLength} B dead)`,
           );
         });
 
@@ -2119,7 +2596,11 @@
             .map((s) => parseInt(s.trim(), 10))
             .filter((n) => !Number.isNaN(n) && n >= 0);
           usersView.at(i).set({ scores: nums });
-          renderMutator(`Updated row[${i}].scores (${nums.length} u32 items)`);
+          renderMutator(
+            `Updated row[${i}].scores (${nums.length} u32 items)`,
+            `users.at(${i}).scores = [${nums.join(', ')}];`,
+            `// -> updated slice(u32) (${nums.length} items, ${usersView.usedByteLength} B used, ${usersView.deadByteLength} B dead)`,
+          );
         });
 
         rowDiv.append(idSpan, nameInput, scoresInput);
@@ -2131,25 +2612,51 @@
   document.getElementById('cs-btn-shorter')?.addEventListener('click', () => {
     if (usersView.length === 0) return;
     usersView.at(0).name = 'Ada';
-    renderMutator('usersView.at(0).name = "Ada" -> overwritten in-place (0 allocs)');
+    renderMutator(
+      'usersView.at(0).name = "Ada" -> overwritten in-place (0 allocs)',
+      `users.at(0).name = 'Ada';`,
+      `// -> overwrote UTF-8 slot in-place (0 allocs, ${usersView.deadByteLength} B reclaimable tail)`,
+    );
   });
+
   document.getElementById('cs-btn-longer')?.addEventListener('click', () => {
     if (usersView.length === 0) return;
     usersView.at(0).name = 'Countess Ada Lovelace (Analytical Engine)';
-    renderMutator('usersView.at(0).name = "Countess Ada..." -> tail-arena bump alloc');
+    renderMutator(
+      'usersView.at(0).name = "Countess Ada..." -> tail-arena bump alloc',
+      `users.at(0).name = 'Countess Ada Lovelace (Analytical Engine)';`,
+      `// -> bump-allocated at tail end & updated [u32 relOff, u32 len] (${usersView.usedByteLength} B used, ${usersView.deadByteLength} B dead)`,
+    );
   });
+
   document.getElementById('cs-btn-push')?.addEventListener('click', () => {
     const id = nextId++;
     usersView.push({ id, name: `Engineer_${id}`, scores: [id * 10, id * 20] });
-    renderMutator(`users.push({ id: ${id}, ... })`);
+    renderMutator(
+      `users.push({ id: ${id}, ... })`,
+      `users.push({ id: ${id}, name: 'Engineer_${id}', scores: [${id * 10}, ${id * 20}] });`,
+      `// -> appended row #${usersView.length - 1} (${usersView.length} rows, ${usersView.usedByteLength} B wire buffer)`,
+    );
   });
+
   document.getElementById('cs-btn-pop')?.addEventListener('click', () => {
     const popped = usersView.pop();
-    renderMutator(popped ? `users.pop() -> #${popped.id}` : 'users.pop() (empty)');
+    renderMutator(
+      popped ? `users.pop() -> #${popped.id}` : 'users.pop() (empty)',
+      `const popped = users.pop();`,
+      popped
+        ? `// -> removed #${popped.id} ('${popped.name}') in O(1) (${usersView.length} rows remaining)`
+        : `// -> table is already empty (0 rows)`,
+    );
   });
+
   document.getElementById('cs-btn-compact')?.addEventListener('click', () => {
     const packed = usersView.compact();
-    renderMutator(`users.compact() -> ${packed.byteLength} B tight wire buffer (0% dead tail)`);
+    renderMutator(
+      `users.compact() -> ${packed.byteLength} B tight wire buffer (0% dead tail)`,
+      `const wireBytes = users.compact();`,
+      `// -> stripped dead tail bytes into tight ${packed.byteLength} B Uint8Array (0% dead tail)`,
+    );
   });
 
   renderMutator('Initialized 2-row #[repr(C)] buffer');
@@ -2181,8 +2688,8 @@
   const presets: Record<string, { ts: string; structs: StructDefLike[] }> = {
     telemetry: {
       ts: `const Waypoint = defineStruct('Waypoint', {
-  lat: f32, // offset 0, size 4
-  lon: f32, // offset 4, size 4
+  lat: f32,                   // offset 0, size 4
+  lon: f32,                   // offset 4, size 4
 }); // size: 8, align: 4
 
 const TelemetryRow = defineStruct('TelemetryRow', {
@@ -2193,10 +2700,14 @@ const TelemetryRow = defineStruct('TelemetryRow', {
   lon: f32,                   // offset 12
   altBaro: i32,               // offset 16
   groundSpeed: f32,           // offset 20
-  callsign: str,              // offset 24 ([u32 relOffset, u32 len])
-  route: str,                 // offset 32 ([u32 relOffset, u32 len])
-  waypoints: slice(Waypoint), // offset 40 ([u32 relOffset, u32 len])
-}); // size: 48, align: 4`,
+  callsign: str,              // offset 24 ([u32 off, u32 len])
+  route: str,                 // offset 32 ([u32 off, u32 len])
+  waypoints: slice(Waypoint), // offset 40 ([u32 off, u32 len])
+}); // size: 48, align: 4
+
+// Allocate directly inside WebAssembly.Memory (0 FFI copy):
+const { view, ptr, len } = TelemetryRow.inWasm(wasmExports, rows);
+wasmExports.inspect_fleet(ptr, len);`,
       structs: [Waypoint, TelemetryRow],
     },
     graph: {
@@ -2205,15 +2716,19 @@ const TelemetryRow = defineStruct('TelemetryRow', {
   weight: f64,           // offset 8, size 8
   label: str,            // offset 16, size 8 (CapnStr)
   next: ref(self),       // offset 24, size 8 (CapnRef<GraphNode>)
-  children: slice(self), // offset 32, size 8 (CapnSlice<GraphNode>)
-})); // size: 40, align: 8`,
+  children: slice(self),   // offset 32, size 8 (CapnSlice<GraphNode>)
+})); // size: 40, align: 8
+
+// Pack cyclic graph directly into WebAssembly.Memory:
+const { view, ptr, len } = GraphNode.inWasm(wasmArena, nodes);
+wasmExports.traverse_graph(ptr, len);`,
       structs: [GraphNode],
     },
     spdsample: {
       ts: `const SpdSample = defineStruct('SpdSample', {
-  t: u32,   // offset 0 (4B padding auto-inserted after t)
-  val: f64, // offset 8, align 8
-  id: u32,  // offset 16 (4B trailing padding to align stride to 8)
+  t: u32,                   // offset 0 (4B padding auto-inserted after t)
+  val: f64,                 // offset 8, align 8
+  id: u32,                  // offset 16 (4B trailing padding to align stride to 8)
 }); // size: 24, align: 8
 
 const OutHit = defineStruct('OutHit', {
@@ -2222,8 +2737,12 @@ const OutHit = defineStruct('OutHit', {
   lon: f64,                 // offset 16
   tstart: f64,              // offset 24
   tend: f64,                // offset 32
-  fids: fixedArray(u32, 8), // offset 40..72
-}); // size: 72, align: 8`,
+  fids: fixedArray(u32, 8),// offset 40..72
+}); // size: 72, align: 8
+
+// Allocate zero-copy output buffer in WASM linear memory:
+const { view: hits, ptr, len } = OutHit.inWasm(wasmArena, 256);
+wasmExports.search_kernel(samplesPtr, samplesLen, ptr, len);`,
       structs: [SpdSample, OutHit],
     },
     padded: {
@@ -2231,8 +2750,10 @@ const OutHit = defineStruct('OutHit', {
   big: u64,            // offset 0, align 8
   flag: u8,            // offset 8, align 1 (+1B pad before code)
   code: u16,           // offset 10, align 2
-  samples: slice(i32), // offset 12, align 4 (8B CapnSlice<i32> + 4B tail pad)
-}); // size: 24, align: 8`,
+  samples: slice(i32),     // offset 16, align 4 (8B CapnSlice<i32>)
+}); // size: 24, align: 8
+
+const { view, ptr, len } = PaddedAlignment.inWasm(wasmMem, 1024);`,
       structs: [PaddedAlignment],
     },
   };

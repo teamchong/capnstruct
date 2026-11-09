@@ -42,8 +42,8 @@ Running the same benchmark suite (`pnpm run bench`) on **Node.js v24.15.0 (V8)**
 
 | Entrypoint                                                                                 | Minified  | Minified + Gzip (`level: 9`)              |
 | :----------------------------------------------------------------------------------------- | :-------- | :---------------------------------------- |
-| **Core (`capnstruct`)** -- `defineStruct`, `StructArrayView`, `ref`, `slice`, `WasmArena`  | 18.53 KiB | **7.02 KiB** (**6.51 KiB** schema core)   |
-| **Codegen (`capnstruct/codegen`)** -- Rust `#[repr(C)]` + Go / TinyGo WASM generator       | 7.44 KiB  | **2.53 KiB** (2,595 B)                    |
+| **Core (`capnstruct`)** -- `defineStruct`, `StructArrayView`, `ref`, `slice`, `WasmArena`, `inWasm` | 18.12 KiB | **7.12 KiB** (**6.62 KiB** schema core) |
+| **Codegen (`capnstruct/codegen`)** -- Rust `#[repr(C)]` + Go / TinyGo WASM generator                | 7.63 KiB  | **2.57 KiB** (2,631 B)                  |
 
 ---
 
@@ -57,7 +57,7 @@ Libraries like **Apache Arrow** (`apache-arrow`), **FlatBuffers**, and **Cap'n P
 | **2. Circular References (`ref`)**      | Tree/table-only schemas or manual node index management for graphs.                                                                           | **Native Cyclic Graph Packing & Traversal**: `ref(self)` and `slice(self)` pack circular JS object graphs (`a.next = b; b.next = a`) automatically, traverse cycles in `O(1)` with zero allocations, and reconstruct circular JS references in `.toObject()`.                                      |
 | **3. Row Access & Wire Headers**        | Arrow IPC includes FlatBuffers schema headers, validity bitmaps, and dictionary batches; Cap'n Proto uses 64-bit multi-segment pointers.      | **Zero-Header `#[repr(C)]` + Monomorphic View Class**: Fixed-only structs have 0 header bytes and 0 pointers (`core::slice::from_raw_parts` in Rust WASM); variable fields use 8-byte `[u32 relOffset, u32 len]` relative pointers.                                                                 |
 | **4. Developer Ergonomics & Debugging** | Dedicated builder APIs (`Utf8Builder`, `Float64Vector`, `RecordBatchWriter`) and opaque binary views in `console.log` / DevTools.             | **Plain JS Object Syntax + Native Console/DevTools Formatters**: Define `{ id: u32, icao: fixedStr(6), lat: scaled(i32, 1e6), alt: sentinel(i16, -32768), next: ref(self) }`, spread `{ ...row }`, `console.log(row)` (`nodejs.util.inspect.custom`), and inspect lazily in browser DevTools (`installDevtoolsFormatter()`). |
-| **5. Wire Safety & Bundle Footprint**   | Full IPC readers, builders, and schema runtimes often weigh 100-150+ KiB minified+gzipped.                                                    | **~6.5 KiB Core + Wire Bounds Defense**: Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` amplification budget in `toObject()` / `toObjects()` while preserving valid cycles.                              |
+| **5. Wire Safety & Bundle Footprint**   | Full IPC readers, builders, and schema runtimes often weigh 100-150+ KiB minified+gzipped.                                                    | **~6.6 KiB Core + Wire Bounds Defense**: Clamps `Uint8Array` sub-slice windows, validates every `[off, len]` tail pointer against `[structEnd .. bufferEnd]`, and enforces an `8x` amplification budget in `toObject()` / `toObjects()` while preserving valid cycles.                              |
 
 ---
 

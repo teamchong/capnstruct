@@ -1,27 +1,27 @@
 ---
-title: Zero-Copy Binary Structs, Cyclic Graphs & Queryable Tables
-description: Define C/Rust #[repr(C)] and Go zero-copy binary schemas and cyclic graphs in TypeScript. Read and mutate single structs, circular object graphs, WebAssembly.Memory, SharedArrayBuffer state, and queryable binary tables in-place with 0 MB JS heap overhead.
+title: "Zero-Copy #[repr(C)] Structs for Web Workers, SharedArrayBuffer & WebAssembly"
+description: "The missing shared-memory #[repr(C)] struct layer between TypeScript, Web Workers, SharedArrayBuffer, and Rust/Go WebAssembly."
 ---
 
 import LivePlayground from '../../components/LivePlayground.astro';
 
-`capnstruct` compiles declarative TypeScript struct schemas into monomorphic `DataView` classes using standard **C / Rust `#[repr(C)]` memory layout** plus a relative-offset tail arena for variable-length UTF-8 strings (`str`), slices (`slice(T)`), and **nullable/circular pointers (`ref(() => Node)`)**.
+`capnstruct` is the missing shared-memory struct layer between JavaScript, Web Workers, and Rust/Go WebAssembly — compiling declarative TypeScript schemas into **C / Rust `#[repr(C)]` memory layouts** with a relative-offset tail arena for variable-length strings (`str`), slices (`slice(T)`), and cyclic pointers (`ref('Node')`).
 
 <div class="cs-badge-row">
-  <span class="cs-pill"><strong>Data Layout &gt; Bun &amp; Rust</strong> (45x JS / 198x&ndash;651x Rust &amp; Go WASM)</span>
-  <span class="cs-pill"><strong>0 MB JS Heap</strong> (`Uint8Array` / `SharedArrayBuffer` / `WebAssembly.Memory`)</span>
-  <span class="cs-pill"><strong>Cyclic Graphs</strong> (`ref(self)` &amp; `ref(() => Node)`)</span>
-  <span class="cs-pill"><strong>6.5 KiB Core</strong> + Rust `#[repr(C)]` &amp; Go / TinyGo WASM Codegen</span>
+  <span class="cs-pill"><strong>0 FFI / IPC Copies</strong> (`Schema.inWasm()` &amp; `SharedArrayBuffer` Workers)</span>
+  <span class="cs-pill"><strong>Safe Rust `#[repr(C)]`</strong> (`.as_str(arena)`, `.as_slice(arena)`, `.as_ref(arena)`)</span>
+  <span class="cs-pill"><strong>Cyclic Graphs</strong> (`ref('Flight')` &amp; `slice(Waypoint)`)</span>
+  <span class="cs-pill"><strong>6.6 KiB Core</strong> + Rust `#[repr(C)]` &amp; Go / TinyGo WASM Codegen</span>
 </div>
 
 <LivePlayground />
 
 | Guide                                                                  | What It Covers                                                                                                                                         |
 | :--------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[Getting Started](/getting-started/)**                               | `npm install capnstruct`, field descriptors (`u8`..`f64`, `str`, `slice`, `ref`), `pack()`, and `0`-allocation flyweight iteration                     |
-| **[Use Cases &amp; Recipes](/pain-points/)**                           | Copy-pasteable recipes for Web Worker `SharedArrayBuffer`s, Rust WASM `WasmArena`, 100k-row virtual tables, and cyclic graphs                          |
+| **[Getting Started](/getting-started/)**                               | `npm install capnstruct`, field descriptors (`u8`..`f64`, `str`, `slice`, `ref`), `.inWasm()` / `.shared()`, and `0`-allocation flyweight iteration    |
+| **[Use Cases &amp; Recipes](/pain-points/)**                           | Copy-pasteable recipes for Web Worker `SharedArrayBuffer`s, Rust WASM `Schema.inWasm()`, 100k-row virtual tables, and cyclic graphs                    |
 | **[Design &amp; Tradeoffs](/why-capnstruct/)**                         | Full Node V8 / Bun JSC / Rust `-O3` / Go / TinyGo benchmark suite, Apache Arrow &amp; FlatBuffers comparison, and when plain JS objects win            |
 | **[In-Place Mutation &amp; Tail Arena](/mutation-and-growth/)**        | How in-place `str`/`slice` mutation, tail bump-allocation, `.compact()`, and growable `.push()` / `.pop()` work under the hood                         |
 | **[Columnar Views &amp; Schema Evolution](/columnar-and-evolution/)**  | Zero-copy `TypedArray` column extraction (`.column()`) for WebGL / Apache Arrow and Cap'n-style forward/backward wire stride evolution                 |
-| **[WASM, Rust `#[repr(C)]` &amp; Go/TinyGo](/wasm-and-rust/)**         | `WasmArena` `memory.grow()` auto-rebinding plus CLI &amp; programmatic `toRustReprC()` and `toGoStruct()` codegen                                      |
+| **[WASM, Rust `#[repr(C)]` &amp; Go/TinyGo](/wasm-and-rust/)**         | `Schema.inWasm()`, `WasmArena` `memory.grow()` auto-rebinding, safe `.as_str()`/`.as_slice()`/`.as_ref()`, and `toRustReprC()` / `toGoStruct()` codegen |
 | **[API Reference &amp; Wire Format](/api-reference/)**                 | Binary wire format specification (`#[repr(C)]` + 8-byte relative tail descriptors) and complete `StructDef` / `StructView` / `StructArrayView` API     |

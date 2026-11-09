@@ -30,12 +30,11 @@ export const Telemetry = defineStruct('Telemetry', {
 // main.ts
 import { Telemetry } from './schema.js';
 
-// Allocate inside a SharedArrayBuffer (or transfer packed.buffer via postMessage)
-const sab = new SharedArrayBuffer(2 * 1024 * 1024);
-const rows = Telemetry.array(sab, { byteOffset: 0, count: 25_000 });
+// Allocate a 25,000-row table directly inside a SharedArrayBuffer
+const rows = Telemetry.shared(25_000);
 
 // Send only the SharedArrayBuffer reference once (0 ms clone cost)
-worker.postMessage({ buffer: sab, count: rows.length });
+worker.postMessage({ buffer: rows.buffer, count: rows.length });
 
 // After the Worker mutates rows in place, read updated values immediately:
 console.log(rows.at(0).callsign);
@@ -107,10 +106,10 @@ export const OutHit = defineStruct('OutHit', {
   fids: fixedArray(u32, 6),
 });
 
-// Auto-syncs if WebAssembly.Memory grew inside run_search(); zero manual offset math:
-const hdr = IOHeader.view(kernel.memory, hdrPtr);
-for (const h of OutHit.array(kernel.memory, hdr.out_hits_ptr, hdr.out_hits_count)) {
-  const flights = [];
+// Allocate or wrap directly in WebAssembly.Memory; auto-syncs if memory.grow() runs:
+const { view: hits, ptr: hitsPtr, len: hitsLen } = OutHit.inWasm(kernel.exports, 256);
+kernel.exports.run_search(samplesPtr, samplesLen, hitsPtr, hitsLen);
+for (const h of hits) {
   for (let k = 0; k < h.n_flights; k++) flights.push(store.flights[h.fids[k]]);
   hitsBySet[h.set_idx].push({ lat: h.lat, lon: h.lon, start: h.start, pre: h.pre, flights });
 }

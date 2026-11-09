@@ -121,9 +121,7 @@ export interface ArrayDesc<E extends FieldDesc = FieldDesc, N extends number = n
   readonly rustType: string;
 }
 
-export interface SelfRef {
-  readonly kind: 'self';
-}
+export type SelfRef = { readonly kind: 'self' } | string;
 
 export interface SliceDesc<E extends FieldDesc | SelfRef = FieldDesc> {
   readonly kind: 'slice';
@@ -259,34 +257,39 @@ export type FieldInput<D extends FieldDesc = FieldDesc, SelfF extends FieldRecor
               ? ArrayLike<PrimitiveInputType<P>> | Iterable<PrimitiveInputType<P>>
               : E extends StructDefLike<infer SF>
                 ?
-                    | ArrayLike<Partial<StructInput<SF>> | StructView<SF>>
-                    | Iterable<Partial<StructInput<SF>> | StructView<SF>>
+                    | ArrayLike<Partial<StructInput<SF>> | StructView<SF> | readonly unknown[]>
+                    | Iterable<Partial<StructInput<SF>> | StructView<SF> | readonly unknown[]>
+                    | ArrayBufferView
                     | StructArrayView<SF>
-                : ArrayLike<FieldInput<E, SelfF>> | Iterable<FieldInput<E, SelfF>>
+                : E extends FieldDesc
+                  ? ArrayLike<FieldInput<E, SelfF>> | Iterable<FieldInput<E, SelfF>>
+                  : never
             : D extends SliceDesc<infer E>
               ? E extends SelfRef
                 ?
-                    | ArrayLike<Partial<StructInput<SelfF>> | StructView<SelfF>>
-                    | Iterable<Partial<StructInput<SelfF>> | StructView<SelfF>>
+                    | ArrayLike<Partial<StructInput<SelfF>> | StructView<SelfF> | readonly unknown[]>
+                    | Iterable<Partial<StructInput<SelfF>> | StructView<SelfF> | readonly unknown[]>
+                    | ArrayBufferView
                     | StructArrayView<SelfF>
                 : E extends PrimitiveDesc<infer P>
                   ? ArrayLike<PrimitiveInputType<P>> | Iterable<PrimitiveInputType<P>>
                   : E extends StructDefLike<infer SF>
                     ?
-                        | ArrayLike<Partial<StructInput<SF>> | StructView<SF>>
-                        | Iterable<Partial<StructInput<SF>> | StructView<SF>>
+                        | ArrayLike<Partial<StructInput<SF>> | StructView<SF> | readonly unknown[]>
+                        | Iterable<Partial<StructInput<SF>> | StructView<SF> | readonly unknown[]>
+                        | ArrayBufferView
                         | StructArrayView<SF>
                     : E extends FieldDesc
                       ? ArrayLike<FieldInput<E, SelfF>> | Iterable<FieldInput<E, SelfF>>
                       : never
               : D extends RefDesc<infer SF>
                 ? SF extends SelfRef
-                  ? Partial<StructInput<SelfF>> | StructView<SelfF> | null | undefined
+                  ? Partial<StructInput<SelfF>> | StructView<SelfF> | readonly unknown[] | null | undefined
                   : SF extends StructDefLike<infer F>
-                    ? Partial<StructInput<F>> | StructView<F> | null | undefined
+                    ? Partial<StructInput<F>> | StructView<F> | readonly unknown[] | null | undefined
                     : any
                 : D extends StructDefLike<infer SF>
-                  ? Partial<StructInput<SF>> | StructView<SF>
+                  ? Partial<StructInput<SF>> | StructView<SF> | readonly unknown[]
                   : never;
 
 export type StructInput<F extends FieldRecord> = {
@@ -392,17 +395,18 @@ function hid(value?: unknown): PropertyDescriptor {
   return { value, writable: true, enumerable: false, configurable: true };
 }
 const BASE_DESCS: PropertyDescriptorMap = Object.fromEntries(
-  ['_d', '_o', '_b', '_m', '_a', '_ws', '_tl', '_dead', '_dirty'].map((k) => [k, hid()]),
+  '_d _b _o _m _a _ws _tl _dead _dirty'.split(' ').map((k) => [k, hid()]),
 );
-function prim<T extends PrimitiveName>(
-  type: T,
-  _C: TypedArrayConstructor,
-  _g: (dv: DataView, off: number) => number | bigint | boolean,
-  _s: (dv: DataView, off: number, val: number | bigint | boolean) => void,
-): PrimitiveDesc<T> {
+const dvP = DataView.prototype as any;
+function prim<T extends PrimitiveName>(type: T): PrimitiveDesc<T> {
   const c = type[0],
-    size = (+type.slice(1) || 8) >> 3,
-    float = c === 'f';
+    bits = +type.slice(1) || 8,
+    size = bits >> 3,
+    float = c === 'f',
+    big = size === 8 && !float,
+    m = (float ? 'Float' : (big ? 'Big' : '') + (c === 'i' ? 'Int' : 'Uint')) + bits,
+    g = dvP['get' + m],
+    s = dvP['set' + m];
   return {
     kind: 'primitive',
     type,
@@ -411,74 +415,56 @@ function prim<T extends PrimitiveName>(
     align: size,
     signed: c === 'i' || float,
     float,
-    bigint: size === 8 && !float,
-    _C,
-    _g,
-    _s,
+    bigint: big,
+    _C: (globalThis as any)[m + 'Array'] ?? Uint16Array,
+    _g: (d, o) => g.call(d, o, true),
+    _s: (d, o, v) => s.call(d, o, big ? BigInt(v) : N(v), true),
   };
 }
+
 /** Unsigned 8-bit integer (`0..255`, 1 byte, 1-byte aligned). */
-export const u8: PrimitiveDesc<'u8'> = prim('u8', Uint8Array, (d, o) => d.getUint8(o), (d, o, v) => d.setUint8(o, N(v)));
+export const u8: PrimitiveDesc<'u8'> = /* @__PURE__ */ prim('u8');
 /** Signed 8-bit integer (`-128..127`, 1 byte, 1-byte aligned). */
-export const i8: PrimitiveDesc<'i8'> = prim('i8', Int8Array, (d, o) => d.getInt8(o), (d, o, v) => d.setInt8(o, N(v)));
+export const i8: PrimitiveDesc<'i8'> = /* @__PURE__ */ prim('i8');
 /** Little-endian unsigned 16-bit integer (`0..65535`, 2 bytes, 2-byte aligned). */
-export const u16: PrimitiveDesc<'u16'> = prim('u16', Uint16Array, (d, o) => d.getUint16(o, true), (d, o, v) => d.setUint16(o, N(v), true));
+export const u16: PrimitiveDesc<'u16'> = /* @__PURE__ */ prim('u16');
 /** Little-endian signed 16-bit integer (`-32768..32767`, 2 bytes, 2-byte aligned). */
-export const i16: PrimitiveDesc<'i16'> = prim('i16', Int16Array, (d, o) => d.getInt16(o, true), (d, o, v) => d.setInt16(o, N(v), true));
+export const i16: PrimitiveDesc<'i16'> = /* @__PURE__ */ prim('i16');
 /** Little-endian unsigned 32-bit integer (4 bytes, 4-byte aligned). */
-export const u32: PrimitiveDesc<'u32'> = prim('u32', Uint32Array, (d, o) => d.getUint32(o, true), (d, o, v) => d.setUint32(o, N(v), true));
+export const u32: PrimitiveDesc<'u32'> = /* @__PURE__ */ prim('u32');
 /** Little-endian signed 32-bit integer (4 bytes, 4-byte aligned). */
-export const i32: PrimitiveDesc<'i32'> = prim('i32', Int32Array, (d, o) => d.getInt32(o, true), (d, o, v) => d.setInt32(o, N(v), true));
+export const i32: PrimitiveDesc<'i32'> = /* @__PURE__ */ prim('i32');
 /** Little-endian unsigned 64-bit integer (`bigint`, 8 bytes, 8-byte aligned). */
-export const u64: PrimitiveDesc<'u64'> = prim('u64', BigUint64Array, (d, o) => d.getBigUint64(o, true), (d, o, v) => d.setBigUint64(o, BigInt(v), true));
+export const u64: PrimitiveDesc<'u64'> = /* @__PURE__ */ prim('u64');
 /** Little-endian signed 64-bit integer (`bigint`, 8 bytes, 8-byte aligned). */
-export const i64: PrimitiveDesc<'i64'> = prim('i64', BigInt64Array, (d, o) => d.getBigInt64(o, true), (d, o, v) => d.setBigInt64(o, BigInt(v), true));
+export const i64: PrimitiveDesc<'i64'> = /* @__PURE__ */ prim('i64');
 /** IEEE 754 16-bit half-precision float (2 bytes, 2-byte aligned). */
-export const f16: PrimitiveDesc<'f16'> = /* @__PURE__ */ (() =>
-  prim(
-    'f16',
-    (globalThis as any).Float16Array ?? Uint16Array,
-    (d, o) => (d as any).getFloat16(o, true),
-    (d, o, v) => (d as any).setFloat16(o, N(v), true),
-  ))();
+export const f16: PrimitiveDesc<'f16'> = /* @__PURE__ */ prim('f16');
 /** IEEE 754 32-bit float (4 bytes, 4-byte aligned). */
-export const f32: PrimitiveDesc<'f32'> = prim('f32', Float32Array, (d, o) => d.getFloat32(o, true), (d, o, v) => d.setFloat32(o, N(v), true));
+export const f32: PrimitiveDesc<'f32'> = /* @__PURE__ */ prim('f32');
 /** IEEE 754 64-bit float (8 bytes, 8-byte aligned). */
-export const f64: PrimitiveDesc<'f64'> = prim('f64', Float64Array, (d, o) => d.getFloat64(o, true), (d, o, v) => d.setFloat64(o, N(v), true));
+export const f64: PrimitiveDesc<'f64'> = /* @__PURE__ */ prim('f64');
 /** 1-byte boolean (`0` or `1`, 1-byte aligned). */
-export const bool: PrimitiveDesc<'bool'> = prim(
-  'bool',
-  Uint8Array,
-  (d, o) => d.getUint8(o) !== 0,
-  (d, o, v) => d.setUint8(o, v ? 1 : 0),
-);
+export const bool: PrimitiveDesc<'bool'> = {
+  .../* @__PURE__ */ prim('bool'),
+  _g: (d, o) => d.getUint8(o) !== 0,
+  _s: (d, o, v) => d.setUint8(o, v ? 1 : 0),
+};
 
 /** Inline fixed-length null-padded UTF-8 string `[u8; N]` (`align: 1, size: length`) with zero tail indirection. */
 export function fixedStr<N extends number>(length: N): FixedStrDesc<N> {
-  chkLen(length);
   return {
-    kind: 'primitive',
+    ...fixedBytes(length),
     type: 'fixedStr',
-    length,
-    size: length,
-    align: 1,
-    rustType: `[u8; ${length}]`,
-    _C: undefined,
     _g(d, o) {
-      let end = 0,
-        s: string | null = '';
-      for (; end < length; end++) {
-        const c = d.getUint8(o + end);
-        if (!c) break;
-        if (c < 0x80 && s !== null) s += String.fromCharCode(c);
-        else s = null;
-      }
-      return s !== null ? s : textDecoder.decode(u8s(d, o, end));
+      let end = 0;
+      while (end < length && d.getUint8(o + end)) end++;
+      return textDecoder.decode(u8s(d, o, end));
     },
     _s(d, o, v) {
-      const u = u8s(d, o, length),
-        w = v ? textEncoder.encodeInto(String(v), u).written : 0;
-      if (w < length) u.fill(0, w);
+      const u = u8s(d, o, length);
+      u.fill(0);
+      textEncoder.encodeInto(String(v), u);
     },
   };
 }
@@ -498,34 +484,26 @@ export function fixedBytes<N extends number>(length: N): FixedBytesDesc<N> {
     _s(d, o, v) {
       const u = u8s(d, o, length);
       u.fill(0);
-      if (v) {
-        u.set(
-          ArrayBuffer.isView(v)
-            ? u8s(v, 0, Math.min(v.byteLength, length))
-            : Array.from(v as Iterable<number>).slice(0, length),
-        );
-      }
+      if (v) u.set(ArrayBuffer.isView(v) ? u8s(v, 0, Math.min(v.byteLength, length)) : Array.from(v as Iterable<number>).slice(0, length));
     },
   };
 }
+
 /** Maps an inline sentinel value (e.g. `-32768` for `i16` or `NaN` for `f32`) to `null` in JS with 0 extra wire bytes. */
 export function sentinel<P extends PrimitiveDesc<any>>(
   primDesc: P,
   nullValue: PrimitiveTsType<P['type']>,
 ): NullablePrimitiveDesc<P['type']> {
-  const isNan = typeof nullValue === 'number' && Number.isNaN(nullValue);
   return {
     ...primDesc,
     nullable: true,
     _null: nullValue,
     _C: undefined,
-    _g: (d, o) => {
-      const v = primDesc._g(d, o) as PrimitiveTsType<P['type']>;
-      return (isNan ? Number.isNaN(v as number) : v === nullValue) ? null : v;
-    },
-    _s: (d, o, v) => primDesc._s(d, o, (v == null ? nullValue : v) as number | bigint | boolean),
+    _g: (d, o) => { const v = primDesc._g(d, o); return Object.is(v, nullValue) ? null : (v as PrimitiveTsType<P['type']>); },
+    _s: (d, o, v) => primDesc._s(d, o, (v ?? nullValue) as number | bigint | boolean),
   };
 }
+
 /** Alias for `sentinel(primDesc, nullValue)`. */
 export const nullable = sentinel;
 
@@ -533,33 +511,30 @@ export const nullable = sentinel;
 export function scaled<P extends PrimitiveDesc<any>>(
   primDesc: P,
   factor: number,
-  nullOpt: { null: number },
+  nullOpt?: { null?: number } | number,
+): PrimitiveDesc<'f64'>;
+export function scaled<P extends PrimitiveDesc<any>>(
+  primDesc: P,
+  factor: number,
+  nullOpt: { null: number } | number,
 ): NullablePrimitiveDesc<'f64'>;
 export function scaled<P extends PrimitiveDesc<any>>(
   primDesc: P,
   factor: number,
-  nullOpt?: { null?: number },
-): PrimitiveDesc<'f64'> | NullablePrimitiveDesc<'f64'>;
-export function scaled<P extends PrimitiveDesc<any>>(
-  primDesc: P,
-  factor: number,
-  nullOpt?: { null?: number },
+  nullOpt?: { null?: number } | number,
 ): PrimitiveDesc<'f64'> | NullablePrimitiveDesc<'f64'> {
-  const nv = typeof nullOpt === 'number' ? nullOpt : nullOpt?.null,
-    hasN = nv !== undefined;
+  const nv = typeof nullOpt === 'number' ? nullOpt : nullOpt?.null;
   return {
-    ...primDesc,
+    ...sentinel(primDesc, nv as any),
     type: 'f64',
     float: true,
-    nullable: hasN as true,
-    _null: nv as number,
-    _C: undefined as unknown as TypedArrayConstructor,
+    nullable: (nv !== undefined) as true,
     _g: (d: DataView, o: number) => {
       const r = primDesc._g(d, o) as number;
-      return hasN && r === nv ? null : r / factor;
+      return Object.is(r, nv) ? null : r / factor;
     },
-    _s: (d: DataView, o: number, v: number | bigint | boolean | null | undefined) =>
-      primDesc._s(d, o, v == null && hasN ? nv : Math.round(+N(v) * factor)),
+    _s: (d: DataView, o: number, v: any) =>
+      primDesc._s(d, o, v == null ? (nv ?? 0) : Math.round(+v * factor)),
   };
 }
 
@@ -589,15 +564,12 @@ export function fixedArray<E extends FieldDesc, N extends number>(
 export const array = fixedArray;
 
 /** Variable-length slice `CapnSlice<T>` stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
-export function slice(element: SelfRef): SliceDesc<SelfRef>;
-export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E), kind?: 'slice' | 'ref'): SliceDesc<E>;
-export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E) | SelfRef, kind: 'slice' | 'ref' = 'slice'): SliceDesc<any> {
-  const getEl = (): E => (typeof element === 'function' ? (element as () => E)() : (element as E));
+const _reg: Record<string, any> = {};
+function ptrDesc(kind: 'slice' | 'ref', target: any): any {
+  const getEl = () => _reg[target] ?? (typeof target === 'function' ? target() : target);
   return {
-    kind: kind as 'slice',
-    get element(): E {
-      return getEl();
-    },
+    kind,
+    get element() { return getEl(); },
     size: 8,
     align: 4,
     get rustType(): string {
@@ -606,15 +578,18 @@ export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E) | 
   };
 }
 
+/** Variable-length slice `CapnSlice<T>` stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
+export function slice(element: SelfRef): SliceDesc<SelfRef>;
+export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E)): SliceDesc<E>;
+export function slice<E extends FieldDesc = FieldDesc>(element: E | (() => E) | SelfRef, kind: 'slice' | 'ref' = 'slice'): SliceDesc<any> { return ptrDesc(kind, element); }
+
 /** Alias for `slice(element)`. */
 export const list = slice;
 
 /** Nullable relative-offset pointer `CapnRef<T>` (`[u32 off, u32 present]`, 8 bytes inline, supports recursive & circular graphs). */
 export function ref(target: SelfRef): RefDesc<SelfRef>;
 export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S)): RefDesc<S>;
-export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S) | SelfRef): RefDesc<any> {
-  return slice(target as any, 'ref') as unknown as RefDesc<S>;
-}
+export function ref<S extends StructDefLike<any> = StructDefLike<any>>(target: S | (() => S) | SelfRef): RefDesc<any> { return ptrDesc('ref', target); }
 function ensureScratch(minBytes: number): void {
   if (minBytes > sBuf.byteLength) {
     const nb = new ArrayBuffer(Math.max(minBytes, sBuf.byteLength * 2));
@@ -638,41 +613,35 @@ interface InternalStructView {
   readonly bytes: Uint8Array;
 }
 
-function isWasmMemory(x: unknown): x is WebAssembly.Memory {
-  return typeof WebAssembly !== 'undefined' && x instanceof WebAssembly.Memory;
-}
-
 interface ResolvedSource {
   d: DataView;
+  b: number;
   o: number;
   max: number;
   m: WebAssembly.Memory | WasmArena | null;
 }
 
-function isMemOrArena(x: unknown): x is WebAssembly.Memory | WasmArena {
-  return (typeof x === 'object' && x !== null && '_u8' in x) || isWasmMemory(x);
+function growMem(m: WebAssembly.Memory, end: number): void {
+  if (end > m.buffer.byteLength) m.grow(Math.ceil((end - m.buffer.byteLength) / 65536));
 }
-function resolveSource(s: BufferSourceInput, byteOffset = 0): ResolvedSource {
-  const v = ArrayBuffer.isView(s);
-  const m = isMemOrArena(s) ? s : null;
-  const b = v ? s.buffer : m ? m.buffer : (s as unknown as ArrayBufferLike);
-  const len = v ? s.byteLength : b.byteLength;
+
+function resolveSource(
+  s: BufferSourceInput,
+  byteOffset = 0,
+): ResolvedSource {
+  const v = ArrayBuffer.isView(s),
+    m = !v && (s as any)?.buffer ? (s as WebAssembly.Memory | WasmArena) : null,
+    b = v ? s.buffer : m ? m.buffer : (s as ArrayBufferLike),
+    len = v ? s.byteLength : b.byteLength;
   if (byteOffset < 0 || byteOffset > len) oob();
   return {
-    d:
-      s instanceof DataView
-        ? s
-        : v
-          ? new DataView(b, s.byteOffset, len)
-          : m && '_d' in m
-            ? m.sync()._d
-            : new DataView(b),
+    d: m && '_d' in m ? m.sync()._d : new DataView(b, v ? s.byteOffset : 0, len),
+    b: v ? s.byteOffset : 0,
     o: byteOffset,
     max: len - byteOffset,
     m,
   };
 }
-
 function defVal(desc: FieldDesc, plain: boolean): unknown {
   const d = new DataView(new ArrayBuffer(desc.size));
   return readVal({ def: desc as any, _d: d, _b: 0, _o: 0, _ws: desc.size, _m: null, _k: () => d } as any, desc, 0, plain);
@@ -688,65 +657,64 @@ function allocTail(v: any, bytes: number, align: number): number {
     return p;
   }
   const d = root._k(),
-    cur = root._tl ?? root._o + al(root.byteLength, 8),
+    cur = Math.max(root._tl ?? root._o + al(root.byteLength, 8), m?.offset ?? 0),
     p = al(cur, align),
     end = p + bytes;
   if (end > d.byteLength) {
     if (m) {
-      m.grow(Math.ceil((end - d.byteLength) / 65536));
-        root._d = new DataView(m.buffer);
-      } else {
-        const nb = new ArrayBuffer(Math.max(al(end, 8), d.byteLength * 2, 64));
-        new Uint8Array(nb).set(u8s(d, 0, cur));
-        root._d = new DataView(nb);
-      }
+      growMem(m, end);
+      root._d = new DataView(m.buffer);
+    } else {
+      const nb = new ArrayBuffer(Math.max(al(end, 8), d.byteLength * 2, 64));
+      new Uint8Array(nb).set(u8s(d, 0, cur));
+      root._d = new DataView(nb);
+    }
     v._d = root._d;
-    if (root._c) root._c._d = root._d;
-    if (root._p) for (const pv of root._p) if (pv) pv._d = root._d;
   } else if (bytes) {
     u8s(d, p, bytes).fill(0);
   }
   root._tl = end;
+  if (m) m.offset = end;
   return p;
 }
 
 function mutVar(
-  v: InternalStructView,
+  v: InternalStructView | null,
   off: number,
   base: number,
   count: number,
   elSize: number,
   align: number,
 ): number {
-  const root: any = (v as any)._a ?? v;
-  let d = v._k();
-  const oldP = d.getUint32(off, true),
+  const bytes = count * elSize;
+  if (!v) {
+    const st = count ? al(tail, align) : tail;
+    ensureScratch((tail = st + bytes) + 64);
+    sU8.fill(0, st, tail);
+    setDesc(off, count ? st - base : 0, count);
+    return st;
+  }
+  const root: any = (v as any)._a ?? v,
+    d = v._k(),
+    oldP = d.getUint32(off, true),
     oldB = d.getUint32(off + 4, true) * elSize,
-    bytes = count * elSize,
-    cur = root._tl ?? root._o + root.byteLength;
-  let st = base + oldP;
-  const atTip = oldB > 0 && st + oldB === cur;
-  if (bytes <= oldB) {
-    if (oldB > bytes) {
-      if (atTip && !root._m) root._tl = st + bytes;
-      else root._dead = (root._dead ?? 0) + (oldB - bytes);
-    }
+    st0 = base + oldP,
+    inTail = oldP > 0 && st0 >= root._o + root.byteLength,
+    atTip = inTail && oldB > 0 && st0 + oldB === (root._tl ?? root._o + root.byteLength);
+  let st = st0;
+  if (inTail && bytes <= oldB) {
+    if (atTip) root._tl = st0 + bytes;
+    if (oldB > bytes) root._dead = (root._dead ?? 0) + (oldB - bytes);
   } else {
-    if (atTip) {
-      root._tl = st;
-      if (root._m && '_u8' in root._m && root._m.offset === cur) root._m.offset = st;
-    } else if (oldB) {
-      root._dead = (root._dead ?? 0) + oldB;
-    }
+    if (atTip && !root._m) root._tl = st0;
+    else if (inTail && oldB) root._dead = (root._dead ?? 0) + oldB;
     st = allocTail(root, bytes, align);
-    d = v._d = root._d;
     if (root.def && off === root._b + root.def._fv && st - base !== al(root.byteLength, 8)) root._dirty = true;
   }
-  if (bytes) u8s(d, st, bytes).fill(0);
-  setDesc(off, count ? st - base : 0, count, d);
+  if (bytes) u8s(root._d, st, bytes).fill(0);
+  setDesc(off, count ? st - base : 0, count, root._d);
   return st;
 }
-
 function upgradeView(v: any): void {
   if (v._ws < v.def.size) (v._a ?? v).compact();
 }
@@ -757,32 +725,9 @@ let _wSeen: Map<object, number> | null = null;
 let _wActive: Set<object> | null = null;
 let _wFix: [number, number, number][] | null = null;
 
-function readVal(
-  v: InternalStructView,
-  desc: FieldDesc,
-  off: number,
-  plain: boolean,
-  len?: number,
-): unknown {
+function readVal(v: InternalStructView, desc: FieldDesc, off: number, plain: boolean): unknown {
   const d = v._k(),
     k = desc.kind;
-  if (len !== undefined) {
-    const sz = desc.size,
-      tot = d.byteOffset + off;
-    if (!plain && k === 'primitive' && desc._C && desc.type !== 'bool' && tot % sz === 0) {
-      return new desc._C(d.buffer, tot, len);
-    }
-    if (!plain && k === 'struct') {
-      const sav = new StructArrayView(desc, d, off, len, v._b);
-      sav._m = v._m;
-      (sav as any)._a = (v as any)._a ?? v;
-      return sav;
-    }
-    if (plain && (_budget -= len * sz) < 0) oob();
-    return Array.from({ length: len }, (_, i) =>
-      readVal(v, desc, off + i * sz, plain),
-    );
-  }
   if (k === 'primitive') {
     const r = desc._g(d, off);
     return plain && r instanceof Uint8Array ? Array.from(r) : r;
@@ -792,41 +737,33 @@ function readVal(
     const p = v._b + d.getUint32(off, true),
       l = d.getUint32(off + 4, true);
     if (!l) return '';
-    if (
-      p < minP ||
-      p + l > d.byteLength ||
-      (p < off + 8 && p + l > off) ||
-      (plain && (_budget -= l) < 0)
-    )
-      oob();
-    let s = '';
-    if (l <= 48) {
-      for (let i = 0; i < l; i++) {
-        const c = d.getUint8(p + i);
-        if (c >= 0x80) {
-          s = '';
-          break;
-        }
-        s += String.fromCharCode(c);
-      }
-    }
-    return s || textDecoder.decode(u8s(d, p, l));
+    if (p < minP || p + l > d.byteLength || (plain && (_budget -= l) < 0)) oob();
+    return textDecoder.decode(u8s(d, p, l));
   }
   if (k === 'array' || k === 'slice' || k === 'ref') {
     const el = desc.element,
+      sz = el.size,
       n = k === 'array' ? desc.length : d.getUint32(off + 4, true);
-    if (k === 'ref' && !n) return null;
     let p = off;
     if (k !== 'array') {
-      if (!n) p = v._o;
-      else {
-        p = v._b + d.getUint32(off, true);
-        const bl = (k === 'ref' ? 1 : n) * el.size,
-          inTbl = el === v.def && p >= v._b && (p - v._b) % (v._ws || v.def.size) === 0;
-        if ((!inTbl && p < minP) || p + bl > d.byteLength || (!inTbl && p < off + 8 && p + bl > off)) oob();
-      }
+      if (!n && k === 'ref') return null;
+      p = n ? v._b + d.getUint32(off, true) : v._b;
+      const bl = (k === 'ref' ? 1 : n) * sz,
+        inTbl = el === v.def && p >= v._b && p < minP && (p - v._b) % (v._ws || v.def.size) === 0;
+      if (n && ((!inTbl && p < minP) || p + bl > d.byteLength || (!inTbl && p < off + 8 && p + bl > off))) oob();
     }
-    return readVal(v, el, p, plain, k === 'ref' ? undefined : n);
+    if (k === 'ref') return readVal(v, el, p, plain);
+    const tot = d.byteOffset + p;
+    if (!plain && el.kind === 'primitive' && el._C && el.type !== 'bool' && tot % sz === 0)
+      return new el._C(d.buffer, tot, n);
+    if (!plain && el.kind === 'struct') {
+      const sav = new StructArrayView(el, d, p, n, v._b);
+      sav._m = v._m;
+      (sav as any)._a = (v as any)._a ?? v;
+      return sav;
+    }
+    if (plain && (_budget -= n * sz) < 0) oob();
+    return Array.from({ length: n }, (_, i) => readVal(v, el, p + i * sz, plain));
   }
   if (!plain) {
     if (desc === v.def && v === (v as any)._a?._c) {
@@ -881,9 +818,6 @@ function writeVal(
     _wSeen = new Map();
     _wActive = new Set();
     _wFix = [];
-    if (v && !('length' in v) && off === v._o && val && typeof val === 'object') {
-      _wSeen.set(val, v._o);
-    }
   }
   try {
     let d = v ? v._k() : sDv;
@@ -891,129 +825,78 @@ function writeVal(
     if (k === 'primitive') {
       (desc as PrimitiveDesc)._s(d, off, val as number | bigint | boolean);
     } else if (k === 'str') {
-      const s = String(val);
-      if (!v) {
-        const st = tail;
-        ensureScratch(st + s.length * 3 + 8);
-        const w = textEncoder.encodeInto(s, sU8.subarray(st)).written;
-        tail = st + w;
-        setDesc(off, st - base, w);
-      } else {
-        const b = textEncoder.encode(s),
-          st = mutVar(v, off, base, b.byteLength, 1, 1);
-        d = v._k();
-        u8s(d, st, b.byteLength).set(b);
-      }
+      const b = textEncoder.encode(String(val)),
+        st = mutVar(v, off, base, b.byteLength, 1, 1);
+      u8s(v ? v._k() : sDv, st, b.byteLength).set(b);
     } else if (k === 'ref') {
       const el = desc.element;
-      if (val === null) {
-        if (v) {
-          const root: any = (v as any)._a ?? v,
-            oldP = d.getUint32(off, true),
-            oldT = d.getUint32(off + 4, true);
-          if (oldT && base + oldP >= root._o + root.byteLength) {
-            root._dead = (root._dead ?? 0) + el.size;
-          }
-          setDesc(off, 0, 0, d);
-        }
-      } else if (
-        typeof val === 'object' &&
-        '_d' in (val as any) &&
-        (val as any)._k().buffer === d.buffer &&
-        (val as any)._k().byteOffset === d.byteOffset
-      ) {
-        setDesc(off, (val as any)._o - base, 1, d);
-      } else if (typeof val === 'object' && _wSeen?.has(val)) {
-        setDesc(off, _wSeen.get(val)! - base, 1, d);
-      } else {
-        let st: number;
-        if (!v) {
-          tail = al(tail, el.align);
-          st = tail;
-          ensureScratch((tail += el.size) + 64);
-          sU8.fill(0, st, tail);
-          initNulls(el, sDv, st);
-          setDesc(off, st - base, 1);
-        } else {
-          st = mutVar(v, off, base, 1, el.size, el.align);
-          d = v._k();
-          initNulls(el, d, st);
-        }
-        if (typeof val === 'object') _wSeen?.set(val, st);
-        writeVal(v, el, val, base, st);
+      if (val === null) mutVar(v, off, base, 0, el.size, el.align);
+      else {
+      const sv =
+        val instanceof MemView && val._k().buffer === d.buffer && val._d.byteOffset === d.byteOffset
+          ? val._o
+          : _wSeen?.get(val as object);
+        if (sv !== undefined) setDesc(off, sv - base, 1, d);
+        else writeVal(v, el, val, base, mutVar(v, off, base, 1, el.size, el.align));
       }
     } else if (k === 'array' || k === 'slice') {
       const el = desc.element,
         isSav = val instanceof StructArrayView,
+        isRaw = el.kind === 'struct' && (el as any)._fv < 0 && ArrayBuffer.isView(val),
         src: ArrayLike<unknown> =
-          isSav || 'length' in (val as any) ? (val as ArrayLike<unknown>) : Array.from(val as Iterable<unknown>),
-        n = k === 'array' ? desc.length : src.length,
-        cp = Math.min(n, src.length) * el.size;
-      let st = off;
-      if (k === 'slice') {
-        if (!v) {
-          if (n) tail = al(tail, el.align);
-          st = tail;
-          ensureScratch((tail += n * el.size) + 64);
-          sU8.fill(0, st, tail);
-          setDesc(off, st - base, n);
-        } else {
-          st = mutVar(v, off, base, n, el.size, el.align);
-          d = v._k();
-        }
-      } else if (v) {
-        u8s(d, st, n * el.size).fill(0);
-      }
+          isSav || isRaw || 'length' in (val as any) ? (val as any) : Array.from(val as any),
+        rawLen = isRaw ? ((val as ArrayBufferView).byteLength / el.size) | 0 : src.length,
+        n = k === 'array' ? desc.length : rawLen,
+        cp = Math.min(n, rawLen) * el.size,
+        st = k === 'slice' ? mutVar(v, off, base, n, el.size, el.align) : off;
+      d = v ? v._k() : sDv;
+      if (v && k !== 'slice' && n) u8s(d, st, n * el.size).fill(0);
       const sb =
-        el.kind === 'primitive' && el._C && val instanceof el._C
+        isRaw || (el.kind === 'primitive' && el._C && val instanceof el._C)
           ? u8s(val as ArrayBufferView, 0, cp)
           : isSav && (el as any)._fv < 0 && (val as any).stride === el.size && (val as any)._ws === el.size
-            ? (val as StructArrayView<any>).bytes.subarray(0, cp)
+            ? u8s((val as any)._k(), (val as any)._o, cp)
             : null;
-      if (sb && cp) {
-        u8s(d, st, cp).set(sb);
+      if (sb) {
+        if (cp) u8s(d, st, cp).set(sb);
       } else {
         const m = Math.min(n, src.length);
-        if (el.kind === 'struct' && _wSeen && !isSav) {
+        if (el.kind === 'struct' && _wSeen && !isSav)
           for (let i = 0; i < m; i++) {
             const it = src[i];
-            if (it && typeof it === 'object' && !_wSeen.has(it)) _wSeen.set(it, st + i * el.size);
+            if (it && typeof it === 'object' && !Array.isArray(it) && !_wSeen.has(it)) _wSeen.set(it, st + i * el.size);
           }
-        }
-        for (let i = 0; i < m; i++) {
-          const it = isSav ? (val as any).at(i) : src[i],
-            slot = st + i * el.size;
-          if (el.kind === 'struct' && it && typeof it === 'object' && _wActive?.has(it)) {
-            _wFix?.push([slot, _wSeen!.get(it)!, el.size]);
-          } else {
-            writeVal(v, el, it, base, slot);
-          }
-        }
+        const savCur = isSav ? (val as StructArrayView<any>)._mv(0) : null;
+        for (let i = 0; i < m; i++)
+          writeVal(v, el, savCur ? (val as StructArrayView<any>)._mv(i, savCur) : src[i], base, st + i * el.size);
       }
-      if ((el as any)._null !== undefined) {
-        for (let i = Math.min(n, src.length); i < n; i++) (el as any)._s(d, st + i * el.size, null);
-      }
-    } else {
+      if ((el as any)._null !== undefined)
+        for (let i = Math.min(n, rawLen); i < n; i++) (el as any)._s(d, st + i * el.size, null);
+    } else if (k === 'struct') {
       const rec = val as Record<string, unknown>;
-      if (rec && typeof rec === 'object') {
+      const isTuple = Array.isArray(rec);
+      const trackObj = Boolean(rec && typeof rec === 'object' && !isTuple && !(rec instanceof StructViewBase));
+      if (trackObj) {
         if (_wActive?.has(rec)) {
-          _wFix?.push([off, _wSeen!.get(rec)!, desc.size]);
+          _wFix!.push([off, _wSeen!.get(rec)!, desc.size]);
           return;
         }
         if (_wSeen && !_wSeen.has(rec)) _wSeen.set(rec, off);
         _wActive?.add(rec);
       }
       if (v && v._ws < desc.size) upgradeView(v);
-      for (const f of desc.fieldList) {
-        if (rec[f.name] !== undefined) {
-          writeVal(v, f.desc, rec[f.name], base, off + f.offset);
-        } else if (!v && (f.desc as any)._null !== undefined) {
-          (f.desc as any)._s(d, off + f.offset, null);
-        } else if (!v && off === base && f.offset === desc._fv) {
+      for (let i = 0; i < desc.fieldList.length; i++) {
+        const f = desc.fieldList[i],
+          fv = isTuple ? (rec as unknown[])[i] : rec[f.name];
+        if (fv !== undefined) {
+          writeVal(v, f.desc, fv, base, off + f.offset);
+        } else if ((!v || off !== v._o) && (f.desc as any)._null !== undefined) {
+          (f.desc as any)._s(v ? v._k() : sDv, off + f.offset, null);
+        } else if (!v && off === base && off + f.offset === desc._fv) {
           setDesc(off + f.offset, tail - base, 0);
         }
       }
-      if (rec && typeof rec === 'object') _wActive?.delete(rec);
+      if (trackObj) _wActive?.delete(rec);
     }
   } finally {
     if (top) {
@@ -1065,9 +948,11 @@ class MemView<F extends FieldRecord = FieldRecord> {
 
   /** @internal */
   _k(): DataView {
+    const a = (this as any)._a;
+    if (a) return (this._d = a._k());
     const m = this._m as any;
-    if (m !== null) {
-      const b = m._buf ? (m.memory ? m.memory.buffer : m._buf) : m.buffer;
+    if (m) {
+      const b = (m.memory ?? m).buffer ?? m._buf;
       if (b !== this._d.buffer) this._d = m.sync ? m.sync()._d : new DataView(b);
     }
     return this._d;
@@ -1112,24 +997,22 @@ class MemView<F extends FieldRecord = FieldRecord> {
     compactionRatio: number;
     data: unknown;
   } {
-    const a = this as any,
-      isArr = 'length' in a;
+    const a = this as any;
     return {
-      schema: this.def.name || 'AnonStruct',
-      stride: isArr ? a.stride : this.def.size,
-      rowCount: isArr ? a.length : 1,
+      schema: this.def.rustType,
+      stride: a.stride ?? this.def.size,
+      rowCount: a.length ?? 1,
       usedByteLength: this.usedByteLength,
       deadByteLength: this.deadByteLength,
       compactionRatio: this.compactionRatio,
-      data: isArr ? a.toObjects() : a.toObject(),
+      data: a.toJSON(),
     };
   }
-  /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   /** Re-packs only live fields and tail data into a tight `Uint8Array` and rebinds this view in-place. */
   compact(): Uint8Array {
     const a = this as any,
       isArr = 'length' in a,
-      p = pack(this.def as StructDef<F>, (isArr ? a.toObjects() : [a.toObject()]) as any),
+      p = pack(this.def as StructDef<F>, (isArr ? a.toJSON() : [a.toJSON()]) as any),
       o0 = this._o,
       sz = this.def.size;
     this.byteLength = (isArr ? a.length : 1) * sz;
@@ -1148,15 +1031,18 @@ class MemView<F extends FieldRecord = FieldRecord> {
 
   /** Wire-ready `Uint8Array` view over the underlying bytes (automatically compacts dead tail bytes if dirty). */
   get bytes(): Uint8Array {
-    if (this._dirty || this._dead) return this.compact();
+    if (this._dirty || this._dead || (this.def._fv >= 0 && this._b !== this._o)) return this.compact();
     const d = this._k(),
       rawEnd = Math.max(this.byteLength, (this._tl ?? this._o + this.byteLength) - this._o),
       end = !this._m && this._tl !== undefined ? Math.min(d.byteLength - this._o, al(rawEnd, 8)) : rawEnd;
-    if (this.byteLength && this.def._fv >= 0 && d.getUint32(this._b + this.def._fv, true) < this.byteLength) {
-      const ts = al(this.byteLength, 8);
-      if (end >= ts) {
-        if (d.getUint32(this._b + this.def._fv + 4, true)) d.setUint32(this._b + this.def._fv + 4, ts | 1, true);
-        else d.setUint32(this._b + this.def._fv, ts, true);
+    if (this.byteLength && this.def._fv >= 0) {
+      const ts = al(this.byteLength, 8),
+        f = this._b + this.def._fv,
+        p0 = d.getUint32(f, true);
+      if (this._tl !== undefined && p0 > ts) return this.compact();
+      if (p0 < ts && end >= ts) {
+        const h = p0 || d.getUint32(f + 4, true) ? 4 : 0;
+        d.setUint32(f + h, ts | (h >> 2), true);
       }
     }
     return u8s(d, this._o, end);
@@ -1195,25 +1081,22 @@ export class StructViewBase<
 
   /** Updates a single field in-place (accepts plain JS arrays/objects for `slice`, `fixedArray`, and nested structs). */
   set<K extends keyof F>(field: K, value: FieldInput<F[K]>): this;
-  /** Updates multiple fields in-place from a partial object. */
-  set(values: Partial<StructInput<F>>): this;
+  /** Updates multiple fields in-place from a partial object or positional tuple. */
+  set(values: Partial<StructInput<F>> | readonly unknown[]): this;
   set(fieldOrValues: unknown, value?: unknown): this {
     if (typeof fieldOrValues === 'string') (this as any)[fieldOrValues] = value;
     else writeVal(this as any, this.def, fieldOrValues, this._b, this._o);
     return this;
   }
-
-  /** Updates multiple fields in-place from a partial object. */
-  declare setAll: (values: Partial<StructInput<F>>) => this;
-
-  /** Materializes this binary struct view into a plain JavaScript object. */
+  /** Updates multiple fields in-place from a partial object or positional tuple. */
+  declare setAll: (values: Partial<StructInput<F>> | readonly unknown[]) => this;
   toObject(): PlainStructValues<F> {
     return readPlain(this);
   }
   /** Serializes this struct view to a plain object for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>;
  }
-const kInspect = Symbol.for('nodejs.util.inspect.custom');
+const kInspect = /* @__PURE__ */ Symbol.for('nodejs.util.inspect.custom');
 StructViewBase.prototype.at = StructViewBase.prototype.seek;
 StructViewBase.prototype.setAll = StructViewBase.prototype.set;
 StructViewBase.prototype.toJSON = (StructViewBase.prototype as any)[kInspect] = StructViewBase.prototype.toObject;
@@ -1227,10 +1110,9 @@ function normOpts(
   bo?: number,
   s?: number,
 ): { o: number; c?: number; b?: number; s?: number } {
-  if (typeof b === 'number') return { o: b, c, b: bo, s };
-  return 'kind' in b
-    ? { o: 0, s: b.stride }
-    : { o: b.byteOffset ?? 0, c: b.count, b: b.baseOffset, s: b.stride };
+  return typeof b === 'number'
+    ? { o: b, c, b: bo, s }
+    : { o: (b as any).byteOffset ?? 0, c: (b as any).count, b: (b as any).baseOffset, s: b.stride };
 }
 
 export function structView<F extends FieldRecord>(
@@ -1271,13 +1153,15 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   ) {
     super();
     const n = normOpts(byteOffset, count, baseOffset, wireStride);
-    const sz = n.s ?? def.size, r = resolveSource(source, n.o);
-    const hasVar = def._fv >= 0 && def._fv < sz;
-    const f0 = n.c === undefined && r.max >= sz && hasVar ? r.d.getUint32(r.o + def._fv, true) : 0;
-    const f1 = n.c === undefined && r.max >= sz && (def as any)._fvr ? r.d.getUint32(r.o + def._fv + 4, true) & ~7 : 0;
-    const f = f1 || f0;
-    const len = n.c ?? (f >= sz && f <= r.max ? f / sz : r.max / sz) | 0;
-    const tot = len * sz;
+    const sz = n.s ?? def.size,
+      r = resolveSource(source, n.o),
+      hasVar = def._fv >= 0 && def._fv < sz,
+      f =
+        n.c === undefined && r.max >= sz && hasVar
+          ? ((def as any)._fvr && r.d.getUint32(r.o + def._fv + 4, true) & ~7) || r.d.getUint32(r.o + def._fv, true)
+          : 0,
+      len = n.c ?? (f >= sz && f <= r.max ? f / sz : r.max / sz) | 0,
+      tot = len * sz;
     if (len < 0 || r.o < 0 || r.max < tot) oob();
     Object.assign(this, {
       def,
@@ -1285,7 +1169,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       length: len,
       byteLength: tot,
       _ws: sz,
-      _tl: r.o + Math.max(tot, r.max),
+      _tl: r.o + (!hasVar && n.c !== undefined ? tot : Math.max(tot, r.max)),
       _cap: len,
       _dead: 0,
       _dirty: false,
@@ -1299,7 +1183,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       o = this._o + index * this.stride,
       nv = v ? v._set(d, this._b, o, this._m) : (new this.def._V(d, this._b, o, this._m) as unknown as StructView<F>);
     nv._ws = this._ws;
-    (nv as any)._a = this;
+    (nv as any)._a = (this as any)._a ?? this;
     return nv;
   }
   /** Returns a reusable flyweight cursor positioned at `index`. */
@@ -1318,14 +1202,13 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   }
 
   /** Writes `value` into the struct at `index` (supports negative indices from the end). */
-  set(index: number, value: Partial<StructInput<F>> | StructView<F>): this {
+  set(index: number, value: Partial<StructInput<F>> | StructView<F> | readonly unknown[]): this {
     this.at(index).set(value as any);
     return this;
   }
 
   /** Appends one or more rows to the binary array, automatically growing capacity if needed. */
-  push(...items: (Partial<StructInput<F>> | StructView<F>)[]): number {
-    if (this._ws < this.def.size) this.compact();
+  push(...items: (Partial<StructInput<F>> | StructView<F> | readonly unknown[])[]): number {
     const def = this.def, st = this.stride, need = this.length + items.length, hasVar = def._fv >= 0;
     if (need > this._cap) {
       const curEnd = this._tl ?? this._o + this.byteLength,
@@ -1374,15 +1257,15 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   /** Returns a zero-copy `StructArrayView` over `[begin, end)` without copying bytes. */
   subarray(begin = 0, end = this.length): StructArrayView<F> {
     const len = this.length,
-      s = begin < 0 ? Math.max(len + begin, 0) : Math.min(begin, len),
-      e = end < 0 ? Math.max(len + end, 0) : Math.min(end, len),
-      cnt = Math.max(0, e - s),
-      sub = new StructArrayView(this.def, this._k(), this._o + s * this.stride, cnt, this._b, this._ws);
+      cl = (i: number) => Math.max(0, Math.min(len, i < 0 ? len + i : i)),
+      s = cl(begin),
+      e = cl(end),
+      sub = new StructArrayView(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._ws);
     sub._m = this._m;
+    (sub as any)._a = (this as any)._a ?? this;
     sub._dirty = (this.def._fv >= 0 && (s > 0 || e < len)) || Boolean(this._dirty || this._dead);
     return sub;
   }
-  /** Binary search: first row index `i` in `[0..length]` where `row[i][field] >= value` ($O(\log N)$, 0 allocations). */
   lowerBound<K extends PrimitiveFieldKeys<F>>(field: K, value: number | bigint): number {
     return bsearch(this, field, value, false);
   }
@@ -1403,22 +1286,16 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     const len = this.length,
       c = this.cursor(0),
       def = this.def,
-      st = this.stride;
-    if (def._fv >= 0 || st !== def.size || this._ws !== st) {
-      const rows: PlainStructValues<F>[] = [];
-      for (let i = 0; i < len; i++) if (predicate(c.seek(i), i)) rows.push(c.toObject());
-      return pack(def as StructDef<F>, rows as unknown as Partial<StructInput<F>>[]);
-    }
+      st = this.stride,
+      rows: any[] = [];
     ensureScratch(len * st);
-    const src = u8s(this._k(), this._o, len * st);
     let outOff = 0;
-    for (let i = 0; i < len; i++) {
-      if (predicate(c.seek(i), i)) {
-        sU8.set(src.subarray(i * st, (i + 1) * st), outOff);
-        outOff += st;
-      }
-    }
-    return sU8.slice(0, outOff);
+    for (let i = 0; i < len; i++)
+      if (predicate(c.seek(i), i))
+        def._fv < 0 && st === def.size && this._ws === st
+          ? (sU8.set(u8s(this._k(), this._o + i * st, st), outOff), (outOff += st))
+          : rows.push(c.toObject());
+    return rows.length ? pack(def as StructDef<F>, rows) : sU8.slice(0, outOff);
   }
 
   /** Extracts a `TypedArray` column for primitive `field` (zero-copy when `stride === field.size`). */
@@ -1429,15 +1306,15 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       desc = lay.desc,
       n = this.length,
       st = this.stride,
-      fo = lay.offset;
-    if (fo + desc.size > this._ws) return new desc._C!(n) as any;
-    const d = this._k(),
-      start = d.byteOffset + this._o + fo;
-    if (desc.type !== 'bool' && (st === desc.size || n <= 1) && start % desc.align === 0) {
-      return new desc._C!(d.buffer, start, n) as any;
+      fo = lay.offset,
+      d = this._k(),
+      start = d.byteOffset + this._o + fo,
+      out = new desc._C!(n) as any;
+    if (fo + desc.size <= this._ws) {
+      if (desc.type !== 'bool' && (st === desc.size || n <= 1) && !(start % desc.align))
+        return new desc._C!(d.buffer, start, n) as any;
+      for (let i = 0, off = this._o + fo; i < n; i++, off += st) out[i] = desc._g(d, off);
     }
-    const out = new desc._C!(n) as any;
-    for (let i = 0, off = this._o + fo; i < n; i++, off += st) out[i] = desc._g(d, off);
     return out;
   }
 
@@ -1464,30 +1341,17 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   }
   /** Serializes this array of rows to an array of plain objects for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>[];
-  [Symbol.iterator](): Iterator<StructView<F>> {
-    const c = this.cursor(0);
-    const b = this._o;
-    const st = this.stride;
-    const len = this.length;
-    let i = 0;
-    const res: IteratorResult<StructView<F>> = { value: c, done: false };
-    return {
-      next(): IteratorResult<StructView<F>> {
-        if (i < len) {
-          c._o = b + i++ * st;
-          return res;
-        }
-        return { value: undefined, done: true };
-      },
-    };
-   }
- }
+  *[Symbol.iterator](): Iterator<StructView<F>> {
+    for (let i = 0, c = this.cursor(0), b = this._o, st = this.stride, n = this.length; i < n; i++) {
+      c._o = b + i * st;
+      yield c;
+    }
+  }
+}
 StructArrayView.prototype.toJSON = (StructArrayView.prototype as any)[kInspect] = StructArrayView.prototype.toObjects;
 function colDesc(a: StructArrayView<any>, k: PropertyKey): FieldLayout<PrimitiveDesc<any>> {
   const lay = a.def.fields[k as string];
-  if (!lay || lay.desc.kind !== 'primitive' || !lay.desc._C) {
-    throw new TypeError(`Field "${String(k)}" is not a primitive column`);
-  }
+  if (!lay?.desc._C) oob();
   return lay as FieldLayout<PrimitiveDesc<any>>;
 }
 function bsearch(a: StructArrayView<any>, k: PropertyKey, v: number | bigint, eq: boolean): number {
@@ -1514,6 +1378,22 @@ export interface PlacedBytes extends Uint8Array {
   ): StructArrayView<F>;
 }
 
+export type WasmTarget =
+  | WasmArena
+  | WebAssembly.Memory
+  | WebAssembly.Instance
+  | {
+      readonly memory: WebAssembly.Memory;
+      readonly capn_alloc?: (byteLength: number) => number;
+      readonly alloc?: (byteLength: number) => number;
+    };
+
+export interface WasmSlice<F extends FieldRecord = FieldRecord> {
+  readonly view: StructArrayView<F>;
+  readonly ptr: number;
+  readonly len: number;
+  readonly byteLength: number;
+}
 export class WasmArena {
   declare readonly memory: WebAssembly.Memory | null;
   declare readonly baseOffset: number;
@@ -1524,12 +1404,11 @@ export class WasmArena {
   declare _d: DataView;
   /** @internal */
   declare _u8: Uint8Array;
-
   constructor(
     backing: WebAssembly.Memory | ArrayBuffer | number = 65536,
     baseOffset = 0,
   ) {
-    this.memory = isWasmMemory(backing) ? backing : null;
+    this.memory = (backing as any)?.buffer ? (backing as WebAssembly.Memory) : null;
     this.baseOffset = this.offset = baseOffset;
     this._rebind(
       this.memory
@@ -1543,8 +1422,7 @@ export class WasmArena {
   /** @internal */
   _rebind(buf: ArrayBuffer): this {
     this._buf = buf;
-    this._d = new DataView(buf);
-    this._u8 = new Uint8Array(buf);
+    this._u8 = u8s((this._d = new DataView(buf)));
     return this;
   }
 
@@ -1576,19 +1454,14 @@ export class WasmArena {
   }
 
   alignTo(align: number): number {
-    if (align > 1) {
-      this.offset = (this.offset + align - 1) & ~(align - 1);
-    }
-    return this.offset;
+    return (this.offset = al(this.offset, align));
   }
 
   ensureCapacity(requiredByteLength: number): this {
     this.sync();
     if (requiredByteLength <= this._buf.byteLength) return this;
     if (this.memory !== null) {
-      this.memory.grow(
-        Math.ceil((requiredByteLength - this._buf.byteLength) / 65536),
-      );
+      growMem(this.memory, requiredByteLength);
       return this._rebind(this.memory.buffer);
     }
     const nb = new ArrayBuffer(
@@ -1607,13 +1480,22 @@ export class WasmArena {
     return p;
   }
 
-  alloc<F extends FieldRecord>(def: StructDef<F>, count = 1, zero = false): StructArrayView<F> {
+  alloc<F extends FieldRecord>(
+    def: StructDef<F>,
+    count = 1,
+    zero = false,
+  ): StructArrayView<F> {
     const p = this._alloc(count * def.size, def.align, zero);
     initNulls(def, this._d, p, count);
-    return new StructArrayView(def, this, p, count);
+    const v = new StructArrayView(def, this, p, count, p);
+    v._tl = p + count * def.size;
+    return v;
   }
 
-  allocOne<F extends FieldRecord>(def: StructDef<F>, init?: Partial<StructInput<F>>): StructView<F> {
+  allocOne<F extends FieldRecord>(
+    def: StructDef<F>,
+    init?: Partial<StructInput<F>>,
+  ): StructView<F> {
     const p = this._alloc(def.size, def.align, true),
       v = new def._V(this._d, p, p, this);
     initNulls(def, this._d, p);
@@ -1624,23 +1506,20 @@ export class WasmArena {
     bytes: Uint8Array | ArrayBufferView,
     alignOrDef: number | StructDefLike<F> = 8,
   ): PlacedBytes {
-    const u = bytes instanceof Uint8Array ? bytes : u8s(bytes),
+    const u = u8s(bytes as any),
       p = this._alloc(
         u.byteLength,
         typeof alignOrDef === 'number' ? alignOrDef : alignOrDef.align,
       );
     this._u8.set(u, p);
-    const sub = new Uint8Array(this._buf, p, u.byteLength) as PlacedBytes;
-    Object.defineProperties(sub, {
+    return Object.defineProperties(new Uint8Array(this._buf, p, u.byteLength) as PlacedBytes, {
       ptr: hid(p),
-      as: hid(
-        <SF extends FieldRecord>(
-          def: StructDef<SF>,
-          c = Math.floor(u.byteLength / def.size),
-        ) => new StructArrayView(def, this, p, c),
-      ),
+      as: hid(<SF extends FieldRecord>(def: StructDef<SF>, count = def.array(u).length) => {
+        const v = new StructArrayView(def, this, p, count, p);
+        v._tl = p + u.byteLength;
+        return v;
+      }),
     });
-    return sub;
   }
 
   view<F extends FieldRecord>(
@@ -1648,15 +1527,16 @@ export class WasmArena {
     byteOffset: number,
     baseOffset = byteOffset,
   ): StructView<F> {
-    return structView(def, this.sync(), byteOffset, baseOffset);
+    return structView(def, this, byteOffset, baseOffset);
   }
 
   viewArray<F extends FieldRecord>(
     def: StructDef<F>,
     byteOffset: number,
     count: number,
+    baseOffset = byteOffset,
   ): StructArrayView<F> {
-    return new StructArrayView(def, this.sync(), byteOffset, count);
+    return new StructArrayView(def, this, byteOffset, count, baseOffset);
   }
   reset(baseOffset = this.baseOffset): this {
     this.offset = baseOffset;
@@ -1693,10 +1573,10 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     mem: WebAssembly.Memory | WasmArena | null,
   ) => StructView<F>;
   constructor(name: string, schemaOrBuilder: F | ((self: SelfRef) => F)) {
+    if (name) _reg[name] = this;
     const schema = typeof schemaOrBuilder === 'function' ? schemaOrBuilder((() => this) as unknown as SelfRef) : schemaOrBuilder;
-    if (!schema) throw new TypeError('Struct schema fields are required');
-    let off = 0;
-    let maxA = 1;
+    if (!schema) oob();
+    let off = 0, maxA = 1;
     let firstV = -1,
       fvr = false;
     const fObj: Record<string, FieldLayout> = {};
@@ -1723,15 +1603,11 @@ export class StructDef<F extends FieldRecord = FieldRecord>
         enumerable: true,
         configurable: true,
         get(this: StructViewBase<F>) {
-          if (end > this._ws) return defVal(d, false);
-          if (dk === 'primitive') {
-            try {
-              return d._g((this._m as any)?._d ?? this._d, this._o + fo);
-            } catch {
-              return d._g(this._k(), this._o + fo);
-            }
-          }
-          return readVal(this, d, this._o + fo, false);
+          return end > this._ws
+            ? defVal(d, false)
+            : dk === 'primitive'
+              ? d._g(this._k(), this._o + fo)
+              : readVal(this, d, this._o + fo, false);
         },
         set(this: StructViewBase<F>, v: unknown) {
           if (end > this._ws) upgradeView(this);
@@ -1768,16 +1644,16 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   }
 
   /** Allocates a single `StructView<F>` backed by a fresh buffer and optionally initializes fields. */
-  create(init?: Partial<StructInput<F>>): StructView<F> {
+  create(init?: Partial<StructInput<F>> | readonly unknown[]): StructView<F> {
     const v = this.view(new ArrayBuffer(this.size));
     initNulls(this, v._d, 0);
     return init !== undefined ? v.setAll(init) : v;
   }
-  /** Infers `Partial<StructInput<F>>` on a plain JS object literal (for building typed cyclic JS graphs without `: any`). */
+
+  /** Infers `Partial<StructInput<F>>` on a plain JS object literal (for building typed cyclic JS graphs without `any`). */
   item(init: Partial<StructInput<F>>): Partial<StructInput<F>> {
     return init;
   }
-  /** Wraps a binary buffer (`Uint8Array`, `ArrayBuffer`, `DataView`, `WebAssembly.Memory`, `WasmArena`) in a zero-copy `StructView<F>`. */
   view(
     source: BufferSourceInput,
     byteOffset?: number | ViewOptions | StructDefLike<any>,
@@ -1797,60 +1673,83 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     return new StructArrayView(this, source, byteOffset, count, baseOffset, wireStride);
   }
   /** Allocates a growable `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array). */
-  alloc(count: number): StructArrayView<F> {
-    const a = this.array(new ArrayBuffer(count * this.size), 0, count);
+  alloc(count: number, Ctor: typeof ArrayBuffer = ArrayBuffer): StructArrayView<F> {
+    const a = this.array(new Ctor(count * this.size), 0, count);
     initNulls(this, a._d, 0, count);
     return a;
   }
 
-  /**
-   * Universal 1-step constructor:
-   * - Given an array/iterable of plain JS objects, packs them and returns a live `StructArrayView<F>`.
-   * - Given a `Uint8Array`, `ArrayBuffer`, `SharedArrayBuffer`, `DataView`, `WebAssembly.Memory`, or `WasmArena`, wraps it with zero copying.
-   * - Given a row count (`number`), allocates a zero-initialized `StructArrayView<F>`.
-   */
   from(
     sourceOrRows:
-      | readonly Partial<StructInput<F>>[]
-      | Iterable<Partial<StructInput<F>>>
+      | readonly (Partial<StructInput<F>> | readonly unknown[])[]
+      | Iterable<Partial<StructInput<F>> | readonly unknown[]>
       | BufferSourceInput
+      | StructArrayView<F>
       | number,
   ): StructArrayView<F> {
     if (typeof sourceOrRows === 'number') return this.alloc(sourceOrRows);
-    if (
-      ArrayBuffer.isView(sourceOrRows) ||
-      sourceOrRows instanceof ArrayBuffer ||
-      (typeof SharedArrayBuffer !== 'undefined' && sourceOrRows instanceof SharedArrayBuffer) ||
-      isMemOrArena(sourceOrRows)
-    ) {
+    if (sourceOrRows instanceof StructArrayView) return sourceOrRows;
+    if ('byteLength' in (sourceOrRows as any) || (sourceOrRows as any)?.buffer) {
       return this.array(sourceOrRows as BufferSourceInput);
     }
-    const rows = Array.isArray(sourceOrRows) ? sourceOrRows : Array.from(sourceOrRows as Iterable<Partial<StructInput<F>>>);
-    return this.array(this.pack(rows));
+    return this.array(
+      this.pack(
+        Array.isArray(sourceOrRows)
+          ? sourceOrRows
+          : Array.from(sourceOrRows as any),
+      ),
+    );
   }
 
-  /**
-   * Allocates or packs a `StructArrayView<F>` backed by a `SharedArrayBuffer` (with `ArrayBuffer` fallback)
-   * for zero-copy Web Worker `worker.postMessage(rows.buffer)` state sharing.
-   */
-  shared(rowsOrCount: readonly Partial<StructInput<F>>[] | number): StructArrayView<F> {
-    const BufCtor: typeof ArrayBuffer =
-      typeof SharedArrayBuffer !== 'undefined' ? (SharedArrayBuffer as unknown as typeof ArrayBuffer) : ArrayBuffer;
-    if (typeof rowsOrCount === 'number') {
-      const a = this.array(new BufCtor(rowsOrCount * this.size), 0, rowsOrCount);
-      initNulls(this, a._d, 0, rowsOrCount);
-      return a;
-    }
-    const packed = this.pack(rowsOrCount),
-      sb = new BufCtor(packed.byteLength);
-    new Uint8Array(sb).set(packed);
+  shared(
+    rowsOrCount:
+      | readonly (Partial<StructInput<F>> | readonly unknown[])[]
+      | number,
+  ): StructArrayView<F> {
+    const B: typeof ArrayBuffer =
+      typeof SharedArrayBuffer !== 'undefined'
+        ? (SharedArrayBuffer as any)
+        : ArrayBuffer;
+    if (typeof rowsOrCount === 'number') return this.alloc(rowsOrCount, B);
+    const p = this.pack(rowsOrCount),
+      sb = new B(p.byteLength);
+    new Uint8Array(sb).set(p);
     return this.array(sb);
   }
-  /** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
-  pack(rows: readonly Partial<StructInput<F>>[]): Uint8Array {
+
+  /** Allocates or packs a `StructArrayView<F>` directly inside `WebAssembly.Memory` (via `WasmArena` or exported `capn_alloc`/`alloc`) and returns `{ view, ptr, len, byteLength }`. */
+  inWasm(
+    wasmMemoryOrExports: WasmTarget,
+    rowsOrCount:
+      | readonly (Partial<StructInput<F>> | readonly unknown[])[]
+      | Iterable<Partial<StructInput<F>> | readonly unknown[]>
+      | BufferSourceInput
+      | StructArrayView<F>
+      | number,
+  ): WasmSlice<F> {
+    const exp: any = (wasmMemoryOrExports as any)?.exports ?? wasmMemoryOrExports,
+      src = typeof rowsOrCount === 'number' ? null : this.from(rowsOrCount),
+      u = src?.bytes,
+      len = src ? src.length : (rowsOrCount as number),
+      byteLength = u ? u.byteLength : len * this.size,
+      mem: any = exp._d ? exp : exp.memory ?? exp,
+      fn = exp.capn_alloc ?? exp.alloc,
+      ptr = exp._alloc
+        ? exp._alloc(byteLength, this.align)
+        : fn
+          ? byteLength && fn.call(exp, byteLength) >>> 0
+          : al(mem.offset ?? 64, this.align),
+      end = (mem.offset = Math.max(mem.offset ?? 0, ptr + byteLength));
+    if (!exp._d) growMem(mem, end);
+    const view = this.array(mem, ptr, len, ptr);
+    view._tl = end;
+    u ? u8s(view._d, ptr, byteLength).set(u) : (u8s(view._d, ptr, byteLength).fill(0), initNulls(this, view._d, ptr, len));
+    return { view, ptr, len, byteLength };
+  }
+  /** Packs an array of plain JavaScript objects or positional tuples into an 8-byte-aligned `Uint8Array`. */
+  pack(rows: readonly (Partial<StructInput<F>> | readonly unknown[])[]): Uint8Array {
     return pack(this, rows);
   }
-  /** Concatenates multiple `StructArrayView<F>` or `Uint8Array` chunks into a single packed `Uint8Array` via bulk `memcpy` when fixed-size. */
   concatBytes(chunks: readonly (StructArrayView<F> | Uint8Array)[]): Uint8Array {
     return concatBytes(this, chunks);
   }
@@ -1862,25 +1761,20 @@ export function concatBytes<F extends FieldRecord>(
   def: StructDef<F>,
   chunks: readonly (StructArrayView<F> | Uint8Array)[],
 ): Uint8Array {
-  if (def._fv >= 0) {
-    return pack(def, chunks.flatMap((c) => (c instanceof Uint8Array ? def.array(c) : c).toObjects()) as any);
-  }
+  if (def._fv >= 0) return pack(def, chunks.flatMap((c) => def.from(c as any).toObjects()) as any);
   const slices = chunks.map((c) =>
     c instanceof Uint8Array ? (c.byteLength % def.size && oob(), c) : c.stride === def.size ? c.bytes : c.compact(),
   );
   const out = new Uint8Array(slices.reduce((s, b) => s + b.byteLength, 0));
   let off = 0;
-  for (const s of slices) {
-    out.set(s, off);
-    off += s.byteLength;
-  }
+  for (const s of slices) (out.set(s, off), (off += s.byteLength));
   return out;
 }
 
 /** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
 export function pack<F extends FieldRecord>(
   def: StructDef<F>,
-  rows: readonly Partial<StructInput<F>>[],
+  rows: readonly (Partial<StructInput<F>> | readonly unknown[])[],
 ): Uint8Array {
   const n = rows.length;
   const st = def.size;
@@ -1888,26 +1782,11 @@ export function pack<F extends FieldRecord>(
   const ts = def._fv >= 0 ? al(tb, 8) : tb;
   ensureScratch(ts + n * 64 + 64);
   sU8.fill(0, 0, ts);
-  initNulls(def, sDv, 0, n, st);
   tail = ts;
-  _wSeen = new Map();
-  _wActive = new Set();
-  _wFix = [];
-  for (let i = 0; i < n; i++) {
-    const r = rows[i];
-    if (r && typeof r === 'object') _wSeen.set(r, i * st);
-  }
-  try {
-    for (let i = 0; i < n; i++) {
-      writeVal(null, def, rows[i], 0, i * st);
-    }
-    for (const [dst, src, sz] of _wFix) u8s(sDv, dst, sz).set(u8s(sDv, src, sz));
-  } finally {
-    _wSeen = _wActive = _wFix = null;
-  }
+  writeVal(null, { kind: 'array', element: def, length: n } as any, rows, 0, 0);
   if (n && def._fv >= 0 && sDv.getUint32(def._fv, true) < ts) {
-    if (sDv.getUint32(def._fv + 4, true)) sDv.setUint32(def._fv + 4, ts | 1, true);
-    else sDv.setUint32(def._fv, ts, true);
+    const h = sDv.getUint32(def._fv + 4, true) ? 4 : 0;
+    sDv.setUint32(def._fv + h, ts | (h >> 2), true);
   }
   const end = al(tail, 8);
   sU8.fill(0, tail, end);
@@ -1940,12 +1819,8 @@ const _dtf = {
     const ks = Object.keys(x);
     return ['span', {}, `${n} { ${ks.slice(0, 4).map((k) => `${k}: ${JSON.stringify((x as any)[k])}`).join(', ')}${ks.length > 4 ? ', ...' : ''} }`];
   },
-  hasBody(x: any) {
-    return x instanceof MemView;
-  },
-  body(x: any) {
-    return ['div', {}, ['object', { object: 'length' in x ? x.toObjects() : x.toObject() }]];
-  },
+  hasBody: (x: any) => x instanceof MemView,
+  body: (x: any) => ['div', {}, ['object', { object: x.toJSON() }]],
 };
 
 /** Registers a lazy Chrome/Edge/Firefox DevTools custom formatter (`globalThis.devtoolsFormatters`) for `StructView` and `StructArrayView`. */
@@ -1955,4 +1830,3 @@ export function installDevtoolsFormatter(): typeof _dtf {
   if (!list.includes(_dtf)) list.push(_dtf);
   return _dtf;
 }
-if (typeof window !== 'undefined') installDevtoolsFormatter();

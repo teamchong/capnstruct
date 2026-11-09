@@ -1,22 +1,21 @@
 # <img src="docs/public/icon.svg" width="32" height="32" align="top" alt="capnstruct icon" /> capnstruct
 
-**Zero-copy `#[repr(C)]` binary structs, cyclic object graphs (`ref`), and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU.**
+**Zero-Copy `#[repr(C)]` Structs for Web Workers, `SharedArrayBuffer` & WebAssembly** — the missing shared-memory struct layer between TypeScript, Web Workers, and Rust/Go WASM.
 
 [![Live Playground & Docs](https://img.shields.io/badge/Live_Playground-capnstruct.teamchong.net-3b82f6?style=flat-square)](https://capnstruct.teamchong.net)
-[![Core Bundle](https://img.shields.io/badge/Core_Gzip-6.51_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
+[![Core Bundle](https://img.shields.io/badge/Core_Gzip-6.62_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 [![Targets](https://img.shields.io/badge/Targets-TS_%7C_Rust_%23%5Brepr(C)%5D_%7C_Go_%26_TinyGo_WASM-f59e0b?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 
-**[Live Interactive Playground &rarr; capnstruct.teamchong.net](https://capnstruct.teamchong.net)** &middot; **[MP4 Video (`docs/public/demo.mp4`)](docs/public/demo.mp4)** &middot; **[AI Agent Ruleset (`llms.txt`)](https://capnstruct.teamchong.net/llms.txt)**
+**[Live Interactive Playground &rarr; capnstruct.teamchong.net](https://capnstruct.teamchong.net)** &middot; **[MP4 Video (`docs/public/demo.mp4`)](docs/public/demo.mp4)**
 
-[![Live Side-by-Side Comparison: Bun JSC (~2x) vs Rust -O3 WASM (JSON / FFI) vs capnstruct #[repr(C)]](docs/public/demo.gif)](https://capnstruct.teamchong.net)
+[![Live Side-by-Side Comparison: Worker postMessage (structuredClone) vs Rust -O3 WASM (serde-wasm-bindgen FFI) vs capnstruct #[repr(C)] (Shared / WasmArena)](docs/public/demo.gif)](https://capnstruct.teamchong.net)
 
 
 ```ts
-import { struct, f32 } from 'capnstruct';
-
-const Particle = struct('Particle', { x: f32, y: f32, vx: f32, vy: f32 });
-const list = Particle.from(bytesOrObjects); // pack plain JS objects OR O(1) zero-copy wrap Uint8Array / SharedArrayBuffer
-for (const p of list) p.x += p.vx;          // mutates #[repr(C)] binary buffer in-place (0 heap allocs, 0 Proxy overhead)
+import { struct, u32, f32, u16, str, slice, ref } from 'capnstruct';
+const Waypoint = struct('Waypoint', { lat: f32, lon: f32 });
+const Flight   = struct('Flight', { id: u32, callsign: str, alt: u16, waypoints: slice(Waypoint), nextRelay: ref('Flight') });
+const { view: fleet, ptr, len } = Flight.inWasm(wasmMem, workerRows); // 0ms copy: allocates 100k #[repr(C)] rows in WebAssembly.Memory & passes (ptr, len) to Rust/Go WASM!
 ```
 ---
 
@@ -112,22 +111,27 @@ const view = GraphNode.array(bytes);
 console.log(view.at(0).next?.next?.id === view.at(0).id); // true (0 allocations)
 ```
 
-### 3. Rust `#[repr(C)]` & Go / TinyGo WASM Zero-Copy Codegen
+### 3. First-Class `Schema.inWasm()` & Zero-Copy Rust `#[repr(C)]` / Go WASM Codegen
 
 ```ts
 import { toRustReprC, toGoStruct } from 'capnstruct/codegen';
 
+// 1. Allocate or pack directly inside WebAssembly.Memory (via WasmArena or exported capn_alloc/alloc)
+const { view, ptr, len } = RadarPacket.inWasm(wasmInstance.exports, [pkt]);
+wasmInstance.exports.inspect_radar(ptr, len); // 0 FFI copies, 0 serde-wasm-bindgen overhead
+
+// 2. Generate #[repr(C)] Rust structs with safe .as_slice(arena), .as_str(arena), .as_ref(arena) methods
 console.log(toRustReprC([Waypoint, RadarPacket]));
-console.log(toGoStruct([Waypoint, RadarPacket], { pkg: 'radar', tinygo: true }));
+console.log(toGoStruct([Waypoint, RadarPacket], { pkg: 'radar', wasm: true }));
 ```
 
 ```bash
-npx capnstruct ./src/schema.ts -o ./src/schema.rs                         # Rust #[repr(C)]
+npx capnstruct ./src/schema.ts -o ./src/schema.rs                         # Rust #[repr(C)] + safe .as_str/.as_slice/.as_ref
 npx capnstruct ./src/schema.ts -o ./src/schema.go --pkg radar             # Native Go / GOOS=wasip1
 npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm          # TinyGo (-target=wasi)
 ```
 
 | Entrypoint                                                                          | Minified  | Minified + Gzip                       |
 | :---------------------------------------------------------------------------------- | :-------- | :------------------------------------ |
-| **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena`) | 18.53 KiB | **7.02 KiB** (`6.51 KiB` schema core) |
-| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen)             | 7.44 KiB  | **2.53 KiB**                          |
+| **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena`) | 18.12 KiB | **7.12 KiB** (`6.62 KiB` schema core) |
+| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen)             | 7.63 KiB  | **2.57 KiB**                          |

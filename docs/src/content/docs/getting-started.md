@@ -1,27 +1,27 @@
 ---
 title: Getting Started
-description: Install capnstruct, define #[repr(C)] schemas, pack binary buffers, and iterate with zero heap allocations.
+description: "Install capnstruct, define #[repr(C)] schemas, pack binary buffers, and iterate with zero heap allocations."
 ---
 
 ## Installation
 
 ```bash
 npm install capnstruct
-# AI Coding Agents (Claude Code / Cursor / Windsurf): https://capnstruct.teamchong.net/llms.txt
 ```
 
-`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.6 KiB minified + gzipped, 0 dependencies) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
+`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.7 KiB minified + gzipped, 0 dependencies) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
 
 ## 3-Line Hello World (Two-Call Mental Model)
 
-You only need two calls to start: `struct(...)` to declare a schema, and `.from(...)` to pack plain JS objects, allocate `N` rows, or zero-copy wrap an existing `Uint8Array` / `ArrayBuffer` / `SharedArrayBuffer` / `WasmArena`:
+You only need two calls to start: `struct(...)` to declare a schema, and `.inWasm(...)` / `.shared(...)` / `.from(...)` to allocate or wrap 100,000 live `#[repr(C)]` structs inside `WebAssembly.Memory` or `SharedArrayBuffer` with zero copying:
 
 ```ts
-import { struct, f32 } from 'capnstruct';
+import { struct, u32, f32, u16, str, slice, ref } from 'capnstruct';
 
-const Particle = struct('Particle', { x: f32, y: f32, vx: f32, vy: f32 });
-const list = Particle.from([{ x: 10, y: 20, vx: 1.5, vy: -0.5 }]); // pack objects OR zero-copy wrap bytes
-for (const p of list) p.x += p.vx;                                 // mutates binary buffer in-place (0 allocs)
+const Waypoint = struct('Waypoint', { lat: f32, lon: f32 });
+const Flight   = struct('Flight', { id: u32, callsign: str, alt: u16, waypoints: slice(Waypoint), nextRelay: ref('Flight') });
+const { view: fleet, ptr, len } = Flight.inWasm(wasmMem, workerRows); // 0ms copy: allocates 100k #[repr(C)] rows in WebAssembly.Memory & passes (ptr, len) to WASM!
+const hits     = fleet.filter(f => f.alt > minAlt && f.waypoints.at(0).lat > cursorLat); // scans fixed stride, decodes str/slice/ref ONLY on match!
 ```
 ---
 

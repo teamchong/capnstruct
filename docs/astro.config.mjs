@@ -26,7 +26,7 @@ export default defineConfig({
         },
       ],
       tagline:
-        'Zero-copy #[repr(C)] binary structs, views, and queryable tables for TypeScript, WebAssembly, Web Workers, and WebGPU',
+        'Zero-Copy #[repr(C)] Structs for Web Workers, SharedArrayBuffer & WebAssembly — the missing shared-memory struct layer between JS, Workers, and Rust/Go WASM',
       social: [
         {
           icon: 'github',

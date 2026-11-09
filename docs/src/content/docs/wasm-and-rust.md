@@ -1,13 +1,13 @@
 ---
-title: WebAssembly, Rust #[repr(C)], Go & TinyGo WASM Codegen
-description: Share zero-copy #[repr(C)] binary structs across JS, Rust WebAssembly, Go WASM (wasip1/js), and TinyGo WASM (-target=wasi) with WasmArena auto-rebinding and compile-time layout verification.
+title: "WebAssembly, Rust #[repr(C)], Go & TinyGo WASM Codegen"
+description: "Share zero-copy #[repr(C)] binary structs across JS, Rust WebAssembly, Go WASM (wasip1/js), and TinyGo WASM (-target=wasi) with WasmArena auto-rebinding and compile-time layout verification."
 ---
 
-## 1. `WasmArena` & `WebAssembly.Memory.grow()` Auto-Rebinding
+## 1. `Schema.inWasm()` & `WasmArena` Auto-Rebinding
 
-When sharing memory with a WebAssembly module (`WebAssembly.Memory`), calling `memory.grow()` or allocating inside a growable arena **detaches** the old `ArrayBuffer`, invalidating standard JavaScript `DataView` and `TypedArray` instances.
+When sharing memory with a WebAssembly module (`WebAssembly.Memory`), `Schema.inWasm(wasmMemoryOrExports, rowsOrCount)` allocates or packs a `StructArrayView` directly inside linear memory (via `WasmArena`, an exported `capn_alloc` / `alloc` function, or raw `WebAssembly.Memory`) and returns `{ view, ptr, len, byteLength }` ready to pass straight into `wasm.exports.run_kernel(ptr, len)`.
 
-`WasmArena` bump-allocates aligned structs, arrays, and variable-length tail strings/slices directly inside `WebAssembly.Memory` (or a growable `ArrayBuffer`). Every `StructView` and `StructArrayView` created from the arena tracks the arena and **automatically re-binds** to the new `ArrayBuffer` whenever `memory.grow()` is called:
+Whenever `memory.grow()` runs, every `StructView` and `StructArrayView` **automatically re-binds** to the new `ArrayBuffer` on the next field read or write:
 
 ```ts
 import { WasmArena, defineStruct, u32, f32, str } from 'capnstruct';
@@ -19,28 +19,23 @@ const QpPoint = defineStruct('QpPoint', {
   label: str,
 });
 
-// Create a 1-page (64 KiB) WebAssembly.Memory and wrap it in WasmArena (starting at offset 64)
-const wasmMemory = new WebAssembly.Memory({ initial: 1 });
-const arena = new WasmArena(wasmMemory, 64);
+// 1. One-call allocation directly inside WebAssembly.Memory (or wasmInstance.exports):
+const { view: points, ptr, len } = QpPoint.inWasm(wasmInstance.exports, 1000);
+points.at(0).set({ x: 1.5, y: -2.0, origIdx: 7, label: 'radar-0' });
 
-// Allocate a 1,000-element StructArrayView inside WASM linear memory
-const points = arena.alloc(QpPoint, 1000);
-points.at(0).set({ x: 1.5, y: -2.5, origIdx: 7, label: 'radar-0' });
-
-// Even if WASM or JS grows WebAssembly.Memory (detaching the old ArrayBuffer),
-// existing StructView and StructArrayView instances re-bind on access:
-wasmMemory.grow(4);
+// 2. Even if WASM or JS grows WebAssembly.Memory (detaching the old ArrayBuffer),
+//    existing StructView and StructArrayView instances re-bind on access:
+wasmInstance.exports.memory.grow(4);
 console.log(points.at(0).x, points.at(0).label); // 1.5, 'radar-0'
 
-// Pass byteOffset and length directly to your exported WASM kernel:
-// wasmExports.process_points(points.byteOffset, points.length);
+// 3. Pass ptr and len directly to your exported WASM kernel (0 FFI copies):
+wasmInstance.exports.process_points(ptr, len);
 ```
-
 ---
 
 ## 2. Rust `#[repr(C)]` Codegen (`capnstruct/codegen` & CLI)
 
-`capnstruct/codegen` and the `capnstruct` CLI generate exact **Rust `#[repr(C)]` struct definitions** (`toRustReprC`), including zero-copy `CapnStr`, `CapnSlice<T>`, and `CapnRef<T>` helpers and compile-time `size_of` / `align_of` / `offset_of!` assertions directly from your TypeScript schemas. Self-referential (`(self) => ({ next: ref(self), children: slice(self) })`) and mutually recursive (`ref(() => Node)`) schemas are handled automatically without duplicate definitions.
+`capnstruct/codegen` and the `capnstruct` CLI generate exact **Rust `#[repr(C)]` struct definitions** (`toRustReprC`), including safe zero-dependency `Struct::as_slice(base, len)`, `CapnStr::as_str(base)`, `CapnSlice<T>::as_slice(base)`, and `CapnRef<T>::as_ref(base)` accessors (usable in `#[forbid(unsafe_code)]` user kernels) plus compile-time `size_of` / `align_of` / `offset_of!` assertions directly from your TypeScript schemas. Self-referential (`(self) => ({ next: ref(self), children: slice(self) })`) and mutually recursive (`ref(() => Node)`) schemas are handled automatically without duplicate definitions.
 
 ### Programmatic API
 
@@ -78,6 +73,10 @@ pub struct CapnSlice<T> {
     pub _marker: core::marker::PhantomData<T>,
 }
 
+impl<T> CapnSlice<T> {
+    #[inline]
+    pub fn as_slice<'a>(&self, base: &'a [u8]) -> &'a [T] { /* bounds-checked zero-copy slice */ }
+}
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct SpdSample {
@@ -86,6 +85,11 @@ pub struct SpdSample {
     pub val: f64,
     pub id: u32,
     pub _pad1: [u8; 4],
+}
+
+impl SpdSample {
+    #[inline]
+    pub fn as_slice(base: &[u8], len: usize) -> &[Self] { /* bounds-checked zero-copy table slice */ }
 }
 
 const _: () = {

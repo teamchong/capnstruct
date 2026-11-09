@@ -1502,5 +1502,192 @@ describe('capnstruct', () => {
       const sharedAlloc = Particle.shared(4);
       expect(sharedAlloc.length).toBe(4);
     });
+
+    it('packs positional tuple arrays ([t, f]), flat TypedArrays, and nested slice(Struct) views without manual cursor plumbing', () => {
+      const TimeFreqPoint = defineStruct('TimeFreqPoint', { t: f32, f: f32 });
+      const DetectedPass = defineStruct('DetectedPass', {
+        v: f64,
+        f0: f64,
+        pts: slice(TimeFreqPoint),
+        curve: slice(TimeFreqPoint),
+      });
+      const SpectrogramBundle = defineStruct('SpectrogramBundle', {
+        F: u32,
+        B: u32,
+        passes: slice(DetectedPass),
+      });
+
+      // 1. Pack nested slices directly from [t, f] tuples and flat Float32Array
+      const flatCurve = new Float32Array([0.0, 410.0, 0.5, 400.0, 1.0, 390.0]);
+      const meta = SpectrogramBundle.create({
+        F: 128,
+        B: 240,
+        passes: [
+          {
+            v: 55.5,
+            f0: 400.0,
+            pts: [
+              [1.25, 405.5],
+              [2.5, 395.25],
+            ],
+            curve: flatCurve,
+          },
+        ],
+      }).bytes;
+
+      const unpacked = SpectrogramBundle.view(meta);
+      expect(unpacked.F).toBe(128);
+      expect(unpacked.B).toBe(240);
+      expect(unpacked.passes.length).toBe(1);
+      const p0 = unpacked.passes.at(0);
+      expect(p0.v).toBeCloseTo(55.5, 5);
+      expect(p0.f0).toBeCloseTo(400.0, 5);
+      expect(p0.pts.length).toBe(2);
+      expect([p0.pts.at(0).t, p0.pts.at(0).f]).toEqual([1.25, 405.5]);
+      expect([p0.pts.at(1).t, p0.pts.at(1).f]).toEqual([2.5, 395.25]);
+      expect(p0.curve.length).toBe(3);
+      expect([p0.curve.at(0).t, p0.curve.at(0).f]).toEqual([0.0, 410.0]);
+      expect([p0.curve.at(2).t, p0.curve.at(2).f]).toEqual([1.0, 390.0]);
+
+      // 2. Also verify passing a pre-built StructArrayView with variable-length slices into an outer bundle
+      const passesView = DetectedPass.from([
+        {
+          v: 62.0,
+          f0: 380.0,
+          pts: [[3.0, 382.0]],
+          curve: [[3.0, 382.0], [4.0, 378.0]],
+        },
+      ]);
+      const meta2 = SpectrogramBundle.pack([{ F: 64, B: 120, passes: passesView }]);
+      const unpacked2 = SpectrogramBundle.view(meta2);
+      expect(unpacked2.passes.at(0).v).toBeCloseTo(62.0, 5);
+      expect(unpacked2.passes.at(0).pts.at(0).f).toBeCloseTo(382.0, 5);
+      expect(unpacked2.passes.at(0).curve.length).toBe(2);
+      expect(unpacked2.passes.at(0).curve.at(1).f).toBeCloseTo(378.0, 5);
+
+      // 3. Direct positional tuple construction & mutation on StructArrayView
+      const pts = TimeFreqPoint.from([
+        [10, 20],
+        [30, 40],
+      ]);
+      pts.push([50, 60]);
+      pts.at(0).setAll([15, 25]);
+      expect(pts.toObjects()).toEqual([
+        { t: 15, f: 25 },
+        { t: 30, f: 40 },
+        { t: 50, f: 60 },
+      ]);
+    });
+
+    it("supports string struct names in ref('Flight') with in-place cyclic rewiring and slice(Waypoint) mutation", () => {
+      const Waypoint = struct('Waypoint', { lat: f32, lon: f32 });
+      const Flight = struct('Flight', {
+        id: u32,
+        callsign: str,
+        alt: u16,
+        waypoints: slice(Waypoint),
+        nextRelay: ref('Flight'),
+      });
+      const fleet = Flight.from([
+        { id: 1, callsign: 'UAL418', alt: 34200, waypoints: [[37.6, -122.4], [38.1, -120.0]], nextRelay: null },
+        { id: 2, callsign: 'DAL141', alt: 31800, waypoints: [[39.0, -118.5], [40.2, -115.0]], nextRelay: null },
+      ]);
+      fleet.at(0).nextRelay = fleet.at(1);
+      fleet.at(1).nextRelay = fleet.at(0);
+      expect(fleet.at(0).nextRelay?.nextRelay?.callsign).toBe('UAL418');
+      fleet.at(0).waypoints.at(1).lat = 38.5;
+      expect(fleet.at(0).waypoints.at(1).lat).toBeCloseTo(38.5, 4);
+    });
+
+    it('allocates and packs directly into WebAssembly.Memory via Schema.inWasm() and traverses str/slice/ref in safe Rust without unsafe boilerplate', () => {
+      const Waypoint = struct('Waypoint', { lat: f32, lon: f32 });
+      const Flight = struct('Flight', {
+        id: u32,
+        callsign: str,
+        alt: u16,
+        waypoints: slice(Waypoint),
+        nextRelay: ref('Flight'),
+      });
+
+      // 1. Schema.inWasm with WasmArena (rows + count)
+      const wasmMem = new WebAssembly.Memory({ initial: 1 });
+      const arena = new WasmArena(wasmMem, 128);
+      const { view, ptr, len, byteLength } = Flight.inWasm(arena, [
+        { id: 10, callsign: 'UAL418', alt: 34200, waypoints: [[37.6, -122.4], [38.0, -121.0]], nextRelay: null },
+        { id: 20, callsign: 'DAL141', alt: 31800, waypoints: [[39.0, -118.5]], nextRelay: null },
+      ]);
+      view.at(0).nextRelay = view.at(1);
+      view.at(1).nextRelay = view.at(0);
+      expect(ptr).toBe(128);
+      expect(len).toBe(2);
+      expect(byteLength).toBeGreaterThanOrEqual(80);
+      expect(view.at(0).nextRelay?.callsign).toBe('DAL141');
+
+      const emptySlice = Flight.inWasm(arena, 3);
+      expect(emptySlice.len).toBe(3);
+      expect(emptySlice.ptr).toBeGreaterThanOrEqual(ptr + byteLength);
+
+      // 2. Schema.inWasm with raw WebAssembly.Memory & exported capn_alloc
+      const rawMem = new WebAssembly.Memory({ initial: 1 });
+      const rawAllocated = Flight.inWasm(rawMem, [
+        { id: 99, callsign: 'ANA809', alt: 38000, waypoints: [[35.6, 139.7]], nextRelay: null },
+      ]);
+      expect(rawAllocated.ptr).toBe(64);
+      expect(rawAllocated.view.at(0).callsign).toBe('ANA809');
+      rawAllocated.view.at(0).callsign = 'ANA809-HEAVY-EXTENDED';
+      expect(rawAllocated.view.at(0).callsign).toBe('ANA809-HEAVY-EXTENDED');
+
+      let bump = 256;
+      const mockExports = {
+        memory: rawMem,
+        capn_alloc(n: number) {
+          const p = (bump + 7) & ~7;
+          bump = p + n;
+          return p;
+        },
+      };
+      const expSlice = Flight.inWasm(mockExports, rawAllocated.view);
+      expect(expSlice.ptr).toBe(256);
+      expect(expSlice.view.at(0).callsign).toBe('ANA809-HEAVY-EXTENDED');
+
+      // 3. Verify toRustReprC() emits safe Struct::as_slice, .as_str(arena), .as_slice(arena), .as_ref(arena)
+      // that compile under #[forbid(unsafe_code)] in user kernel code
+      const rustSchema = toRustReprC([Waypoint, Flight]);
+      expect(rustSchema).toContain('pub fn as_slice(base: &[u8], len: usize) -> &[Self]');
+      const rustKernel = `${rustSchema}
+#[forbid(unsafe_code)]
+pub mod safe_kernel {
+  use super::*;
+  pub fn inspect_fleet(arena: &[u8], len: usize) -> usize {
+    let flights = Flight::as_slice(arena, len);
+    let mut total = 0usize;
+    for f in flights {
+      if let Ok(cs) = f.callsign.as_str(arena) {
+        total += cs.len();
+      }
+      for wp in f.waypoints.as_slice(arena) {
+        if wp.lat > 0.0 { total += 1; }
+      }
+      if let Some(next) = f.nextRelay.as_ref(arena) {
+        total += next.id as usize;
+      }
+    }
+    total
+  }
+}
+`;
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-safe-rust-'));
+      try {
+        const rsPath = join(tmp, 'safe_kernel.rs');
+        const rmetaPath = join(tmp, 'safe_kernel.rmeta');
+        writeFileSync(rsPath, rustKernel, 'utf8');
+        execFileSync('rustc', ['--edition=2021', '--crate-type=lib', '--emit=metadata', '-o', rmetaPath, rsPath], {
+          stdio: 'pipe',
+        });
+        expect(readFileSync(rmetaPath).byteLength).toBeGreaterThan(0);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 });

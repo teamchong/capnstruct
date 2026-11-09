@@ -41,6 +41,7 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `def.offsetOf(field)`: Returns the byte offset of `field`.
 - `def.from(sourceOrRows)`: Universal 1-step constructor: packs an array/iterable of plain JS objects into a `StructArrayView<F>`, wraps a `Uint8Array` / `ArrayBuffer` / `SharedArrayBuffer` / `DataView` / `WebAssembly.Memory` / `WasmArena` with zero copying, or allocates `count` zero-initialized rows when passed a `number`.
 - `def.shared(rowsOrCount)`: Allocates or packs a `StructArrayView<F>` backed by a `SharedArrayBuffer` (with `ArrayBuffer` fallback) for zero-copy Web Worker `worker.postMessage(rows.buffer)` state sharing.
+- `def.inWasm(wasmMemoryOrExports, rowsOrCount)`: Allocates or packs a `StructArrayView<F>` directly inside `WebAssembly.Memory` (via `WasmArena`, `WebAssembly.Instance` / `exports` with `capn_alloc` or `alloc`, or raw `WebAssembly.Memory`) and returns `{ view, ptr, len, byteLength }` ready to pass straight into `wasm.exports.run_kernel(ptr, len)`.
 - `def.create(init?)`: Allocates a single `StructView<F>` backed by a fresh buffer (`create(init).bytes` and `view(bytes)` share the exact same zero-gap layout).
 - `def.alloc(count)`: Allocates a `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array).
 - `def.pack(rows)` / `pack(def, rows)`: Packs an array of plain JS objects into an 8-byte-aligned `Uint8Array`.

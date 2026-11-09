@@ -33,7 +33,21 @@
     "dist",
     "README.md"
   ],
+  "keywords": [
+    "repr-c",
+    "zero-copy",
+    "sharedarraybuffer",
+    "webassembly",
+    "wasm",
+    "web-workers",
+    "binary",
+    "struct",
+    "dataview",
+    "rust",
+    "tinygo"
+  ],
   "scripts": {
+    "prepublishOnly": "npm run build && npm test && npm run size",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

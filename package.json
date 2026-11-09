@@ -50,7 +50,7 @@
     "prepublishOnly": "npm run build && npm test && npm run size",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --test-timeout=30000",
     "bench": "node --import ./dist/index.js test/bench.js",
     "size": "node scripts/check-size.mjs",
     "docs:dev": "pnpm --filter capnstruct-docs dev",

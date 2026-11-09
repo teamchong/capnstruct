@@ -13,6 +13,6 @@
     "astro": "^6.2.2",
     "capnstruct": "workspace:*",
     "sharp": "^0.34.5",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   }
 }

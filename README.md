@@ -90,8 +90,8 @@ pub fn inspect_airspace(arena: &[u8], ptr: usize, len: usize) -> usize {
 
 ```bash
 # Or generate directly via the CLI:
-npx capnstruct ./src/schema.ts -o ./src/schema.rs          # Rust #[repr(C)] + safe .as_str/.as_slice/.as_ref
-npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm # Go / TinyGo WASM + capn_alloc exports
+npx capnstruct ./src/schema.ts -o ./src/schema.rs              # Rust #[repr(C)] + safe .as_str/.as_slice/.as_ref
+npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm # Go / TinyGo WASM + CapnBuilder / StrDedup + capn_alloc
 ```
 
 ### 2. Zero-Copy Web Worker &harr; Main Thread State (`Schema.shared` + In-Place Mutation)
@@ -122,9 +122,13 @@ const packets = Flight.from(wireBytes);
 
 // O(log N) binary search slice + zero-heap filter (decodes UTF-8 callsign ONLY on matching rows!)
 const windowView = packets.rangeBy('id', 1000, 5000);
-const matchingBytes = windowView.filterBytes((f) => f.waypoints.length > 0 && f.callsign.startsWith('UAL'));
+const matching = windowView.filter((f) => f.waypoints.length > 0 && f.callsign.startsWith('UAL'));
+const labels = matching.map((f) => `${f.id}:${f.callsign}`);
 
-// Extract contiguous Float32Array column for WebGL / WebGPU / Chart.js
+// Inspect only the fixed 36-byte header of a multi-MB OPFS/disk checkpoint without reading tail strings/slices:
+const hdr = Flight.viewHeader(await file.slice(0, Flight.byteSize).arrayBuffer());
+
+// Extract contiguous TypedArray column for WebGL / WebGPU / Chart.js
 const ids: Uint32Array = packets.column('id');
 ```
 
@@ -160,5 +164,5 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 
 | Entrypoint | Minified | Minified + Gzip |
 | :--- | :--- | :--- |
-| **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena` + `inWasm`) | 18.12 KiB | **7.12 KiB** (`6.62 KiB` schema core) |
-| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen) | 7.63 KiB | **2.57 KiB** |
+| **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena` + `inWasm`) | 17.98 KiB | **7.12 KiB** (`6.62 KiB` schema core) |
+| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen + `CapnBuilder`) | 6.26 KiB | **2.58 KiB** |

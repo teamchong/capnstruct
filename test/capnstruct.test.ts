@@ -655,13 +655,25 @@ describe('capnstruct', () => {
       label: str,
       next: ref(self),
     }));
+        const WasmDiag = defineStruct('WasmDiag', {
+          line: u32,
+          character: u32,
+          code: u32,
+          category: u32,
+          fileName: str,
+          text: str,
+        });
+        const WasmDiagBatch = defineStruct('WasmDiagBatch', {
+          diags: slice(WasmDiag),
+        });
         const wasmGoCode =
-          toGoStruct([SpdSample, RingNode], { wasm: true }) +
-          `\n//go:wasmexport sum_ring\nfunc sum_ring(ptr uintptr, byteLen uint32, count uint32) float64 {\n\tb := CapnBytes(ptr, byteLen)\n\tnodes := CapnSliceView[RingNode](b, count)\n\tcur := &nodes[0]\n\tvar total float64\n\tfor i := uint32(0); i < count && cur != nil; i++ {\n\t\ttotal += cur.Weight + float64(len(cur.Label.String(b)))\n\t\tcur = cur.Next.Ptr(b)\n\t}\n\treturn total\n}\n\nfunc main() {}\n`;
+          toGoStruct([SpdSample, RingNode, WasmDiag, WasmDiagBatch], { wasm: true }) +
+          `\nvar _diagOut []byte\nvar _diagBuilder CapnBuilder\n//go:wasmexport build_diags\nfunc build_diags() uintptr {\n\tfiles := [3]string{"", "src/checker.ts", "src/checker.ts"}\n\tmsgs := [3]string{"global config error", "Type string is not assignable to number", "Cannot find name x"}\n\t_diagOut = CapnBuild(&_diagBuilder, func(b *CapnBuilder) WasmDiagBatch {\n\t\treturn WasmDiagBatch{\n\t\t\tDiags: CapnBuildSlice(b, 3, func(i int, b *CapnBuilder) WasmDiag {\n\t\t\t\treturn WasmDiag{\n\t\t\t\t\tLine: uint32(i * 10),\n\t\t\t\t\tCharacter: uint32(i + 1),\n\t\t\t\t\tCode: uint32(2322 + i),\n\t\t\t\t\tCategory: 1,\n\t\t\t\t\tFileName: b.StrDedup(files[i]),\n\t\t\t\t\tText: b.Str(msgs[i]),\n\t\t\t\t}\n\t\t\t}),\n\t\t}\n\t})\n\treturn uintptr(unsafe.Pointer(unsafe.SliceData(_diagOut)))\n}\n//go:wasmexport build_diags_len\nfunc build_diags_len() uint32 { return uint32(len(_diagOut)) }\n//go:wasmexport sum_ring\nfunc sum_ring(ptr uintptr, byteLen uint32, count uint32) float64 {\n\tb := CapnBytes(ptr, byteLen)\n\tnodes := CapnSliceView[RingNode](b, count)\n\tcur := &nodes[0]\n\tvar total float64\n\tfor i := uint32(0); i < count && cur != nil; i++ {\n\t\ttotal += cur.Weight + float64(len(cur.Label.String(b)))\n\t\tcur = cur.Next.Ptr(b)\n\t}\n\treturn total\n}\n\nfunc main() {}\n`;
         expect(wasmGoCode).toContain('package main');
         expect(wasmGoCode).toContain('//go:wasmexport capn_alloc');
         expect(wasmGoCode).toContain('//go:wasmexport capn_reset');
-
+        expect(wasmGoCode).toContain('type CapnBuilder struct');
+        expect(wasmGoCode).toContain('func CapnBuild[T any]');
         writeFileSync(join(tmp, 'main.go'), wasmGoCode, 'utf8');
         writeFileSync(join(tmp, 'go.mod'), 'module capnwasmtest\ngo 1.24\n', 'utf8');
 
@@ -727,12 +739,13 @@ describe('capnstruct', () => {
           (inst.exports._initialize as () => void)();
       return inst.exports as {
         memory: WebAssembly.Memory;
-        capn_alloc: (n: number) => number;
-        capn_reset: () => void;
-        sum_ring: (ptr: number, byteLen: number, count: number) => number;
-      };
-    };
-
+            capn_alloc: (n: number) => number;
+            capn_reset: () => void;
+            sum_ring: (ptr: number, byteLen: number, count: number) => number;
+            build_diags: () => number;
+            build_diags_len: () => number;
+          };
+        };
     const n1 = RingNode.item({ id: 1, weight: 10.5, label: 'alpha', next: null });
     const n2 = RingNode.item({ id: 2, weight: 20.25, label: 'beta', next: n1 });
       n1.next = n2; // cycle: n1 <-> n2
@@ -745,6 +758,28 @@ describe('capnstruct', () => {
         // 10.5 + 5 ('alpha') + 20.25 + 4 ('beta') = 39.75
         expect(goExp.sum_ring(goPtr, packedRing.byteLength, 2)).toBeCloseTo(39.75, 5);
         goExp.capn_reset();
+        const goDiagPtr = goExp.build_diags() >>> 0;
+        const goDiagLen = goExp.build_diags_len() >>> 0;
+        expect(goDiagPtr).toBeGreaterThan(0);
+        const goBatchFromMem = WasmDiagBatch.view(goExp.memory, goDiagPtr);
+        expect(goBatchFromMem.diags.length).toBe(3);
+        expect(goBatchFromMem.diags.at(0).fileName).toBe('');
+        expect(goBatchFromMem.diags.at(0).text).toBe('global config error');
+        expect(goBatchFromMem.diags.at(1).fileName).toBe('src/checker.ts');
+        expect(goBatchFromMem.diags.at(2).fileName).toBe('src/checker.ts');
+        const goDiagU8 = new Uint8Array(goExp.memory.buffer, goDiagPtr, goDiagLen);
+        const goBatchFromU8 = WasmDiagBatch.view(goDiagU8);
+        expect(goBatchFromU8.diags.map((d) => `${d.fileName}:${d.line}:${d.code}:${d.text}`)).toEqual([
+          ':0:2322:global config error',
+          'src/checker.ts:10:2323:Type string is not assignable to number',
+          'src/checker.ts:20:2324:Cannot find name x',
+        ]);
+        // Verify StrDedup deduplicated "src/checker.ts" across rows 1 and 2 to the exact same tail offset
+        const goDv = new DataView(goExp.memory.buffer, goDiagPtr, goDiagLen);
+        const row1FnOff = goDv.getUint32(8 + 1 * 32 + 16, true);
+        const row2FnOff = goDv.getUint32(8 + 2 * 32 + 16, true);
+        expect(row1FnOff).toBeGreaterThan(0);
+        expect(row2FnOff).toBe(row1FnOff);
         let hasTinyGo = false;
         try {
           execFileSync('tinygo', ['version'], { stdio: 'pipe' });
@@ -766,6 +801,13 @@ describe('capnstruct', () => {
           );
           expect(tinyExp.sum_ring(tinyPtr, packedRing.byteLength, 2)).toBeCloseTo(39.75, 5);
           tinyExp.capn_reset();
+          const tinyDiagPtr = tinyExp.build_diags() >>> 0;
+          const tinyDiagLen = tinyExp.build_diags_len() >>> 0;
+          const tinyBatch = WasmDiagBatch.view(new Uint8Array(tinyExp.memory.buffer, tinyDiagPtr, tinyDiagLen));
+          expect(tinyBatch.diags.length).toBe(3);
+          expect(tinyBatch.diags.at(0).fileName).toBe('');
+          expect(tinyBatch.diags.at(1).fileName).toBe('src/checker.ts');
+          expect(tinyBatch.diags.at(2).text).toBe('Cannot find name x');
         }
       } finally {
         rmSync(tmp, { recursive: true, force: true });
@@ -1688,6 +1730,210 @@ pub mod safe_kernel {
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }
+    });
+
+    it('supports cursor().at() / seek() on nested slices and packs >64KB nested slices without scratch buffer detachment', () => {
+      const Header = struct('Header', { off: u32, cnt: u32 });
+      const Point = struct('Point', { t: u32, lat: i32, lon: i32 });
+      const Bundle = struct('Bundle', {
+        base: f64,
+        headers: slice(Header),
+        points: slice(Point),
+      });
+
+      const hdrs = Header.alloc(600);
+      const pts = Point.alloc(9000);
+      const hCur = hdrs.cursor();
+      const pCur = pts.cursor();
+      for (let i = 0; i < 600; i++) {
+        hCur.at(i);
+        hCur.off = i * 15;
+        hCur.cnt = 15;
+        for (let j = 0; j < 15; j++) {
+          const idx = i * 15 + j;
+          pCur.at(idx);
+          pCur.t = idx;
+          pCur.lat = 4300000 + idx;
+          pCur.lon = -7900000 - idx;
+        }
+      }
+
+      const bytes = Bundle.create({ base: 1794150000, headers: hdrs, points: pts }).bytes;
+      const view = Bundle.view(bytes);
+      const vCur = view.points.cursor();
+      expect(vCur.at(0).t).toBe(0);
+      expect(vCur.at(0).lat).toBe(4300000);
+      expect(vCur.at(1).t).toBe(1);
+      expect(vCur.at(1).lat).toBe(4300001);
+      expect(vCur.at(8999).t).toBe(8999);
+      expect(vCur.at(8999).lat).toBe(4308999);
+      expect(vCur.at(8999).lon).toBe(-7908999);
+    });
+  });
+
+  describe('Dogfooding Regressions & Ergonomics (Wasm Views, Auto-Count, Array Helpers, viewHeader)', () => {
+    const Diag = defineStruct('Diag', {
+      line: u32,
+      character: u32,
+      code: u32,
+      category: u32,
+      fileName: str,
+      text: str,
+    });
+    const DiagBatch = defineStruct('DiagBatch', {
+      diags: slice(Diag),
+    });
+
+    it('reads views at non-zero byteOffset over WebAssembly.Memory, ArrayBuffer, and Uint8Array subviews without baseOffset workarounds', () => {
+      const packed = DiagBatch.pack([
+        {
+          diags: [
+            { line: 1, character: 5, code: 2322, category: 1, fileName: 'a.ts', text: 'type mismatch' },
+            { line: 9, character: 2, code: 2304, category: 1, fileName: 'b.ts', text: 'cannot find name' },
+          ],
+        },
+      ]);
+      const wasmMem = new WebAssembly.Memory({ initial: 2 });
+      const outPtr = 72000;
+      new Uint8Array(wasmMem.buffer, outPtr, packed.byteLength).set(packed);
+
+      // 1. Direct view over WebAssembly.Memory + outPtr
+      const fromMem = DiagBatch.view(wasmMem, outPtr);
+      expect(fromMem.diags.length).toBe(2);
+      expect(fromMem.diags.at(0).fileName).toBe('a.ts');
+      expect(fromMem.diags.at(1).text).toBe('cannot find name');
+
+      // 2. Direct view over Uint8Array(wasmMemory.buffer, outPtr, outLen) without { baseOffset: 0 }
+      const subU8 = new Uint8Array(wasmMem.buffer, outPtr, packed.byteLength);
+      const fromU8 = DiagBatch.view(subU8);
+      expect(fromU8.diags.length).toBe(2);
+      expect(fromU8.diags.at(0).text).toBe('type mismatch');
+      expect(fromU8.diags.at(1).fileName).toBe('b.ts');
+
+      // 3. Backwards-compatible when { baseOffset: 0 } is explicitly passed on a sub-Uint8Array
+      const fromU8WithBase0 = DiagBatch.view(subU8, { baseOffset: 0 });
+      expect(fromU8WithBase0.diags.at(0).fileName).toBe('a.ts');
+      expect(fromU8WithBase0.diags.at(1).fileName).toBe('b.ts');
+    });
+
+    it('infers StructArrayView.length accurately when row 0 has an empty first variable-length field (off = 0)', () => {
+      const packed = Diag.pack([
+        { line: 0, character: 0, code: 5023, category: 1, fileName: '', text: 'global compiler option error' },
+        { line: 12, character: 4, code: 2322, category: 1, fileName: 'index.ts', text: 'bad assignment' },
+      ]);
+      // Simulate external Wasm producer (e.g. Go/Rust) that leaves row[0].fileName = { off: 0, len: 0 }
+      const rawCopy = packed.slice();
+      new DataView(rawCopy.buffer, rawCopy.byteOffset, rawCopy.byteLength).setUint32(16, 0, true);
+      new DataView(rawCopy.buffer, rawCopy.byteOffset, rawCopy.byteLength).setUint32(20, 0, true);
+
+      const arr = Diag.array(rawCopy);
+      expect(arr.length).toBe(2);
+      expect(arr.at(0).fileName).toBe('');
+      expect(arr.at(0).text).toBe('global compiler option error');
+      expect(arr.at(1).fileName).toBe('index.ts');
+      expect(arr.at(1).text).toBe('bad assignment');
+
+      // Also when row 0 has ALL variable-length fields empty (off = 0) and row 1 has a non-empty string
+      const packed2 = Diag.pack([
+        { line: 0, character: 0, code: 1000, category: 0, fileName: '', text: '' },
+        { line: 3, character: 1, code: 2000, category: 1, fileName: 'main.ts', text: 'syntax error' },
+      ]);
+      const rawCopy2 = packed2.slice();
+      const dv2 = new DataView(rawCopy2.buffer, rawCopy2.byteOffset, rawCopy2.byteLength);
+      dv2.setUint32(16, 0, true);
+      dv2.setUint32(24, 0, true);
+      const arr2 = Diag.array(rawCopy2);
+      expect(arr2.length).toBe(2);
+      expect(arr2.at(0).fileName).toBe('');
+      expect(arr2.at(0).text).toBe('');
+      expect(arr2.at(1).fileName).toBe('main.ts');
+    });
+
+    it('provides array-like .map(), .filter(), .slice(), .forEach(), .find(), .some(), .every(), and .values({ flyweight: false }) on StructArrayView', () => {
+      const rows = Diag.from([
+        { line: 10, character: 1, code: 2322, category: 1, fileName: 'a.ts', text: 'err 1' },
+        { line: 20, character: 2, code: 7006, category: 2, fileName: 'b.ts', text: 'warn 2' },
+        { line: 30, character: 3, code: 2304, category: 1, fileName: 'c.ts', text: 'err 3' },
+      ]);
+
+      // .map() provides distinct StructView instances per row
+      const mappedViews = rows.map((r) => r);
+      expect(mappedViews.map((v) => v.fileName)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+      expect(mappedViews[0]).not.toBe(mappedViews[1]);
+
+      // .values({ flyweight: false }) yields distinct StructView instances safe for [...spread] / Array.from
+      const spreadViews = [...rows.values({ flyweight: false })];
+      expect(spreadViews.map((v) => v.line)).toEqual([10, 20, 30]);
+
+      // .filter() returns a new StructArrayView<F>
+      const errorsOnly = rows.filter((r) => r.category === 1);
+      expect(errorsOnly.length).toBe(2);
+      expect(errorsOnly.map((r) => r.fileName)).toEqual(['a.ts', 'c.ts']);
+
+      // .slice(start, end) aliases .subarray(start, end)
+      const tailSlice = rows.slice(1, 3);
+      expect(tailSlice.length).toBe(2);
+      expect(tailSlice.map((r) => r.code)).toEqual([7006, 2304]);
+
+      // .forEach(), .find(), .some(), .every()
+      const lines: number[] = [];
+      rows.forEach((r, idx) => lines.push(r.line + idx));
+      expect(lines).toEqual([10, 21, 32]);
+      expect(rows.find((r) => r.code === 7006)?.fileName).toBe('b.ts');
+      expect(rows.find((r) => r.code === 9999)).toBeUndefined();
+      expect(rows.some((r) => r.category === 2)).toBe(true);
+      expect(rows.every((r) => r.line >= 10)).toBe(true);
+      expect(rows.every((r) => r.category === 1)).toBe(false);
+    });
+
+    it('exposes Schema.byteSize and Schema.viewHeader(headBytes) for safe partial-file header inspection', () => {
+      const Checkpoint = defineStruct('Checkpoint', {
+        magic: u32,
+        seq: u32,
+        byteLen: u32,
+        done: bool,
+        chunks: u32,
+        tag: fixedStr(8),
+        memoryDump: str,
+        diags: slice(Diag),
+      });
+
+      expect(Checkpoint.byteSize).toBe(Checkpoint.size);
+      expect(Checkpoint.byteSize).toBe(44);
+
+      const fullBytes = Checkpoint.create({
+        magic: 0x434b5054,
+        seq: 42,
+        byteLen: 2170000,
+        done: true,
+        chunks: 19,
+        tag: 'DOOM_42',
+        memoryDump: 'x'.repeat(4096),
+        diags: [{ line: 1, character: 1, code: 100, category: 1, fileName: 'doom.ts', text: 'ok' }],
+      }).bytes;
+      expect(fullBytes.byteLength).toBeGreaterThan(4096);
+
+      // Slice ONLY the fixed 44-byte header (omitting the 4KB+ tail arena completely)
+      const headBytes = fullBytes.slice(0, Checkpoint.byteSize);
+      expect(headBytes.byteLength).toBe(44);
+
+      const hdr: typeof Checkpoint.$header = Checkpoint.viewHeader(headBytes);
+      expect(hdr.magic).toBe(0x434b5054);
+      expect(hdr.seq).toBe(42);
+      expect(hdr.byteLen).toBe(2170000);
+      expect(hdr.done).toBe(true);
+      expect(hdr.chunks).toBe(19);
+      expect(hdr.tag).toBe('DOOM_42');
+
+      // Even calling .toObject() / JSON.stringify() on viewHeader skips tail-allocated str/slice/ref fields instead of throwing RangeError
+      expect(hdr.toObject()).toEqual({
+        magic: 0x434b5054,
+        seq: 42,
+        byteLen: 2170000,
+        done: true,
+        chunks: 19,
+        tag: 'DOOM_42',
+      });
     });
   });
 });

@@ -31,10 +31,11 @@ Stored inline as 8 bytes (`[u32 relOffset, u32 length]` for `str`/`slice`, or `[
 
 Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. Pass a `(self) => ({ ... })` callback when defining self-referential fields (`ref(self)`, `slice(self)`) for 100% TypeScript type inference.
 
-- `def.size` / `def.stride`: Struct byte size including trailing alignment padding.
+- `def.size` / `def.byteSize` / `def.stride`: Fixed struct header byte size including trailing alignment padding (useful for `file.slice(0, def.byteSize)` partial header reads).
 - `def.align`: Struct byte alignment (`1`, `2`, `4`, or `8`).
 - `def.fields`: Map of field names to `{ name, desc, offset, size, align }`.
 - `typeof def.$view` / `InferView<typeof def>`: Inferred `StructView<F>` type.
+- `typeof def.$header` / `StructHeaderView<F>`: Inferred header-only `StructView` type exposing only inline fixed-offset fields (omitting tail-allocated `str`, `slice`, and `ref` fields).
 - `typeof def.$plain` / `InferPlain<typeof def>`: Inferred plain JS object type (`toObject()`).
 - `typeof def.$input` / `InferInput<typeof def>`: Inferred input object type (`pack()`, `create()`, `push()`).
 - `def.item(init)`: Identity helper that types a plain JS object literal as `Partial<StructInput<F>>` (for building cyclic JS object graphs with full static type inference).
@@ -46,8 +47,9 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `def.alloc(count)`: Allocates a `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array).
 - `def.pack(rows)` / `pack(def, rows)`: Packs an array of plain JS objects into an 8-byte-aligned `Uint8Array`.
 - `def.concatBytes(chunks)` / `concatBytes(def, chunks)`: Concatenates multiple `StructArrayView<F>` or `Uint8Array` chunks into a single packed `Uint8Array` via bulk `memcpy` when fixed-size.
-- `def.view(source, optionsOrOffset?)`: Wraps a single struct in `source` without copying.
-- `def.array(source, optionsOrOffset?, count?)`: Wraps a sequence of structs in `source` without copying.
+- `def.view(source, optionsOrOffset?)`: Wraps a single struct in `source` without copying (`source` can be `Uint8Array`, `ArrayBuffer`, `DataView`, `WebAssembly.Memory`, or `WasmArena`).
+- `def.viewHeader(source, optionsOrOffset?)`: Wraps a partial binary buffer containing at least `def.byteSize` bytes (e.g. `await file.slice(0, def.byteSize).arrayBuffer()`) in a type-safe `StructHeaderView<F>` exposing only inline fixed-offset fields (`.toObject()` also safely omits tail fields).
+- `def.array(source, optionsOrOffset?, count?)`: Wraps a sequence of structs in `source` without copying (auto-infers `length` even when row 0 has empty `str`/`slice` fields).
 ### Inline Fixed-Length & Zero-Overhead Primitives
 
 - `f16`: 2-byte IEEE 754 half-precision float (`Float16Array` column support).
@@ -71,11 +73,12 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `rows.length` / `rows.stride` / `rows.byteLength` / `rows.byteOffset` / `rows.buffer`
 - `rows.at(index, cursor?)`: Returns a `StructView<F>` for `index` (uses a 256-slot ring pool or the provided `cursor`).
 - `rows.cursor(index?)`: Returns a reusable flyweight `StructView<F>` cursor (reposition via `cursor.seek(i)` or `cursor.at(i)`).
-- `for (const row of rows)`: Zero-allocation flyweight iterator.
-- `rows.subarray(begin?, end?)`: Returns a zero-copy `StructArrayView<F>` slice over `[begin, end)` in `O(1)` without copying bytes.
-- `rows.lowerBound(field, value)` / `rows.upperBound(field, value)`: `O(log N)` binary search directly on a sorted primitive column (0 allocations).
+- `for (const row of rows)` / `rows.values({ flyweight?: boolean })`: By default (`flyweight: true`), `[Symbol.iterator]` reuses a single flyweight cursor (`0` allocations). When collecting `StructView` instances into an array or `Set` (`[...rows.values({ flyweight: false })]`), pass `{ flyweight: false }` or use `rows.map(...)` / `rows.toObjects()`.
+- `rows.map(fn)` / `rows.forEach(fn)` / `rows.find(fn)` / `rows.some(fn)` / `rows.every(fn)`: Array-like iteration and projection helpers (`rows.map(fn)` passes a distinct `StructView<F>` per element; `rows.forEach(fn)` reuses a flyweight cursor with `0` allocations).
+- `rows.subarray(begin?, end?)` / `rows.slice(begin?, end?)`: Returns a zero-copy `StructArrayView<F>` slice over `[begin, end)` in `O(1)` without copying bytes.
+- `rows.lowerBound(field, value)` / `rows.upperBound(field, value)`: `O(log N)` binary search directly on a sorted primitive column (`0` allocations).
 - `rows.rangeBy(field, min, max)`: Returns a zero-copy `StructArrayView<F>` slice over `min <= row[field] <= max` in `O(log N)`.
-- `rows.filterBytes(predicate)`: Filters rows with a reusable flyweight cursor (0 per-row JS objects) and copies matching binary rows into a tight `Uint8Array`.
+- `rows.filter(predicate)` / `rows.filterBytes(predicate)`: Filters rows with a reusable flyweight cursor (`0` per-row JS objects) and returns a new `StructArrayView<F>` (`filter`) or tight `Uint8Array` (`filterBytes`).
 - `rows.push(...items)`: Appends rows in-place, automatically growing capacity as needed.
 - `rows.pop()`: Removes and returns the last row as a plain JS object.
 - `rows.column(field)`: Extracts a `TypedArray` for primitive `field` (zero-copy when `stride === field.size`).
@@ -83,6 +86,6 @@ Compiles a `StructDef<F>` with a specialized monomorphic V8 `StructView` class. 
 - `rows.usedByteLength` / `rows.deadByteLength` / `rows.compactionRatio`: Active + dead bytes, reclaimable dead tail bytes, and ratio (`0..1`) of dead tail bytes to total used bytes.
 - `rows.compact()`: Strips dead tail bytes and rebinds the view to a tight `Uint8Array`.
 - `rows.bytes`: Returns a wire-ready `Uint8Array` (automatically calling `.compact()` if dirty).
-- `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go build` / `tinygo build`-verified Go zero-copy structs (with `CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`, `CapnStr`, `CapnSlice[T]`, `CapnRef[T]`, `//go:wasmexport capn_alloc` & `capn_reset` when `{ wasm: true }` / `--go-wasm`, and compile-time size/alignment/offset assertions).
+- `toRustReprC(schemas, options?)` / `toGoStruct(schemas, options?)` (`from 'capnstruct/codegen'`): Generates `rustc`-verified Rust `#[repr(C)]` structs or `go build` / `tinygo build`-verified Go zero-copy structs (with `CapnBytes`, `CapnView[T]`, `CapnSliceView[T]`, `CapnStr`, `CapnSlice[T]`, `CapnRef[T]`, zero-alloc `CapnBuilder` + `StrDedup` + `CapnBuild[T]` + `CapnBuildSlice[T]` + `CapnPack[T]`, `//go:wasmexport capn_alloc` & `capn_reset` when `{ wasm: true }` / `--go-wasm`, and compile-time size/alignment/offset assertions).
 - `installDevtoolsFormatter()`: Auto-registered in browsers on `globalThis.devtoolsFormatters` (alongside `[Symbol.for('nodejs.util.inspect.custom')]()` in Node.js / Bun / Vitest) so `StructView` and `StructArrayView` format cleanly in `console.log()` and browser DevTools with zero eager row allocation.
 

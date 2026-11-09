@@ -69,7 +69,7 @@
       <div class="cs-canvas-wrap cs-card-v8">
         <div class="cs-canvas-title">
           <span class="cs-canvas-label">&#x1F7E0; 1. Worker postMessage (structuredClone)</span>
-          <span class="cs-canvas-hint cs-hint-v8" id="cs-hint-v8">14.1 ms clone (Bun: 5.7 ms) &middot; +6.9 MB GC!</span>
+          <span class="cs-canvas-hint cs-hint-v8" id="cs-hint-v8">14.1 ms clone &middot; +6.9 MB GC!</span>
         </div>
         <div class="cs-canvas-stage">
           <canvas id="cs-anim-v8" class="cs-anim-canvas" width="360" height="208"></canvas>
@@ -149,13 +149,13 @@
         <div class="cs-gpanel active" id="cs-gpanel-scale">
           <div class="cs-graph-card">
             <div class="cs-graph-legend">
-              <span class="cs-leg-item"><i class="cs-dot cs-dot-v8"></i> Node.js v24 (V8) JSON / Clone</span>
-              <span class="cs-leg-item"><i class="cs-dot cs-dot-jsc"></i> Bun v1.4 (JavaScriptCore)</span>
+            <span class="cs-leg-item"><i class="cs-dot cs-dot-v8"></i> Node.js v24 (V8) JSON / Clone</span>
+            <span class="cs-leg-item"><i class="cs-dot cs-dot-jsc"></i> Bun v1.4 (JavaScriptCore)</span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-rust"></i> Rust -O3 (WASM JSON Parse)</span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-capn"></i> <strong>capnstruct #[repr(C)] (JS &amp; Rust, 0 MB)</strong></span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-inmem"></i> Already-In-Memory JS Array (No Parse)</span>
             </div>
-            <svg viewBox="0 0 860 270" class="cs-svg-chart" role="img" aria-label="Scaling curve comparing Node.js V8, Bun JSC, Rust WASM, and capnstruct from N=100 to N=100,000 rows">
+          <svg viewBox="0 0 860 270" class="cs-svg-chart" role="img" aria-label="Scaling curve comparing Node.js V8, Bun JSC, Rust WASM, and capnstruct from N=100 to N=100,000 rows">
               <!-- Grid & Axes -->
               <line x1="70" y1="25" x2="820" y2="25" stroke="currentColor" stroke-opacity="0.08" />
               <line x1="70" y1="75" x2="820" y2="75" stroke="currentColor" stroke-opacity="0.08" />
@@ -192,12 +192,12 @@
               <!-- Curve 1: Node.js v24 (V8) structuredClone / Wire Parse (0.034 -> 0.26 -> 1.27 -> 2.58 -> 6.60 -> 13.79 -> 27.85 ms) -->
               <polyline fill="none" stroke="#ef4444" stroke-width="3" points="90,219.7 205,218.2 320,211.1 435,202.0 550,173.8 665,123.5 785,25.1" />
               <circle cx="90" cy="219.7" r="4" fill="#ef4444" /><circle cx="205" cy="218.2" r="4" fill="#ef4444" /><circle cx="320" cy="211.1" r="4" fill="#ef4444" /><circle cx="435" cy="202.0" r="4" fill="#ef4444" /><circle cx="550" cy="173.8" r="4" fill="#ef4444" /><circle cx="665" cy="123.5" r="4" fill="#ef4444" /><circle cx="785" cy="25.1" r="5" fill="#ef4444" />
-              <text x="772" y="38" text-anchor="end" font-size="11" font-weight="700" fill="#ef4444">Node V8: 27.8 ms (+10.3 MB heap)</text>
+            <text x="772" y="38" text-anchor="end" font-size="11" font-weight="700" fill="#ef4444">Node V8: 27.8 ms (+10.3 MB heap)</text>
 
               <!-- Curve 2: Bun v1.4 (JSC) Engine Switch (0.035 -> 0.14 -> 0.62 -> 1.28 -> 3.28 -> 6.68 -> 13.85 ms) -->
               <polyline fill="none" stroke="#f59e0b" stroke-width="3" points="90,219.7 205,219.0 320,215.7 435,211.0 550,197.0 665,173.3 785,123.0" />
               <circle cx="90" cy="219.7" r="4" fill="#f59e0b" /><circle cx="205" cy="219.0" r="4" fill="#f59e0b" /><circle cx="320" cy="215.7" r="4" fill="#f59e0b" /><circle cx="435" cy="211.0" r="4" fill="#f59e0b" /><circle cx="550" cy="197.0" r="4" fill="#f59e0b" /><circle cx="665" cy="173.3" r="4" fill="#f59e0b" /><circle cx="785" cy="123.0" r="5" fill="#f59e0b" />
-              <text x="772" y="116" text-anchor="end" font-size="11" font-weight="700" fill="#f59e0b">Bun JSC: 13.9 ms (2x faster, +6.9 MB heap)</text>
+            <text x="772" y="116" text-anchor="end" font-size="11" font-weight="700" fill="#f59e0b">Bun JSC: 13.9 ms (2x faster, +6.9 MB heap)</text>
 
               <!-- Curve 3: Rust -O3 WASM JSON Parse (0.004 -> 0.034 -> 0.167 -> 0.337 -> 0.931 -> 1.862 -> 3.73 ms in-WASM, 23.0 ms w/ JS FFI) -->
               <polyline fill="none" stroke="#a855f7" stroke-width="2.6" points="90,219.8 205,219.8 320,218.8 435,217.7 550,213.5 665,207.0 785,194.0" />
@@ -221,8 +221,8 @@
         <div class="cs-gpanel active" id="cs-gpanel-selectivity">
           <div class="cs-graph-card">
             <div class="cs-graph-legend">
-              <span class="cs-leg-item"><i class="cs-dot cs-dot-v8"></i> Node V8 (<code>JSON.parse</code> + filter)</span>
-              <span class="cs-leg-item"><i class="cs-dot cs-dot-jsc"></i> Bun JSC (<code>JSON.parse</code> + filter)</span>
+            <span class="cs-leg-item"><i class="cs-dot cs-dot-v8"></i> Node V8 (<code>JSON.parse()</code> + filter)</span>
+            <span class="cs-leg-item"><i class="cs-dot cs-dot-jsc"></i> Bun JSC (<code>JSON.parse()</code> + filter)</span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-rust"></i> Rust -O3 (JSON Scan + filter)</span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-capn"></i> <strong>capnstruct #[repr(C)] (JS: 0.29ms / Rust: 0.018ms)</strong></span>
               <span class="cs-leg-item"><i class="cs-dot cs-dot-inmem"></i> Already-Parsed In-Memory JS Objects (No Wire Parse)</span>
@@ -251,12 +251,12 @@
               <!-- Node V8 JSON.parse + filter: ~14.2-15.4 ms across all hit rates -->
               <polyline fill="none" stroke="#ef4444" stroke-width="3" points="110,36.5 275,55.3 445,46.6 615,51.2 775,51.2" />
               <circle cx="110" cy="36.5" r="4" fill="#ef4444" /><circle cx="275" cy="55.3" r="4" fill="#ef4444" /><circle cx="445" cy="46.6" r="4" fill="#ef4444" /><circle cx="615" cy="51.2" r="4" fill="#ef4444" /><circle cx="775" cy="51.2" r="5" fill="#ef4444" />
-              <text x="770" y="42" text-anchor="end" font-size="11" font-weight="700" fill="#ef4444">Node V8 JSON.parse: ~14.2 ms everywhere (+8.2 MB heap)</text>
+            <text x="770" y="42" text-anchor="end" font-size="11" font-weight="700" fill="#ef4444">Node V8 JSON.parse: ~14.2 ms everywhere (+8.2 MB heap)</text>
 
               <!-- Bun JSC JSON.parse + filter: ~5.6-6.3 ms across all hit rates -->
               <polyline fill="none" stroke="#f59e0b" stroke-width="3" points="110,141.9 275,143.8 445,150.2 615,149.7 775,148.7" />
               <circle cx="110" cy="141.9" r="4" fill="#f59e0b" /><circle cx="275" cy="143.8" r="4" fill="#f59e0b" /><circle cx="445" cy="150.2" r="4" fill="#f59e0b" /><circle cx="615" cy="149.7" r="4" fill="#f59e0b" /><circle cx="775" cy="148.7" r="5" fill="#f59e0b" />
-              <text x="770" y="139" text-anchor="end" font-size="11" font-weight="700" fill="#f59e0b">Bun JSC JSON.parse: ~5.7 ms everywhere (+5.2 MB heap)</text>
+            <text x="770" y="139" text-anchor="end" font-size="11" font-weight="700" fill="#f59e0b">Bun JSC JSON.parse: ~5.7 ms everywhere (+5.2 MB heap)</text>
 
               <!-- Rust -O3 JSON Scan + filter: 4.16 ms everywhere (must scan all JSON text) -->
               <polyline fill="none" stroke="#a855f7" stroke-width="2.6" points="110,166.9 275,166.8 445,166.7 615,166.5 775,166.2" />
@@ -1533,7 +1533,7 @@
       hudHeap.textContent = `0.00 MB vs +${(6.87 * scaleFactor).toFixed(1)} MB GC`;
     }
     if (hintV8) {
-      hintV8.textContent = `${steadyV8Ms.toFixed(1)} ms clone (Bun: ${steadyJscMs.toFixed(1)} ms) · +${(6.87 * scaleFactor).toFixed(1)} MB GC!`;
+        hintV8.textContent = `${steadyV8Ms.toFixed(1)} ms clone · +${(6.87 * scaleFactor).toFixed(1)} MB GC!`;
     }
     if (hintJsc) {
       hintJsc.textContent = `${steadyRustMs.toFixed(1)} ms WASM / ${(23.0 * scaleFactor).toFixed(1)} ms FFI copy`;
@@ -2237,7 +2237,7 @@
       maxHeapMB: 6.87,
       stalled: v8GcStall > 0,
       memSub: 'Scattered Boxed Heap:',
-      msLabel: `structuredClone: ${steadyV8Ms.toFixed(1)}ms V8 | ${steadyJscMs.toFixed(1)}ms Bun`,
+        msLabel: `structuredClone: ${steadyV8Ms.toFixed(1)}ms (Browser JS)`,
       radius,
     });
 

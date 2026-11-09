@@ -241,3 +241,42 @@ new Uint8Array(wasmExports.memory.buffer, ptr, bytes.byteLength).set(bytes);
 const total = wasmExports.scan_samples(ptr, bytes.byteLength, samples.length);
 wasmExports.capn_reset();
 ```
+
+### Producing Binary Batches in Go / TinyGo (`CapnBuilder` & `StrDedup`)
+
+When Go or TinyGo is the **producer** returning variable-length structs, slices, and UTF-8 strings back to JavaScript, `toGoStruct` also emits a reusable `CapnBuilder` arena with `CapnBuild[T]`, `CapnBuildSlice[T]`, `CapnPack[T]`, `CapnPackSlice[T]`, `CapnPackRef[T]`, `b.Str(s)`, and `b.StrDedup(s)` (string deduplication across repeated filenames/tags):
+
+```go
+var diagBuilder CapnBuilder
+var diagOut []byte
+
+//go:wasmexport encode_diags
+func encode_diags() uintptr {
+	diagOut = CapnBuild(&diagBuilder, func(b *CapnBuilder) WasmDiagBatch {
+		return WasmDiagBatch{
+			Diags: CapnBuildSlice(b, len(diags), func(i int, b *CapnBuilder) WasmDiag {
+				d := diags[i]
+				return WasmDiag{
+					Line:      d.Line,
+					Character: d.Character,
+					Code:      d.Code,
+					Category:  d.Category,
+					FileName:  b.StrDedup(d.FileName), // deduplicates repeated filenames in the tail arena
+					Text:      b.Str(d.Text),
+				}
+			}),
+		}
+	})
+	return uintptr(unsafe.Pointer(unsafe.SliceData(diagOut)))
+}
+```
+
+In JavaScript, wrap the returned WASM pointer directly with `Schema.view(wasmExports.memory, outPtr)` or `new Uint8Array(wasmExports.memory.buffer, outPtr, outLen)`:
+
+```ts
+const outPtr = wasmExports.encode_diags() >>> 0;
+const diags = WasmDiagBatch.view(wasmExports.memory, outPtr).diags;
+
+// Project directly with .map(), .filter(), .slice(), or zero-alloc for..of iteration:
+const errors = diags.filter((d) => d.category === 1).map((d) => `${d.fileName}:${d.line} TS${d.code}: ${d.text}`);
+```

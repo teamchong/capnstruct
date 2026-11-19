@@ -9,7 +9,7 @@ async function main(): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
       [
-        'Usage: capnstruct <schema-module.js> [-o <output.rs|output.go>] [--rust|--go|--go-wasm] [--pkg <name>] [--wasm] [--no-assertions]',
+        'Usage: capnstruct <schema-module.js> [-o <output.rs|output.go>] [--rust|--go|--go-wasm] [--pkg <name>] [--wasm] [--builder] [--no-wasm-exports|--wasm-exports-cfg <cfg>] [--allow <lints>] [--no-assertions]',
         '',
         'Generates #[repr(C)] Rust or zero-copy Go / TinyGo WASM struct definitions and compile-time layout assertions',
         'from a JS/TS module exporting capnstruct StructDef schemas.',
@@ -23,6 +23,9 @@ async function main(): Promise<void> {
   let target: 'rust' | 'go' | '' = '';
   let pkg = '';
   let wasm = false;
+  let builder: boolean | undefined;
+  let wasmExports: boolean | string | undefined;
+  let allow: string[] | undefined;
   let assertions = true;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -35,6 +38,17 @@ async function main(): Promise<void> {
       wasm = true;
     } else if (a === '--wasm') {
       wasm = true;
+    } else if (a === '--builder') {
+      builder = true;
+    } else if (a === '--no-wasm-exports') {
+      wasmExports = false;
+    } else if (a === '--wasm-exports-cfg') {
+      wasmExports = args[++i] ?? '';
+    } else if (a === '--allow') {
+      allow = (args[++i] ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
     } else if (a === '--rust') {
       target = 'rust';
     } else if (a === '--pkg' || a === '--package') {
@@ -56,7 +70,7 @@ async function main(): Promise<void> {
   const code =
     target === 'go'
       ? toGoStruct(mod, { pkg: pkg || undefined, assertions, wasm })
-      : toRustReprC(mod, { assertions, wasm });
+      : toRustReprC(mod, { assertions, wasm, builder, wasmExports, allow });
   if (outputPath) {
     writeFileSync(resolve(process.cwd(), outputPath), code, 'utf8');
   } else {

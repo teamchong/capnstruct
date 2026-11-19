@@ -25,6 +25,7 @@ import {
   installDevtoolsFormatter,
   list,
   nullable,
+  optStr,
   pack,
   ref,
   scaled,
@@ -41,9 +42,9 @@ import {
   u32,
   u64,
   union,
+  UnionArrayView,
   WasmArena,
 } from '../src/index.js';
-
 describe('capnstruct', () => {
   describe('Primitives & C #[repr(C)] Alignment Calculator', () => {
     it('reads and writes all primitive types with little-endian encoding', () => {
@@ -2428,5 +2429,591 @@ func go_inspect_method(ptr uintptr, byteLen uint32) int32 {
         rmSync(tmp, { recursive: true, force: true });
       }
     });
+  });
+
+  describe('Dogfooding Improvements: UnionArrayView, optStr, Codegen Ergonomics & Strict no-DOM Types', () => {
+    it('returns lazy zero-copy UnionArrayView for slice(Union) and fixedArray(Union, N)', () => {
+      const Value = defineUnion('Value', {
+        None: null,
+        Num: i32,
+        Text: str,
+        OptText: optStr,
+      });
+      const Bucket = defineStruct('Bucket', {
+        id: u32,
+        items: slice(Value),
+        fixed: fixedArray(Value, 2),
+      });
+
+      const b = Bucket.create({
+        id: 7,
+        items: [
+          { tag: 'None' },
+          { tag: 'Num', value: -42 },
+          { tag: 'Text', value: 'hello' },
+          { tag: 'OptText', value: null },
+          { tag: 'OptText', value: '' },
+          { tag: 'OptText', value: 'world' },
+        ],
+        fixed: [
+          { tag: 'Num', value: 10 },
+          { tag: 'Text', value: 'two' },
+        ],
+      });
+
+      const items = b.items;
+      expect(items).toBeInstanceOf(UnionArrayView);
+      expect(items.length).toBe(6);
+      expect(items.stride).toBe(Value.size);
+      expect(items.byteLength).toBe(6 * Value.size);
+
+      // O(1) discriminant-only tagAt without allocating union objects
+      expect(items.tagAt(0)).toBe('None');
+      expect(items.tagAt(1)).toBe('Num');
+      expect(items.tagAt(-1)).toBe('OptText');
+      expect(() => items.tagAt(6)).toThrow(RangeError);
+      expect(() => items.tagAt(-7)).toThrow(RangeError);
+
+      // O(1) indexed reads + negative indexing
+      expect(items.at(0)).toEqual({ tag: 'None' });
+      expect(items.at(1)).toEqual({ tag: 'Num', value: -42 });
+      expect(items.at(2)).toEqual({ tag: 'Text', value: 'hello' });
+      expect(items.at(3)).toEqual({ tag: 'OptText', value: null });
+      expect(items.at(4)).toEqual({ tag: 'OptText', value: '' });
+      expect(items.at(-1)).toEqual({ tag: 'OptText', value: 'world' });
+      expect(() => items.at(6)).toThrow(RangeError);
+
+      // fixedArray(Union, N) also returns lazy UnionArrayView
+      expect(b.fixed).toBeInstanceOf(UnionArrayView);
+      expect(b.fixed.length).toBe(2);
+      expect(b.fixed.at(0)).toEqual({ tag: 'Num', value: 10 });
+      expect(b.fixed.at(1)).toEqual({ tag: 'Text', value: 'two' });
+
+      // Zero-copy subarray / slice
+      const sub = items.subarray(1, 4);
+      expect(sub).toBeInstanceOf(UnionArrayView);
+      expect(sub.length).toBe(3);
+      expect(sub.buffer).toBe(items.buffer);
+      expect(sub.at(0)).toEqual({ tag: 'Num', value: -42 });
+      expect(sub.at(2)).toEqual({ tag: 'OptText', value: null });
+      expect(items.slice(-2).toObjects()).toEqual([
+        { tag: 'OptText', value: '' },
+        { tag: 'OptText', value: 'world' },
+      ]);
+
+      // Iteration & array-like helpers
+      expect([...items].map((x) => x.tag)).toEqual(['None', 'Num', 'Text', 'OptText', 'OptText', 'OptText']);
+      const tags: string[] = [];
+      items.forEach((x) => tags.push(x.tag));
+      expect(tags).toEqual(['None', 'Num', 'Text', 'OptText', 'OptText', 'OptText']);
+      expect(items.map((x) => x.tag)).toEqual(tags);
+      expect(items.find((x) => x.tag === 'Num')).toEqual({ tag: 'Num', value: -42 });
+      expect(items.some((x) => x.tag === 'Text' && x.value === 'hello')).toBe(true);
+      expect(items.every((x) => typeof x.tag === 'string')).toBe(true);
+      expect(JSON.parse(JSON.stringify(items))).toEqual(items.toObjects());
+
+      // In-place mutation via set() (including through subarray) + compact()
+      sub.set(0, { tag: 'Text', value: 'mutated' });
+      items.set(-1, { tag: 'None' });
+      expect(b.items.at(1)).toEqual({ tag: 'Text', value: 'mutated' });
+      expect(b.items.at(5)).toEqual({ tag: 'None' });
+      const compacted = Bucket.view(b.compact());
+      expect(compacted.items.at(1)).toEqual({ tag: 'Text', value: 'mutated' });
+      expect(compacted.items.at(5)).toEqual({ tag: 'None' });
+
+      // Bulk copy a UnionArrayView into another struct's slice(Union)
+      const InlineU = defineUnion('InlineU', { A: null, B: u32 });
+      const InlineHolder = defineStruct('InlineHolder', { arr: slice(InlineU) });
+      const ih1 = InlineHolder.create({ arr: [{ tag: 'A' }, { tag: 'B', value: 99 }] });
+      const ih2 = InlineHolder.create({ arr: ih1.arr });
+      expect(ih2.arr.toObjects()).toEqual([{ tag: 'A' }, { tag: 'B', value: 99 }]);
+      // And tail-allocating UnionArrayView copy
+      const b2 = Bucket.create({ id: 8, items: compacted.items, fixed: compacted.fixed });
+      expect(b2.toObject()).toEqual({ ...compacted.toObject(), id: 8 });
+
+      // Wire safety: corrupt discriminant tag throws RangeError on at() and tagAt()
+      const bad = b2.bytes.slice();
+      const itemsOff = new DataView(bad.buffer, bad.byteOffset).getUint32(Bucket.offsetOf('items'), true);
+      bad[itemsOff] = 200;
+      expect(() => Bucket.view(bad).items.tagAt(0)).toThrow(RangeError);
+      expect(() => Bucket.view(bad).items.at(0)).toThrow(RangeError);
+    });
+
+    it('supports optStr / nullable(str) distinguishing null, empty string, and UTF-8 strings', () => {
+      expect(nullable(str)).toBe(optStr);
+      const Doc = defineStruct('Doc', {
+        id: u32,
+        summary: optStr,
+        note: nullable(str),
+      });
+
+      // Default value is null
+      const empty = Doc.create({ id: 1 });
+      expect(empty.summary).toBeNull();
+      expect(empty.note).toBeNull();
+      expect(empty.toObject()).toEqual({ id: 1, summary: null, note: null });
+
+      // Distinguishes null vs "" vs UTF-8
+      const d = Doc.create({ id: 2, summary: '', note: '東京 🚀' });
+      expect(d.summary).toBe('');
+      expect(d.note).toBe('東京 🚀');
+      // Verify wire encoding of "" is { off: 1, len: 0 }
+      const dv = new DataView(d.bytes.buffer, d.bytes.byteOffset);
+      expect(dv.getUint32(Doc.offsetOf('summary'), true)).toBe(1);
+      expect(dv.getUint32(Doc.offsetOf('summary') + 4, true)).toBe(0);
+
+      // In-place mutation across null <-> "" <-> non-empty
+      d.summary = null;
+      expect(d.summary).toBeNull();
+      expect(new DataView(d.bytes.buffer, d.bytes.byteOffset).getUint32(Doc.offsetOf('summary'), true)).toBe(0);
+      d.summary = 'filled';
+      expect(d.summary).toBe('filled');
+      d.summary = '';
+      expect(d.summary).toBe('');
+      d.note = null;
+      expect(d.note).toBeNull();
+      const repacked = Doc.view(d.compact());
+      expect(repacked.toObject()).toEqual({ id: 2, summary: '', note: null });
+
+      // Auto-count StructArrayView when optStr is the ONLY variable field
+      const OnlyOpt = defineStruct('OnlyOpt', { label: optStr });
+      const packed = OnlyOpt.pack([{ label: null }, { label: '' }, { label: 'abc' }, { label: null }]);
+      const arr = OnlyOpt.array(packed);
+      expect(arr.length).toBe(4);
+      expect(arr.toObjects()).toEqual([{ label: null }, { label: '' }, { label: 'abc' }, { label: null }]);
+
+      // All-null and all-empty arrays auto-count cleanly with zero tail bytes
+      const allNull = OnlyOpt.array(OnlyOpt.pack([{ label: null }, { label: '' }]));
+      expect(allNull.length).toBe(2);
+      expect(allNull.toObjects()).toEqual([{ label: null }, { label: '' }]);
+
+      // viewHeader omits optStr fields cleanly
+      const hdr = Doc.viewHeader(d.bytes.slice(0, Doc.byteSize));
+      expect(hdr.toObject()).toEqual({ id: 2 });
+
+      // Wire safety: corrupt optStr with len > 0 and OOB offset throws RangeError
+      const bad = Doc.create({ id: 3, summary: 'ok' }).bytes.slice();
+      new DataView(bad.buffer, bad.byteOffset).setUint32(Doc.offsetOf('summary'), 9999, true);
+      expect(() => Doc.view(bad).summary).toThrow(RangeError);
+    });
+
+    it('auto-rebinds UnionArrayView across WebAssembly.Memory.grow', () => {
+      const Tag = defineUnion('Tag', { Empty: null, Code: u32, Name: optStr });
+      const Holder = defineStruct('Holder', { tags: slice(Tag) });
+      const mem = new WebAssembly.Memory({ initial: 1 });
+      const arena = new WasmArena(mem);
+      const h = arena.allocOne(Holder, {
+        tags: [
+          { tag: 'Empty' },
+          { tag: 'Code', value: 404 },
+          { tag: 'Name', value: 'not-found' },
+        ],
+      });
+      const tagsView = h.tags;
+      expect(tagsView).toBeInstanceOf(UnionArrayView);
+      mem.grow(2);
+      expect(tagsView.at(1)).toEqual({ tag: 'Code', value: 404 });
+      expect(tagsView.at(2)).toEqual({ tag: 'Name', value: 'not-found' });
+      tagsView.set(0, { tag: 'Name', value: '' });
+      expect(tagsView.at(0)).toEqual({ tag: 'Name', value: '' });
+    });
+
+    it('emits clean Rust 2021/2024 + Clippy code with builder/wasmExports/allow options and 3-way optStr + sentinel parity', () => {
+      const Item = defineUnion('Item', {
+        None: null,
+        Count: u32,
+        Note: optStr,
+      });
+      const Record = defineStruct('Record', {
+        id: u32,
+        parentId: sentinel(u32, 0xffffffff),
+        score: sentinel(f32, Number.NaN),
+        title: optStr,
+        subtitle: optStr,
+        items: slice(Item),
+        child: ref(defineStruct('Child', { tag: optStr })),
+      });
+      const Child = (Record.fields.child.desc as { element: StructDefLike<any> }).element;
+      const schemas = [Child, Record, Item];
+
+      // 1. builder: true with wasmExports: false omits capn_alloc/capn_reset
+      const builderOnlyRs = toRustReprC(schemas, { builder: true, wasmExports: false });
+      expect(builderOnlyRs).toContain('extern crate alloc;');
+      expect(builderOnlyRs).toContain('struct CapnBuilder');
+      expect(builderOnlyRs).toContain('fn build_vec');
+      expect(builderOnlyRs).toContain('fn opt_str_dedup');
+      expect(builderOnlyRs).toContain('fn build_ref_opt');
+      expect(builderOnlyRs).toContain('pub const PARENT_ID_NULL: u32 = 4294967295;');
+      expect(builderOnlyRs).toContain('pub fn parentId_opt(&self) -> Option<u32>');
+      expect(builderOnlyRs).toContain('pub const SCORE_NULL: f32 = f32::NAN;');
+      expect(builderOnlyRs).toContain('pub fn score_opt(&self) -> Option<f32>');
+      expect(builderOnlyRs).not.toContain('capn_alloc');
+      expect(builderOnlyRs).not.toContain('capn_reset');
+
+      // 2. wasmExports as cfg string gates capn_alloc/capn_reset
+      const cfgRs = toRustReprC(schemas, {
+        builder: true,
+        wasmExports: 'all(target_arch = "wasm32", feature = "library")',
+      });
+      expect(cfgRs).toContain('#[cfg(all(target_arch = "wasm32", feature = "library"))]');
+      expect(cfgRs).toContain('unexpected_cfgs');
+      expect(cfgRs).toContain('pub extern "C" fn capn_alloc');
+
+      // 3. Compile under strict #![no_std] + deny(unsafe_code) + Rust 2021 & 2024 + clippy-driver (if installed)
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-dogfood-'));
+      try {
+        const strictCrate = `#![no_std]\n#![deny(unsafe_code, clippy::all, clippy::pedantic, clippy::unwrap_used, clippy::as_conversions, clippy::indexing_slicing)]\npub mod schema {\n${cfgRs}\n}\n`;
+        const strictRsPath = join(tmp, 'strict.rs');
+        writeFileSync(strictRsPath, strictCrate);
+        for (const edition of ['2021', '2024']) {
+          execFileSync(
+            'rustc',
+            ['--edition', edition, '--crate-type=lib', '--check-cfg=cfg(feature, values("other"))', '-D', 'warnings', strictRsPath, '-o', join(tmp, `strict_${edition}.rlib`)],
+            { stdio: 'pipe' },
+          );
+        }
+        let hasClippy = false;
+        try {
+          execFileSync('clippy-driver', ['--version'], { stdio: 'pipe' });
+          hasClippy = true;
+        } catch {
+          hasClippy = false;
+        }
+        if (hasClippy) {
+          execFileSync(
+            'clippy-driver',
+            ['--edition=2024', '--crate-type=lib', '-D', 'warnings', strictRsPath, '-o', join(tmp, 'strict_clippy.rlib')],
+            { stdio: 'pipe' },
+          );
+        }
+
+        // 4. Full Rust WASM CapnBuilder (with_capacity, build_vec, opt_str, opt_str_dedup, build_ref_opt, pack_slice, sentinel *_NULL / *_opt) <-> JS parity
+        const wasmRs = toRustReprC(schemas, { wasm: true });
+        const producerRs = `
+${wasmRs}
+static mut OUT: Option<alloc::vec::Vec<u8>> = None;
+#[unsafe(no_mangle)]
+pub extern "C" fn build_rec() -> *const u8 {
+  let mut b = CapnBuilder::with_capacity(256);
+  let bytes = b.build_vec(|b| {
+    let items_data = [
+      Item::None,
+      Item::Count(12),
+      Item::Note(b.opt_str(None)),
+      Item::Note(b.opt_str(Some(""))),
+      Item::Note(b.opt_str_dedup(Some("shared"))),
+    ];
+    let items = b.pack_slice(&items_data);
+    let title = b.opt_str_dedup(Some("shared"));
+    let subtitle = b.opt_str(Some(""));
+    let child = b.build_ref_opt(Some(()), |b, ()| Child { tag: b.opt_str(None) });
+    Record {
+      id: 42,
+      parentId: Record::PARENT_ID_NULL,
+      score: Record::SCORE_NULL,
+      title,
+      subtitle,
+      items,
+      child,
+    }
+  });
+  let ptr = bytes.as_ptr();
+  unsafe { *core::ptr::addr_of_mut!(OUT) = Some(bytes); }
+  ptr
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn build_rec_len() -> u32 {
+  unsafe { (*core::ptr::addr_of!(OUT)).as_ref().map_or(0, |v| v.len() as u32) }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn check_rec(ptr: *const u8, len: usize) -> i32 {
+  let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
+  let r = Record::as_slice(buf, 1)[0];
+  let mut ok = 0;
+  if r.parentId_opt().is_none() { ok += 1; }
+  if r.score_opt().is_none() { ok += 2; }
+  if r.title.as_str(buf) == Ok(Some("shared")) { ok += 4; }
+  if r.subtitle.as_str(buf) == Ok(Some("")) { ok += 8; }
+  if r.child.is_some() && r.child.as_ref(buf).unwrap().tag.is_none() { ok += 16; }
+  let items = r.items.as_slice(buf);
+  if items.len() == 5 && matches!(items[1], Item::Count(12)) { ok += 32; }
+  ok
+}
+`;
+        const producerPath = join(tmp, 'producer.rs');
+        writeFileSync(producerPath, producerRs);
+        let hasWasmTarget = false;
+        try {
+          hasWasmTarget = execFileSync('rustup', ['target', 'list', '--installed'], {
+            encoding: 'utf8',
+            stdio: 'pipe',
+          }).includes('wasm32-unknown-unknown');
+        } catch {
+          hasWasmTarget = false;
+        }
+        if (hasWasmTarget) {
+          const wasmOut = join(tmp, 'producer.wasm');
+          execFileSync(
+            'rustc',
+            ['--edition=2024', '--target=wasm32-unknown-unknown', '--crate-type=cdylib', '-O', producerPath, '-o', wasmOut],
+            { stdio: 'pipe' },
+          );
+          const inst = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmOut)));
+          const ex = inst.exports as unknown as {
+            memory: WebAssembly.Memory;
+            build_rec: () => number;
+            build_rec_len: () => number;
+            check_rec: (ptr: number, len: number) => number;
+            capn_alloc: (n: number) => number;
+            capn_reset: () => void;
+          };
+          const rPtr = ex.build_rec() >>> 0;
+          const rLen = ex.build_rec_len() >>> 0;
+          const view = Record.view(new Uint8Array(ex.memory.buffer, rPtr, rLen));
+          expect(view.toObject()).toEqual({
+            id: 42,
+            parentId: null,
+            score: null,
+            title: 'shared',
+            subtitle: '',
+            items: [
+              { tag: 'None' },
+              { tag: 'Count', value: 12 },
+              { tag: 'Note', value: null },
+              { tag: 'Note', value: '' },
+              { tag: 'Note', value: 'shared' },
+            ],
+            child: { tag: null },
+          });
+          expect(view.items).toBeInstanceOf(UnionArrayView);
+          expect(view.items.tagAt(4)).toBe('Note');
+          // Verify JS -> Rust check_rec passes all 6 checks (1+2+4+8+16+32 = 63)
+          const jsPacked = Record.pack([view.toObject()]);
+          const inPtr = ex.capn_alloc(jsPacked.byteLength) >>> 0;
+          new Uint8Array(ex.memory.buffer, inPtr, jsPacked.byteLength).set(jsPacked);
+          expect(ex.check_rec(inPtr, jsPacked.byteLength)).toBe(63);
+          ex.capn_reset();
+        }
+
+        // 5. Go codegen emits CapnOptStr, OptStr/OptStrDedup, and sentinel constants & compiles cleanly
+        const goCode = toGoStruct(schemas, { wasm: true });
+        expect(goCode).toContain('type CapnOptStr struct');
+        expect(goCode).toContain('const RecordParentIdNull uint32 = 4294967295');
+        writeFileSync(join(tmp, 'go.mod'), 'module capnoptstrtest\n\ngo 1.24\n');
+        writeFileSync(
+          join(tmp, 'main.go'),
+          `${goCode}
+func main() {}
+var _out []byte
+//go:wasmexport go_build
+func go_build() uintptr {
+	var b CapnBuilder
+	s := "shared"
+	empty := ""
+	_out = CapnBuild(&b, func(b *CapnBuilder) Record {
+		return Record{
+			Id:       42,
+			ParentId: RecordParentIdNull,
+			Title:    b.OptStrDedup(&s),
+			Subtitle: b.OptStr(&empty),
+			Items: CapnPackSlice(b, []Item{
+				ItemMakeNone(),
+				ItemMakeCount(12),
+				ItemMakeNote(b.OptStr(nil)),
+				ItemMakeNote(b.OptStr(&empty)),
+				ItemMakeNote(b.OptStrDedup(&s)),
+			}),
+			Child: CapnPackRef(b, &Child{Tag: b.OptStr(nil)}),
+		}
+	})
+	return uintptr(unsafe.Pointer(&_out[0]))
+}
+//go:wasmexport go_len
+func go_len() uint32 { return uint32(len(_out)) }
+`,
+        );
+        let hasGo = false;
+        try {
+          execFileSync('go', ['version'], { stdio: 'pipe' });
+          hasGo = true;
+        } catch {
+          hasGo = false;
+        }
+        if (hasGo) {
+          const goWasm = join(tmp, 'go.wasm');
+          execFileSync('go', ['build', '-buildmode=c-shared', '-o', goWasm, join(tmp, 'main.go')], {
+            cwd: tmp,
+            env: { ...process.env, GOOS: 'wasip1', GOARCH: 'wasm' },
+            stdio: 'pipe',
+          });
+          let goInst!: WebAssembly.Instance;
+          const shim: WebAssembly.Imports = {
+            wasi_snapshot_preview1: new Proxy(
+              {},
+              {
+                get: (_, k) => {
+                  if (k === 'args_sizes_get' || k === 'environ_sizes_get') {
+                    return (cPtr: number, bPtr: number) => {
+                      const dv = new DataView((goInst.exports.memory as WebAssembly.Memory).buffer);
+                      dv.setUint32(cPtr, 0, true);
+                      dv.setUint32(bPtr, 0, true);
+                      return 0;
+                    };
+                  }
+                  if (k === 'clock_time_get') {
+                    return (_id: number, _prec: bigint, tPtr: number) => {
+                      new DataView((goInst.exports.memory as WebAssembly.Memory).buffer).setBigUint64(tPtr, BigInt(Date.now()) * 1000000n, true);
+                      return 0;
+                    };
+                  }
+                  if (k === 'random_get') {
+                    return (p: number, l: number) => {
+                      new Uint8Array((goInst.exports.memory as WebAssembly.Memory).buffer, p, l).fill(1);
+                      return 0;
+                    };
+                  }
+                  return () => 0;
+                },
+              },
+            ),
+          };
+          goInst = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(goWasm)), shim);
+          const gEx = goInst.exports as unknown as {
+            memory: WebAssembly.Memory;
+            _initialize?: () => void;
+            go_build: () => number;
+            go_len: () => number;
+          };
+          gEx._initialize?.();
+          const gPtr = gEx.go_build() >>> 0;
+          const gLen = gEx.go_len() >>> 0;
+          const gView = Record.view(new Uint8Array(gEx.memory.buffer, gPtr, gLen));
+          expect(gView.id).toBe(42);
+          expect(gView.parentId).toBeNull();
+          expect(gView.title).toBe('shared');
+          expect(gView.subtitle).toBe('');
+          expect(gView.items.toObjects()).toEqual([
+            { tag: 'None' },
+            { tag: 'Count', value: 12 },
+            { tag: 'Note', value: null },
+            { tag: 'Note', value: '' },
+            { tag: 'Note', value: 'shared' },
+          ]);
+          expect(gView.child?.tag).toBeNull();
+        }
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('type-checks dist/*.d.ts under strict skipLibCheck: false with lib: ["es2022"] and types: [] (no DOM lib)', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-nodom-'));
+      try {
+        writeFileSync(
+          join(tmp, 'tsconfig.json'),
+          JSON.stringify({
+            compilerOptions: {
+              noEmit: true,
+              strict: true,
+              skipLibCheck: false,
+              target: 'es2022',
+              module: 'NodeNext',
+              moduleResolution: 'NodeNext',
+              lib: ['es2022'],
+              types: [],
+            },
+            include: ['consumer.ts'],
+          }),
+        );
+        const distIndex = join(process.cwd(), 'dist/index.js');
+        const distCodegen = join(process.cwd(), 'dist/codegen.js');
+        writeFileSync(
+          join(tmp, 'consumer.ts'),
+          `import { defineStruct, defineUnion, optStr, nullable, slice, str, u32, UnionArrayView, WasmArena } from ${JSON.stringify(distIndex)};
+import { toRustReprC } from ${JSON.stringify(distCodegen)};
+const U = defineUnion('U', { A: null, B: optStr });
+const S = defineStruct('S', { id: u32, desc: nullable(str), items: slice(U) });
+const v = S.create({ id: 1, desc: null, items: [{ tag: 'A' }, { tag: 'B', value: 'hi' }] });
+const uav: UnionArrayView<typeof U.variants> = v.items;
+const arena = new WasmArena(4096);
+const rust: string = toRustReprC([U, S], { builder: true, wasmExports: false });
+export { uav, arena, rust };
+`,
+        );
+        execFileSync(join(process.cwd(), 'node_modules/.bin/tsc'), ['-p', join(tmp, 'tsconfig.json')], {
+          stdio: 'pipe',
+        });
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('supports --builder, --no-wasm-exports, --wasm-exports-cfg, and --allow CLI flags', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-cli-'));
+      try {
+        const schemaPath = join(tmp, 'schema.mjs');
+        writeFileSync(
+          schemaPath,
+          `import { defineStruct, optStr, u32 } from ${JSON.stringify(join(process.cwd(), 'dist/index.js'))};
+export const Item = defineStruct('Item', { id: u32, label: optStr });
+`,
+        );
+        const cliPath = join(process.cwd(), 'dist/cli.js');
+        const builderOut = execFileSync(process.execPath, [cliPath, schemaPath, '--builder'], { encoding: 'utf8' });
+        expect(builderOut).toContain('struct CapnBuilder');
+        expect(builderOut).not.toContain('capn_alloc');
+
+        const cfgOut = execFileSync(
+          process.execPath,
+          [
+            cliPath,
+            schemaPath,
+            '--wasm',
+            '--wasm-exports-cfg',
+            'all(target_arch = "wasm32", feature = "library")',
+            '--allow',
+            'dead_code,clippy::all',
+          ],
+          { encoding: 'utf8' },
+        );
+        expect(cfgOut).toContain('#[cfg(all(target_arch = "wasm32", feature = "library"))]');
+        expect(cfgOut).toContain('#[allow(dead_code, clippy::all)]');
+        expect(cfgOut).toContain('pub extern "C" fn capn_alloc');
+
+        const noExpOut = execFileSync(process.execPath, [cliPath, schemaPath, '--wasm', '--no-wasm-exports'], {
+          encoding: 'utf8',
+        });
+        expect(noExpOut).toContain('struct CapnBuilder');
+        expect(noExpOut).not.toContain('capn_alloc');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+  it('keeps MemView internals private, decodes short/long ASCII & UTF-8 via utf8At, and auto-counts ref-only arrays', () => {
+    const Target = defineStruct('RefTarget', { label: str });
+    const Holder = defineStruct('RefHolder', { id: u32, target: ref(Target) });
+    const longAscii = 'a'.repeat(80);
+    const shortUtf8 = '東京🚀';
+    const longUtf8 = '日本語テスト'.repeat(12);
+    const bytes = Holder.pack([
+      { id: 1, target: { label: 'short_ascii' } },
+      { id: 2, target: { label: shortUtf8 } },
+      { id: 3, target: { label: longAscii } },
+      { id: 4, target: { label: longUtf8 } },
+      { id: 5, target: null },
+    ]);
+    // Auto-count without explicit count when ref() is the ONLY variable field
+    const rows = Holder.array(bytes);
+    expect(rows.length).toBe(5);
+    expect(rows.at(0).target?.label).toBe('short_ascii');
+    expect(rows.at(1).target?.label).toBe(shortUtf8);
+    expect(rows.at(2).target?.label).toBe(longAscii);
+    expect(rows.at(3).target?.label).toBe(longUtf8);
+    expect(rows.at(4).target).toBeNull();
+    // MemView internals are ES private fields: zero internal own property names on StructView
+    expect(Object.getOwnPropertyNames(rows.at(0))).toEqual(['id', 'target']);
+    expect(Object.keys(rows.at(0))).toEqual(['id', 'target']);
+  });
   });
 });

@@ -35,23 +35,22 @@ wasmInstance.exports.process_points(ptr, len);
 
 ## 2. Rust `#[repr(C)]` Codegen (`capnstruct/codegen` & CLI)
 
-`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct and `#[repr(C, u8)]`/`#[repr(u8)]` tagged-union definitions (`toRustReprC`), including safe zero-dependency `Struct::as_slice(base, len)`, `CapnStr::as_str(base)`, `CapnSlice<T>::as_slice(base)`, and `CapnRef<T>::as_ref(base)` accessors (usable even inside `#![no_std]`, `mod`, or `#[forbid(unsafe_code)]` user kernels) plus compile-time `size_of` / `align_of` / `offset_of!` assertions directly from your TypeScript schemas. Passing `{ wasm: true }` (or `--wasm`) additionally emits `CapnBuilder` (`str_dedup`, `build`, `build_slice`, `pack_slice`, `pack_ref`, `build_ref`) and exported `capn_alloc` / `capn_reset` WASM arena helpers. Self-referential (`(self) => ({ next: ref(self), children: slice(self) })`) and mutually recursive (`ref(() => Node)`) schemas are handled automatically without duplicate definitions.
+`capnstruct/codegen` and the `capnstruct` CLI generate exact Rust `#[repr(C)]` struct and `#[repr(C, u8)]`/`#[repr(u8)]` tagged-union definitions (`toRustReprC`), including safe zero-dependency `Struct::as_slice(base, len)`, `CapnStr::as_str(base)`, `CapnOptStr::as_str(base)`, `CapnSlice<T>::as_slice(base)`, `CapnRef<T>::as_ref(base)`, and sentinel `*_NULL`/`*_opt(&self)` accessors (usable even inside `#![no_std]`, `mod`, `#![deny(unsafe_code)]`, Rust 2024, or strict Clippy crates) plus compile-time `size_of`/`align_of`/`offset_of!` assertions directly from your TypeScript schemas. Passing `{ builder: true }` (or `--builder`) emits `CapnBuilder` (`with_capacity`, `str`, `str_dedup`, `opt_str`, `opt_str_dedup`, `build`, `build_vec`, `build_slice`, `pack_slice`, `pack_ref`, `build_ref`, `build_ref_opt`, `into_bytes`) without exporting `capn_alloc`/`capn_reset`; passing `{ wasm: true }` (or `--wasm`) also emits `capn_alloc`/`capn_reset`, which can be gated with `{ wasmExports: 'all(target_arch = "wasm32", feature = "library")' }` (or `--wasm-exports-cfg`).
 
 #### Programmatic API
-
 ```ts
 import { toRustReprC } from 'capnstruct/codegen';
 import { SpdSample } from './schema.js';
-
 console.log(toRustReprC([SpdSample]));
-console.log(toRustReprC([SpdSample], { wasm: true })); // includes CapnBuilder + capn_alloc / capn_reset
+console.log(toRustReprC([SpdSample], { builder: true, wasmExports: false })); // CapnBuilder only (native CLI / Rust library)
+console.log(toRustReprC([SpdSample], { wasm: true, wasmExports: 'all(target_arch = "wasm32", feature = "library")' })); // gated WASM exports
 ```
 
 #### CLI Usage
-
 ```bash
 npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs
-npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs --wasm
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs --builder
+npx capnstruct ./src/schema.ts -o ./src/schema_generated.rs --wasm --wasm-exports-cfg 'all(target_arch = "wasm32", feature = "library")'
 ```
 ### Generated Rust Output
 

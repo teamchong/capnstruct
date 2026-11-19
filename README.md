@@ -165,5 +165,5 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 
 | Entrypoint | Minified | Minified + Gzip |
 | :--- | :--- | :--- |
-| `capnstruct` (Core Runtime + `StructArrayView` + `defineUnion` + `ref` + `slice` + `WasmArena` + `inWasm`) | 21.68 KiB | **8.49 KiB** (`7.99 KiB` schema core) |
-| `capnstruct/codegen` (Rust `#[repr(C)]`/`#[repr(C, u8)]` + Go/TinyGo WASM Codegen + `CapnBuilder`) | 11.24 KiB | **4.08 KiB** |
+| `capnstruct` (Core Runtime + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 24.7 KiB | **~9.1 KiB** (`8.6 KiB` schema core) |
+| `capnstruct/codegen` (Rust `#[repr(C)]`/`#[repr(C, u8)]` + Go/TinyGo Codegen + `CapnBuilder` + `CapnOptStr`) | 15.9 KiB | **~5.2 KiB** |

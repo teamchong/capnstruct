@@ -2,13 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   Arena,
   array,
   bool,
   concatBytes,
   defineStruct,
+  defineUnion,
   f16,
   f32,
   f64,
@@ -31,6 +32,7 @@ import {
   slice,
   str,
   struct,
+  type StructDefLike,
   structView,
   toGoStruct,
   toRustReprC,
@@ -38,6 +40,7 @@ import {
   u16,
   u32,
   u64,
+  union,
   WasmArena,
 } from '../src/index.js';
 
@@ -1934,6 +1937,496 @@ pub mod safe_kernel {
         chunks: 19,
         tag: 'DOOM_42',
       });
+    });
+  });
+
+  describe('Forge Dogfooding: Wire-Safety, Cursor, Nested Structs, QuickJS Fallback & DevTools', () => {
+    it('imports and round-trips UTF-8 (ASCII, 2/3/4-byte, lone surrogates, fixedStr) without global TextDecoder/TextEncoder', async () => {
+      const g = globalThis as unknown as { TextDecoder?: typeof TextDecoder; TextEncoder?: typeof TextEncoder };
+      const savedTD = g.TextDecoder;
+      const savedTE = g.TextEncoder;
+      delete g.TextDecoder;
+      delete g.TextEncoder;
+      vi.resetModules();
+      try {
+        // Dynamic import intentionally tests module load with TextDecoder/TextEncoder absent (QuickJS).
+        const fresh = await import('../src/index.js');
+        const Utf = fresh.defineStruct('Utf', { s: fresh.str, fs: fresh.fixedStr(5) });
+        const cases: [string, string][] = [
+          ['hello', 'hello'],
+          ['café naïve', 'café naïve'],
+          ['東京 日本語', '東京 日本語'],
+          ['🚀🔥🇺🇸', '🚀🔥🇺🇸'],
+          ['a\ud800b\udfffc', 'a\ufffdb\ufffdc'],
+        ];
+        for (const [input, expected] of cases) {
+          const v = Utf.create({ s: input, fs: 'ab🚀' });
+          expect(v.s).toBe(expected);
+          // "ab" (2B) + "🚀" (4B) exceeds 5 bytes, so truncation cleanly drops the partial 4-byte sequence
+          expect(v.fs).toBe('ab');
+        }
+      } finally {
+        g.TextDecoder = savedTD;
+        g.TextEncoder = savedTE;
+        vi.resetModules();
+      }
+    });
+
+    it('serializes inline nested structs at offset 0 without false circular references and supports nested back-refs to root', () => {
+      const Name = defineStruct('Name', { words: slice(str) });
+      const MethodSimple = defineStruct('MethodSimple', { name: Name, path: str });
+      const m = MethodSimple.create({ name: { words: ['get', 'by', 'id'] }, path: '/accounts' });
+      const plain = m.toObject();
+      expect(plain).toEqual({ name: { words: ['get', 'by', 'id'] }, path: '/accounts' });
+      expect(JSON.parse(JSON.stringify(m))).toEqual(plain);
+
+      // Inline nested struct holding a ref back to the enclosing root struct
+      let OuterRef!: StructDefLike;
+      const InnerRef = defineStruct('InnerRef', { owner: ref(() => OuterRef), tag: u32 });
+      const Outer = defineStruct('OuterRef', { inner: InnerRef, id: u32 });
+      OuterRef = Outer;
+      const item = Outer.item({ inner: { owner: null, tag: 7 }, id: 42 });
+      item.inner = { owner: item, tag: 7 };
+      const view = Outer.view(Outer.pack([item]));
+      const owner = view.inner.owner as unknown as typeof Outer.$view;
+      expect(owner.id).toBe(42);
+      expect(owner.inner.tag).toBe(7);
+      const oPlain = view.toObject();
+      expect(oPlain.inner.owner).toBe(oPlain);
+    });
+
+    it('does not clobber the active flyweight cursor when reading ref(self) or slice(ref(self)) inside for..of', () => {
+      const Group = defineStruct('Group', (self) => ({
+        id: str,
+        parent: ref(self),
+        children: slice(ref(self)),
+      }));
+      const root = Group.item({ id: 'root', parent: null, children: [] });
+      const c1 = Group.item({ id: 'accounts', parent: root, children: [] });
+      const c2 = Group.item({ id: 'zones', parent: root, children: [] });
+      root.children = [c1, c2];
+      const groups = Group.array(Group.pack([root, c1, c2]));
+
+      const seen: Array<{ id: string; kids: string[]; afterKids: string; parent: string | null; afterParent: string }> = [];
+      for (const g of groups) {
+        const id = g.id;
+        const kids = g.children.map((k) => k!.id);
+        const afterKids = g.id;
+        const parent = g.parent?.id ?? null;
+        const afterParent = g.id;
+        seen.push({ id, kids, afterKids, parent, afterParent });
+      }
+      expect(seen).toEqual([
+        { id: 'root', kids: ['accounts', 'zones'], afterKids: 'root', parent: null, afterParent: 'root' },
+        { id: 'accounts', kids: [], afterKids: 'accounts', parent: 'root', afterParent: 'accounts' },
+        { id: 'zones', kids: [], afterKids: 'zones', parent: 'root', afterParent: 'zones' },
+      ]);
+    });
+
+    it('allows row>=1 self-refs while rejecting row>=1 corrupted str pointers into row 0 header', () => {
+      const Ring = defineStruct('Ring', (self) => ({ id: u32, next: ref(self) }));
+      const n0 = Ring.item({ id: 10, next: null });
+      const n1 = Ring.item({ id: 20, next: null });
+      n1.next = n1;
+      const arr = Ring.array(Ring.pack([n0, n1]));
+      expect(arr.at(1).next?.id).toBe(20);
+      const objs = arr.toObjects();
+      expect(objs[1].next).toBe(objs[1]);
+
+      const Msg = defineStruct('Msg', { id: u32, text: str });
+      const bad = Msg.pack([
+        { id: 0x41424344, text: 'ok' },
+        { id: 2, text: 'hi' },
+      ]).slice();
+      // Corrupt row 1 text descriptor to point into row 0's fixed header bytes (offset 0, len 4)
+      const dv = new DataView(bad.buffer, bad.byteOffset);
+      dv.setUint32(Msg.size + Msg.offsetOf('text'), 0, true);
+      dv.setUint32(Msg.size + Msg.offsetOf('text') + 4, 4, true);
+      expect(() => Msg.array(bad).at(1).text).toThrow(RangeError);
+    });
+
+    it('preserves null ref when ref precedes str, auto-counts nested inline structs, propagates fixedArray _fv, and handles subarray/nested compact', () => {
+      // 1. ref before str: fixFv must not corrupt row 0's null ref present word
+      const RefFirst = defineStruct('RefFirst', (self) => ({ parent: ref(self), name: str }));
+      const rf0 = RefFirst.item({ parent: null, name: 'root' });
+      const rf1 = RefFirst.item({ parent: rf0, name: 'child' });
+      const rfBytes = RefFirst.pack([rf0, rf1]);
+      expect(new DataView(rfBytes.buffer, rfBytes.byteOffset).getUint32(4, true)).toBe(0);
+      const rfArr = RefFirst.array(rfBytes);
+      expect(rfArr.length).toBe(2);
+      expect(rfArr.at(0).parent).toBeNull();
+      expect(rfArr.at(1).parent?.name).toBe('root');
+
+      // 2. Nested inline struct auto-count when WASM producer leaves off=0 on empty row 0 slice
+      const Inner = defineStruct('Inner', { words: slice(str) });
+      const Outer = defineStruct('Outer', { inner: Inner, flag: u32 });
+      const ob = Outer.pack([
+        { inner: { words: [] }, flag: 1 },
+        { inner: { words: ['long-tail-str-exceeding-row'] }, flag: 2 },
+      ]).slice();
+      new DataView(ob.buffer, ob.byteOffset).setUint32(0, 0, true);
+      expect(Outer.array(ob).length).toBe(2);
+
+      // 3. fixedArray(str, 2) propagates _fv to viewHeader, subarray, and auto-count
+      const FA = defineStruct('FA', { tag: u32, names: fixedArray(str, 2) });
+      const faBytes = FA.pack([
+        { tag: 1, names: ['a', 'b'] },
+        { tag: 2, names: ['c', 'd'] },
+      ]);
+      expect(FA.array(faBytes).length).toBe(2);
+      const faSub = FA.array(faBytes).subarray(1, 2);
+      expect(FA.array(faSub.bytes).at(0).names).toEqual(['c', 'd']);
+      const faHdr = FA.viewHeader(faBytes.slice(0, FA.byteSize));
+      expect(faHdr.toObject()).toEqual({ tag: 1 });
+
+      // 4. subarray().compact() clears stale _a parent link and live nested mutation compacts cleanly
+      const gSub = rfArr.subarray(1, 2);
+      expect(RefFirst.array(gSub.compact()).at(0).name).toBe('child');
+      const Method = defineStruct('Method', { id: u32, name: Inner, summary: str });
+      const mv = Method.create({ id: 1, name: { words: ['get'] }, summary: 'Get' });
+      mv.name.words = ['list', 'all', 'items'];
+      expect(Method.view(mv.compact()).name.words).toEqual(['list', 'all', 'items']);
+    });
+
+    it('formats BigInt (u64/i64) and cyclic StructViews in installDevtoolsFormatter without throwing', () => {
+      const BigRing = defineStruct('BigRing', (self) => ({ ts: u64, delta: i64, next: ref(self) }));
+      const br = BigRing.item({ ts: 1700000000n, delta: -42n, next: null });
+      br.next = br;
+      const fmt = installDevtoolsFormatter();
+      const hdr = fmt.header(BigRing.view(BigRing.pack([br])));
+      expect(hdr).not.toBeNull();
+      expect(hdr![2]).toContain('1700000000n');
+      expect(hdr![2]).toContain('-42n');
+      expect(hdr![2]).toContain('BigRing{...}');
+    });
+  });
+
+  describe('Tagged Unions (defineUnion / union) & Rust WASM CapnBuilder Parity', () => {
+    it('computes #[repr(u8)] / #[repr(C, u8)] union layouts, handles nested & recursive unions, mutation, viewHeader, and invalid tag wire-safety', () => {
+      const Avail = defineUnion('Avail', { Alpha: null, Beta: null, GA: null });
+      expect(Avail.size).toBe(1);
+      expect(Avail.align).toBe(1);
+      expect(Avail.unitOnly).toBe(true);
+      expect(Avail.tagOf('GA')).toBe(2);
+
+      const Scalar = union('Scalar', { Unknown: null, Int: u32, Float: f64 });
+      expect(Scalar.align).toBe(8);
+      expect(Scalar.size).toBe(16);
+      expect(Scalar.byName.Int.payloadOffset).toBe(8);
+      expect(Scalar.byName.Float.payloadOffset).toBe(8);
+
+      const Expr = defineUnion('Expr', (self) => ({
+        Lit: u32,
+        Neg: ref(self),
+        List: slice(self),
+      }));
+      const Host = defineStruct('Host', {
+        id: u32,
+        avail: Avail,
+        scalar: Scalar,
+        expr: Expr,
+      });
+      const v = Host.create({
+        id: 1,
+        avail: { tag: 'Beta' },
+        scalar: { tag: 'Float', value: 2.5 },
+        expr: {
+          tag: 'List',
+          value: [
+            { tag: 'Lit', value: 10 },
+            { tag: 'Neg', value: { tag: 'Lit', value: 20 } },
+          ],
+        },
+      });
+      expect(v.toObject()).toEqual({
+        id: 1,
+        avail: { tag: 'Beta' },
+        scalar: { tag: 'Float', value: 2.5 },
+        expr: {
+          tag: 'List',
+          value: [
+            { tag: 'Lit', value: 10 },
+            { tag: 'Neg', value: { tag: 'Lit', value: 20 } },
+          ],
+        },
+      });
+
+      // In-place variant mutation across payload and unit variants
+      v.scalar = { tag: 'Int', value: 7 };
+      expect(v.scalar).toEqual({ tag: 'Int', value: 7 });
+      v.scalar = { tag: 'Unknown' };
+      expect(v.scalar).toEqual({ tag: 'Unknown' });
+
+      // viewHeader keeps inline unions (Avail, Scalar) and omits tail-allocating unions (Expr)
+      const hdr = Host.viewHeader(v.bytes.slice(0, Host.byteSize));
+      expect(hdr.toObject()).toEqual({ id: 1, avail: { tag: 'Beta' }, scalar: { tag: 'Unknown' } });
+
+      // Wire-safety: corrupting discriminant tag throws RangeError
+      const bad = v.bytes.slice();
+      bad[Host.offsetOf('avail')] = 99;
+      expect(() => Host.view(bad).avail).toThrow(RangeError);
+    });
+
+    it('compiles #![no_std] mod schemas and runs 3-way binary parity across Rust WASM CapnBuilder, JS, and Go WASI WASM with tagged unions', () => {
+      const Availability = defineUnion('Availability', { Alpha: null, Beta: null, Preview: null, GenerallyAvailable: null });
+      const Location = defineUnion('Location', { Path: null, Query: bool, Header: str });
+      const Name = defineStruct('Name', { words: slice(str) });
+      const FieldDef = defineStruct('FieldDef', { name: Name, wireName: str, loc: Location, required: bool });
+      const Scalar = defineUnion('Scalar', { Unknown: null, Int: u32, Float: f64 });
+      const TypeInfo = defineUnion('TypeInfo', { Scalar, Array: u32, Object: slice(FieldDef) });
+      const Method = defineStruct('Method', { name: Name, path: str, avail: Availability, reqType: TypeInfo });
+      const schemas = [Availability, Location, Name, FieldDef, Scalar, TypeInfo, Method];
+
+      const rsNoStd = toRustReprC(schemas);
+      // Outer #[allow(...)] (not inner #![allow(...)]) so output compiles inside #![no_std] mod / include!
+      expect(rsNoStd).not.toContain('#![allow(');
+      expect(rsNoStd).toContain('#[repr(u8)]');
+      expect(rsNoStd).toContain('#[repr(C, u8)]');
+
+      const rsWasm = toRustReprC(schemas, { wasm: true });
+      expect(rsWasm).toContain('struct CapnBuilder');
+      expect(rsWasm).toContain('pub extern "C" fn capn_alloc');
+
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-forge-parity-'));
+      try {
+        // 1. Always verify #![no_std] nested mod and CapnBuilder compile with native rustc (works on ubuntu-latest CI)
+        const nostdRs = join(tmp, 'nostd.rs');
+        writeFileSync(nostdRs, `#![no_std]\npub mod schema {\n${rsNoStd}\n}\n`);
+        execFileSync(
+          'rustc',
+          ['--edition=2021', '--crate-type=lib', '--emit=metadata', nostdRs, '-o', join(tmp, 'nostd.rmeta')],
+          { stdio: 'pipe' },
+        );
+
+        // 2. Rust WASM producer (CapnBuilder + str_dedup + #[repr(C, u8)]) <-> JS round-trip
+        const wasmRs = join(tmp, 'producer.rs');
+        writeFileSync(
+          wasmRs,
+          `${rsWasm}
+static mut OUT_BUF: Option<alloc::vec::Vec<u8>> = None;
+
+#[no_mangle]
+pub extern "C" fn build_method() -> *const u8 {
+  let mut b = CapnBuilder::new();
+  let bytes = b.build(|b| {
+    let w_get = b.build_slice(2, |i, b| b.str_dedup(if i == 0 { "get" } else { "accounts" }));
+    let fields = b.build_slice(2, |i, b| {
+      if i == 0 {
+        let nw = b.build_slice(1, |_, b| b.str_dedup("accounts"));
+        FieldDef { name: Name { words: nw }, wireName: b.str_dedup("account_id"), loc: Location::Path, required: true, _pad0: [0; 3] }
+      } else {
+        let nw = b.build_slice(1, |_, b| b.str_dedup("hdr"));
+        let hv = b.str_dedup("bearer");
+        FieldDef { name: Name { words: nw }, wireName: b.str_dedup("X-Auth"), loc: Location::Header(hv), required: false, _pad0: [0; 3] }
+      }
+    });
+    Method {
+      name: Name { words: w_get },
+      path: b.str_dedup("/accounts"),
+      avail: Availability::GenerallyAvailable,
+      _pad0: [0; 7],
+      reqType: TypeInfo::Object(fields),
+    }
+  }).to_vec();
+  let ptr = bytes.as_ptr();
+  unsafe { OUT_BUF = Some(bytes); }
+  ptr
+}
+#[no_mangle]
+pub extern "C" fn build_method_len() -> u32 { unsafe { OUT_BUF.as_ref().map_or(0, |v| v.len() as u32) } }
+#[no_mangle]
+pub extern "C" fn inspect_method(ptr: *const u8, len: usize) -> i32 {
+  let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
+  let m = Method::as_slice(buf, 1)[0];
+  let mut score: i32 = 0;
+  if m.avail == Availability::Beta { score += 100; }
+  if let TypeInfo::Scalar(Scalar::Float(v)) = m.reqType { score += (v * 10.0) as i32; }
+  score
+}
+`,
+        );
+        execFileSync(
+          'rustc',
+          ['--edition=2021', '--crate-type=lib', '--emit=metadata', wasmRs, '-o', join(tmp, 'producer.rmeta')],
+          { stdio: 'pipe' },
+        );
+        const jsPacked = Method.pack([
+          {
+            name: { words: ['list', 'zones'] },
+            path: '/zones',
+            avail: { tag: 'Beta' },
+            reqType: { tag: 'Scalar', value: { tag: 'Float', value: 3.5 } },
+          },
+        ]);
+        let hasRustWasm = false;
+        try {
+          hasRustWasm = execFileSync('rustup', ['target', 'list', '--installed'], { encoding: 'utf8', stdio: 'pipe' }).includes(
+            'wasm32-unknown-unknown',
+          );
+        } catch {
+          hasRustWasm = false;
+        }
+        if (hasRustWasm) {
+          const rustWasmPath = join(tmp, 'producer.wasm');
+          execFileSync(
+            'rustc',
+            ['--edition=2021', '--target=wasm32-unknown-unknown', '--crate-type=cdylib', '-O', wasmRs, '-o', rustWasmPath],
+            { stdio: 'pipe' },
+          );
+          const rustInst = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(rustWasmPath)), {});
+          const rEx = rustInst.exports as unknown as {
+            memory: WebAssembly.Memory;
+            build_method: () => number;
+            build_method_len: () => number;
+            capn_alloc: (n: number) => number;
+            capn_reset: () => void;
+            inspect_method: (p: number, l: number) => number;
+          };
+          const rPtr = rEx.build_method() >>> 0;
+          const rLen = rEx.build_method_len() >>> 0;
+          const fromRust = Method.view(new Uint8Array(rEx.memory.buffer, rPtr, rLen));
+          expect(fromRust.toObject()).toEqual({
+            name: { words: ['get', 'accounts'] },
+            path: '/accounts',
+            avail: { tag: 'GenerallyAvailable' },
+            reqType: {
+              tag: 'Object',
+              value: [
+                { name: { words: ['accounts'] }, wireName: 'account_id', loc: { tag: 'Path' }, required: true },
+                { name: { words: ['hdr'] }, wireName: 'X-Auth', loc: { tag: 'Header', value: 'bearer' }, required: false },
+              ],
+            },
+          });
+          // Verify Rust CapnBuilder.str_dedup reused the exact same tail offset for "accounts"
+          const rDv = new DataView(rEx.memory.buffer, rPtr, rLen);
+          const methodWordsOff = rDv.getUint32(0, true);
+          const accWordOff1 = rDv.getUint32(methodWordsOff + 8, true);
+          const objSliceOff = rDv.getUint32(Method.offsetOf('reqType') + 8, true);
+          const field0WordsOff = rDv.getUint32(objSliceOff, true);
+          const accWordOff2 = rDv.getUint32(field0WordsOff, true);
+          expect(accWordOff1).toBe(accWordOff2);
+
+          // JS -> Rust WASM via capn_alloc
+          const rIn = rEx.capn_alloc(jsPacked.byteLength) >>> 0;
+          new Uint8Array(rEx.memory.buffer, rIn, jsPacked.byteLength).set(jsPacked);
+          expect(rEx.inspect_method(rIn, jsPacked.byteLength)).toBe(135);
+          rEx.capn_reset();
+        }
+
+        // 3. Go WASI WASM tagged union producer <-> JS round-trip
+        const goCode = toGoStruct(schemas, { wasm: true });
+        writeFileSync(join(tmp, 'go.mod'), 'module capnuniontest\n\ngo 1.24\n');
+        writeFileSync(
+          join(tmp, 'main.go'),
+          `${goCode}
+func main() {}
+var outBuf []byte
+//go:wasmexport go_build_method
+func go_build_method() uintptr {
+  var b CapnBuilder
+  outBuf = CapnBuild(&b, func(b *CapnBuilder) Method {
+    words := CapnBuildSlice(b, 2, func(i int, b *CapnBuilder) CapnStr {
+      if i == 0 { return b.StrDedup("list") }
+      return b.StrDedup("items")
+    })
+    return Method{
+      Name: Name{ Words: words },
+      Path: b.StrDedup("/items"),
+      Avail: AvailabilityPreview,
+      ReqType: TypeInfoMakeScalar(ScalarMakeInt(42)),
+    }
+  })
+  return uintptr(unsafe.Pointer(&outBuf[0]))
+}
+//go:wasmexport go_build_len
+func go_build_len() uint32 { return uint32(len(outBuf)) }
+//go:wasmexport go_inspect_method
+func go_inspect_method(ptr uintptr, byteLen uint32) int32 {
+  buf := CapnBytes(ptr, byteLen)
+  m := CapnView[Method](buf)
+  var score int32
+  if m.Avail == AvailabilityBeta { score += 100 }
+  if m.ReqType.Tag == TypeInfoScalar {
+    sc := m.ReqType.AsScalar()
+    if sc.Tag == ScalarFloat { score += int32((*sc.AsFloat()) * 10.0) }
+  }
+  return score
+}
+`,
+        );
+        const goWasmPath = join(tmp, 'go.wasm');
+        execFileSync('go', ['build', '-buildmode=c-shared', '-o', goWasmPath, join(tmp, 'main.go')], {
+          cwd: tmp,
+          env: { ...process.env, GOOS: 'wasip1', GOARCH: 'wasm' },
+          stdio: 'pipe',
+        });
+        let goInst!: WebAssembly.Instance;
+        const shim: WebAssembly.Imports = {
+          wasi_snapshot_preview1: new Proxy(
+            {},
+            {
+              get: (_, k) => {
+                if (k === 'args_sizes_get' || k === 'environ_sizes_get') {
+                  return (cPtr: number, bPtr: number) => {
+                    const dv = new DataView((goInst.exports.memory as WebAssembly.Memory).buffer);
+                    dv.setUint32(cPtr, 0, true);
+                    dv.setUint32(bPtr, 0, true);
+                    return 0;
+                  };
+                }
+                if (k === 'clock_time_get') {
+                  return (_id: number, _prec: bigint, tptr: number) => {
+                    new DataView((goInst.exports.memory as WebAssembly.Memory).buffer).setBigUint64(tptr, BigInt(Date.now()) * 1000000n, true);
+                    return 0;
+                  };
+                }
+                if (k === 'random_get') {
+                  return (p: number, l: number) => {
+                    new Uint8Array((goInst.exports.memory as WebAssembly.Memory).buffer, p, l).fill(1);
+                    return 0;
+                  };
+                }
+                if (k === 'fd_write') {
+                  return (_fd: number, iovsPtr: number, iovsLen: number, nwrittenPtr: number) => {
+                    const dv = new DataView((goInst.exports.memory as WebAssembly.Memory).buffer);
+                    let total = 0;
+                    for (let i = 0; i < iovsLen; i++) total += dv.getUint32(iovsPtr + i * 8 + 4, true);
+                    dv.setUint32(nwrittenPtr, total, true);
+                    return 0;
+                  };
+                }
+                return () => 0;
+              },
+            },
+          ),
+        };
+        goInst = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(goWasmPath)), shim);
+        const gEx = goInst.exports as unknown as {
+          memory: WebAssembly.Memory;
+          _initialize?: () => void;
+          go_build_method: () => number;
+          go_build_len: () => number;
+          capn_alloc: (n: number) => number;
+          capn_reset: () => void;
+          go_inspect_method: (p: number, l: number) => number;
+        };
+        gEx._initialize?.();
+        const gPtr = gEx.go_build_method() >>> 0;
+        const gLen = gEx.go_build_len() >>> 0;
+        const fromGo = Method.view(new Uint8Array(gEx.memory.buffer, gPtr, gLen));
+        expect(fromGo.toObject()).toEqual({
+          name: { words: ['list', 'items'] },
+          path: '/items',
+          avail: { tag: 'Preview' },
+          reqType: { tag: 'Scalar', value: { tag: 'Int', value: 42 } },
+        });
+        const gIn = gEx.capn_alloc(jsPacked.byteLength) >>> 0;
+        new Uint8Array(gEx.memory.buffer, gIn, jsPacked.byteLength).set(jsPacked);
+        expect(gEx.go_inspect_method(gIn, jsPacked.byteLength)).toBe(135);
+        gEx.capn_reset();
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
     });
   });
 });

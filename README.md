@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/capnstruct?color=cb3837&style=flat-square)](https://www.npmjs.com/package/capnstruct)
 [![Live Playground & Docs](https://img.shields.io/badge/Live_Playground-capnstruct.teamchong.net-3b82f6?style=flat-square)](https://capnstruct.teamchong.net)
-[![Core Bundle](https://img.shields.io/badge/Core_Gzip-6.62_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
+[![Core Bundle](https://img.shields.io/badge/Core_Gzip-7.99_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 [![Targets](https://img.shields.io/badge/Targets-TS_%7C_Rust_%23%5Brepr(C)%5D_%7C_Go_%26_TinyGo_WASM-f59e0b?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 
 **[Live Interactive Playground &rarr; capnstruct.teamchong.net](https://capnstruct.teamchong.net)** &middot; **[MP4 Video (`docs/public/demo.mp4`)](docs/public/demo.mp4)**
@@ -90,8 +90,9 @@ pub fn inspect_airspace(arena: &[u8], ptr: usize, len: usize) -> usize {
 
 ```bash
 # Or generate directly via the CLI:
-npx capnstruct ./src/schema.ts -o ./src/schema.rs              # Rust #[repr(C)] + safe .as_str/.as_slice/.as_ref
-npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm # Go / TinyGo WASM + CapnBuilder / StrDedup + capn_alloc
+npx capnstruct ./src/schema.ts -o ./src/schema.rs          # Rust #[repr(C)] / #[repr(C, u8)] (#![no_std] compatible)
+npx capnstruct ./src/schema.ts -o ./src/schema.rs --wasm   # Rust WASM + CapnBuilder + str_dedup + capn_alloc/capn_reset
+npx capnstruct ./src/schema.ts -o ./src/main_schema.go --go-wasm # Go / TinyGo WASM + CapnBuilder + StrDedup + capn_alloc
 ```
 
 ### 2. Zero-Copy Web Worker &harr; Main Thread State (`Schema.shared` + In-Place Mutation)
@@ -164,5 +165,5 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 
 | Entrypoint | Minified | Minified + Gzip |
 | :--- | :--- | :--- |
-| **`capnstruct`** (Core Runtime + `StructArrayView` + `ref` + `slice` + `WasmArena` + `inWasm`) | 17.98 KiB | **7.12 KiB** (`6.62 KiB` schema core) |
-| **`capnstruct/codegen`** (Rust `#[repr(C)]` + Go / TinyGo WASM Codegen + `CapnBuilder`) | 6.26 KiB | **2.58 KiB** |
+| `capnstruct` (Core Runtime + `StructArrayView` + `defineUnion` + `ref` + `slice` + `WasmArena` + `inWasm`) | 21.68 KiB | **8.49 KiB** (`7.99 KiB` schema core) |
+| `capnstruct/codegen` (Rust `#[repr(C)]`/`#[repr(C, u8)]` + Go/TinyGo WASM Codegen + `CapnBuilder`) | 11.24 KiB | **4.08 KiB** |

@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   const code =
     target === 'go'
       ? toGoStruct(mod, { pkg: pkg || undefined, assertions, wasm })
-      : toRustReprC(mod, { assertions });
+      : toRustReprC(mod, { assertions, wasm });
   if (outputPath) {
     writeFileSync(resolve(process.cwd(), outputPath), code, 'utf8');
   } else {

@@ -9,7 +9,7 @@ async function main(): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
       [
-        'Usage: capnstruct <schema-module.js> [-o <output.rs|output.go>] [--rust|--go|--go-wasm] [--pkg <name>] [--wasm] [--builder] [--no-wasm-exports|--wasm-exports-cfg <cfg>] [--no-unsafe-slice] [--allow <lints>] [--no-assertions]',
+        'Usage: capnstruct <schema-module.js> [-o <output.rs|output.go>] [--rust|--go|--go-wasm] [--pkg <name>] [--wasm] [--builder] [--no-wasm-exports|--wasm-exports-cfg <cfg>] [--no-unsafe-slice] [--allow <lints>] [--inner-allow] [--no-assertions]',
         '',
         'Generates #[repr(C)] Rust or zero-copy Go / TinyGo WASM struct definitions and compile-time layout assertions',
         'from a JS/TS module exporting capnstruct StructDef schemas.',
@@ -27,6 +27,7 @@ async function main(): Promise<void> {
   let wasmExports: boolean | string | undefined;
   let allow: string[] | undefined;
   let unsafeSlice: boolean | undefined;
+  let innerAllow: boolean | undefined;
   let assertions = true;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -56,6 +57,8 @@ async function main(): Promise<void> {
       pkg = args[++i] ?? '';
     } else if (a === '--no-unsafe-slice') {
       unsafeSlice = false;
+    } else if (a === '--inner-allow') {
+      innerAllow = true;
     } else if (a === '--no-assertions') {
       assertions = false;
     } else if (!a.startsWith('-')) {
@@ -73,7 +76,7 @@ async function main(): Promise<void> {
   const code =
     target === 'go'
       ? toGoStruct(mod, { pkg: pkg || undefined, assertions, wasm })
-      : toRustReprC(mod, { assertions, wasm, builder, wasmExports, unsafeSlice, allow });
+      : toRustReprC(mod, { assertions, wasm, builder, wasmExports, unsafeSlice, allow, innerAllow });
   if (outputPath) {
     writeFileSync(resolve(process.cwd(), outputPath), code, 'utf8');
   } else {

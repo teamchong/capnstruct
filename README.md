@@ -171,5 +171,5 @@ Use `Schema.packEnvelope(row)` / `Schema.viewEnvelope(bytes)` in JS and `CapnBui
 
 | Entrypoint | Minified | Minified + Gzip |
 | :--- | :--- | :--- |
-| `capnstruct` (Core Runtime + `CS01` Envelope Evolution + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 27.1 KB | **~10.0 KiB** (`9.5 KiB` schema core) |
-| `capnstruct/codegen` (Safe `#![forbid(unsafe_code)]` Rust Readers + `#[repr(C)]`/`#[repr(C, u8)]` + `CapnBuilder` + Go/TinyGo Codegen) | 62.5 KB | **~17.2 KiB** |
+| `capnstruct` (Core Runtime + `CS01` Envelope Evolution + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 30.9 KB | **~11.2 KiB** (`10.7 KiB` schema core) |
+| `capnstruct/codegen` (Safe `#![forbid(unsafe_code)]` Rust Readers + `#[repr(C)]`/`#[repr(C, u8)]` + `CapnBuilder` + Go/TinyGo Codegen) | 68.7 KB | **~18.9 KiB** |

@@ -17,6 +17,8 @@ export interface RustCodegenOptions {
   unsafeSlice?: boolean;
   /** Custom lint list for per-item `#[allow(...)]` attributes (default suppresses `clippy::all`, `clippy::pedantic`, `clippy::restriction`, etc.). */
   allow?: readonly string[];
+  /** Emit a single module-level `#![allow(...)]` at the top instead of repeating `#[allow(...)]` on every item (default: `false`). */
+  innerAllow?: boolean;
 }
 export interface GoCodegenOptions {
   /** Go package name (default: `'capnschema'`, or `'main'` when `wasm: true`). */
@@ -126,9 +128,28 @@ export function toRustReprC(schemas: SchemaCollection, opts: RustCodegenOptions 
   const emitBuilder = opts.builder ?? Boolean(opts.wasm || wasmExp);
   const emitUnsafe = opts.unsafeSlice ?? true;
   const expCfg = typeof wasmExp === 'string' ? `#[cfg(${wasmExp})]\n` : '';
-  const alw = `#[allow(${(opts.allow ?? [..._DEF_ALLOW, ...(emitUnsafe ? ['unsafe_code'] : []), ...(expCfg ? ['unexpected_cfgs'] : [])]).join(', ')})]\n`;
+  const lintList = [...(opts.allow ?? [..._DEF_ALLOW, ...(emitUnsafe ? ['unsafe_code'] : []), ...(expCfg ? ['unexpected_cfgs'] : [])])].join(', ');
+  const topAlw = opts.innerAllow ? `#![allow(${lintList})]\n` : '';
+  const alw = opts.innerAllow ? '' : `#[allow(${lintList})]\n`;
+  const emitDefault = !drvO.includes('Default');
   const drv = (d: readonly string[]) => (d.length ? `#[derive(${d.join(', ')})]\n` : '');
   const eDrv = drv(drvEq);
+  const defaultExpr = (d: FieldDesc): string => {
+    if (d.kind === 'primitive') {
+      const pt = (d as { type?: string }).type;
+      if (pt === 'fixedStr' || pt === 'fixedBytes') return `[0; ${d.size}]`;
+      return d.rustType === 'bool' ? 'false' : primZero(d.rustType);
+    }
+    if (d.kind === 'str') return 'CapnStr { off: 0, len: 0 }';
+    if (d.kind === 'optStr') return 'CapnOptStr::none()';
+    if (d.kind === 'slice') return 'CapnSlice::empty()';
+    if (d.kind === 'ref') return 'CapnRef::none()';
+    if (d.kind === 'array') {
+      const ae = d as { element: FieldDesc; length: number };
+      return `[${defaultExpr(ae.element)}; ${ae.length}]`;
+    }
+    return `${(d as StructDefLike | UnionDefLike).name}::default()`;
+  };
   const hdr = (t: string, f = 'len', m = '') => `${alw}#[repr(C)]\n${eDrv}${v}struct ${t} {\n    ${v}off: u32,\n    ${v}${f}: u32,${m}\n}`;
   const mk = '\n    _m: core::marker::PhantomData<T>,';
   const defIdx = new Map<string, number>();
@@ -170,7 +191,7 @@ export function toRustReprC(schemas: SchemaCollection, opts: RustCodegenOptions 
   };
 
   const blocks = [
-    `${HDR}${emitBuilder ? `${alw}extern crate alloc;\n` : ''}${emitUnsafe ? `${alw}fn _cs<T>(b: &[u8], o: usize, n: usize) -> &[T] {\n    if n == 0 { return &[]; }\n    let s = &b[o..o.checked_add(n.checked_mul(core::mem::size_of::<T>()).unwrap()).unwrap()];\n    assert_eq!((s.as_ptr() as usize) % core::mem::align_of::<T>(), 0, "unaligned capnstruct buffer");\n    unsafe { core::slice::from_raw_parts(s.as_ptr() as *const T, n) }\n}\n` : ''}${hdr('CapnStr')}\n${alw}impl CapnStr {\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> &'a [u8] {\n        if self.len == 0 { return &[]; }\n        let o = self.off as usize;\n        &b[o..o.checked_add(self.len as usize).unwrap()]\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> { core::str::from_utf8(self.as_bytes(b)) }\n}\n${hdr('CapnOptStr')}\n${alw}impl CapnOptStr {\n    ${v}const fn none() -> Self { Self { off: 0, len: 0 } }\n    ${v}const fn is_none(&self) -> bool { self.off == 0 && self.len == 0 }\n    ${v}const fn is_some(&self) -> bool { !self.is_none() }\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> Option<&'a [u8]> {\n        if self.is_none() { None } else if self.len == 0 { Some(&[]) } else {\n            let o = self.off as usize;\n            Some(&b[o..o.checked_add(self.len as usize).unwrap()])\n        }\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<Option<&'a str>, core::str::Utf8Error> { self.as_bytes(b).map(core::str::from_utf8).transpose() }\n}\n${hdr('CapnSlice<T>', 'len', mk)}\n${alw}impl<T> CapnSlice<T> {\n    ${v}const fn empty() -> Self { Self { off: 0, len: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_empty(&self) -> bool { self.len == 0 }${emitUnsafe ? `\n    ${v}fn as_slice<'a>(&self, b: &'a [u8]) -> &'a [T] { _cs(b, self.off as usize, self.len as usize) }` : ''}\n}\n${hdr('CapnRef<T>', 'present', mk)}\n${alw}impl<T> CapnRef<T> {\n    ${v}const fn none() -> Self { Self { off: 0, present: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_some(&self) -> bool { self.present != 0 }\n    ${v}const fn is_none(&self) -> bool { self.present == 0 }${emitUnsafe ? `\n    ${v}fn as_ref<'a>(&self, b: &'a [u8]) -> Option<&'a T> { if self.present == 0 { None } else { _cs(b, self.off as usize, 1).first() } }` : ''}\n}`,
+    `${HDR}${topAlw}${emitBuilder ? `${alw}extern crate alloc;\n` : ''}${emitUnsafe ? `${alw}fn _cs<T>(b: &[u8], o: usize, n: usize) -> &[T] {\n    if n == 0 { return &[]; }\n    let s = &b[o..o.checked_add(n.checked_mul(core::mem::size_of::<T>()).unwrap()).unwrap()];\n    assert_eq!((s.as_ptr() as usize) % core::mem::align_of::<T>(), 0, "unaligned capnstruct buffer");\n    unsafe { core::slice::from_raw_parts(s.as_ptr() as *const T, n) }\n}\n` : ''}${hdr('CapnStr')}\n${alw}impl Default for CapnStr {\n    fn default() -> Self { Self { off: 0, len: 0 } }\n}\n${alw}impl CapnStr {\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> &'a [u8] {\n        if self.len == 0 { return &[]; }\n        let o = self.off as usize;\n        &b[o..o.checked_add(self.len as usize).unwrap()]\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> { core::str::from_utf8(self.as_bytes(b)) }\n}\n${hdr('CapnOptStr')}\n${alw}impl Default for CapnOptStr {\n    fn default() -> Self { Self::none() }\n}\n${alw}impl CapnOptStr {\n    ${v}const fn none() -> Self { Self { off: 0, len: 0 } }\n    ${v}const fn is_none(&self) -> bool { self.off == 0 && self.len == 0 }\n    ${v}const fn is_some(&self) -> bool { !self.is_none() }\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> Option<&'a [u8]> {\n        if self.is_none() { None } else if self.len == 0 { Some(&[]) } else {\n            let o = self.off as usize;\n            Some(&b[o..o.checked_add(self.len as usize).unwrap()])\n        }\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<Option<&'a str>, core::str::Utf8Error> { self.as_bytes(b).map(core::str::from_utf8).transpose() }\n}\n${hdr('CapnSlice<T>', 'len', mk)}\n${alw}impl<T> Default for CapnSlice<T> {\n    fn default() -> Self { Self::empty() }\n}\n${alw}impl<T> CapnSlice<T> {\n    ${v}const fn empty() -> Self { Self { off: 0, len: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_empty(&self) -> bool { self.len == 0 }${emitUnsafe ? `\n    ${v}fn as_slice<'a>(&self, b: &'a [u8]) -> &'a [T] { _cs(b, self.off as usize, self.len as usize) }` : ''}\n}\n${hdr('CapnRef<T>', 'present', mk)}\n${alw}impl<T> Default for CapnRef<T> {\n    fn default() -> Self { Self::none() }\n}\n${alw}impl<T> CapnRef<T> {\n    ${v}const fn none() -> Self { Self { off: 0, present: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_some(&self) -> bool { self.present != 0 }\n    ${v}const fn is_none(&self) -> bool { self.present == 0 }${emitUnsafe ? `\n    ${v}fn as_ref<'a>(&self, b: &'a [u8]) -> Option<&'a T> { if self.present == 0 { None } else { _cs(b, self.off as usize, 1).first() } }` : ''}\n}`,
     `${alw}const CAPN_TYPE_COUNT: usize = ${defs.length};
 ${alw}const CAPN_SCHEMA_META: [(u32, u16, u8, u8); CAPN_TYPE_COUNT] = [${metaEntries.join(', ')}];
 ${alw}#[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -333,6 +354,10 @@ ${alw}impl<'a, T: CapnRead<'a>> CapnSliceReader<'a, T> {
         if i >= self._len { return None; }
         Some(T::capn_read_at(self._b, self._o + i * self._st, self._st, self._t))
     }
+    ${v}fn at(&self, i: usize) -> Result<T::Out, CapnError> {
+        if i >= self._len { return Err(CapnError::OutOfBounds); }
+        T::capn_read_at(self._b, self._o + i * self._st, self._st, self._t)
+    }
     ${v}fn iter(&self) -> CapnSliceIter<'a, T> { CapnSliceIter { _s: *self, _i: 0, _e: self._len } }
 }
 ${alw}impl<'a, T: CapnRead<'a>> IntoIterator for CapnSliceReader<'a, T> {
@@ -455,19 +480,28 @@ ${alw}impl<T> CapnPack for CapnRef<T> {
 ${alw}#[derive(Default)]
 ${v}struct CapnBuilder {
     ${v}buf: alloc::vec::Vec<u8>,
-    dedup: alloc::collections::BTreeMap<alloc::string::String, CapnStr>,
+    dedup: alloc::vec::Vec<(u64, u32, u32)>,
+    dedup_len: usize,
     base: usize,
 }
 ${alw}impl CapnBuilder {
-    ${v}const fn new() -> Self { Self { buf: alloc::vec::Vec::new(), dedup: alloc::collections::BTreeMap::new(), base: 0 } }
-    ${v}fn with_capacity(cap: usize) -> Self { Self { buf: alloc::vec::Vec::with_capacity(cap), dedup: alloc::collections::BTreeMap::new(), base: 0 } }
-    ${v}fn reset(&mut self) { self.buf.clear(); self.dedup.clear(); self.base = 0; }
+    ${v}const fn new() -> Self { Self { buf: alloc::vec::Vec::new(), dedup: alloc::vec::Vec::new(), dedup_len: 0, base: 0 } }
+    ${v}fn with_capacity(cap: usize) -> Self { Self { buf: alloc::vec::Vec::with_capacity(cap), dedup: alloc::vec::Vec::new(), dedup_len: 0, base: 0 } }
+    ${v}fn reset(&mut self) { self.buf.clear(); self.dedup.clear(); self.dedup_len = 0; self.base = 0; }
     ${v}fn alloc(&mut self, n: usize, a: usize) -> usize {
         let a = if a == 0 { 1 } else { a };
         let rel = self.buf.len() - self.base;
         let o = self.base + ((rel + a - 1) & !(a - 1));
         self.buf.resize(o + n, 0);
         o
+    }
+    #[inline]
+    fn _hash(b: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &x in b {
+            h = (h ^ u64::from(x)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
     }
     ${v}fn str(&mut self, s: &str) -> CapnStr {
         let b = s.as_bytes();
@@ -478,10 +512,40 @@ ${alw}impl CapnBuilder {
     }
     ${v}fn str_dedup(&mut self, s: &str) -> CapnStr {
         if s.is_empty() { return CapnStr { off: 0, len: 0 }; }
-        if let Some(&c) = self.dedup.get(s) { return c; }
-        let c = self.str(s);
-        self.dedup.insert(alloc::string::String::from(s), c);
-        c
+        let sb = s.as_bytes();
+        let h = Self::_hash(sb);
+        if (self.dedup_len + 1) * 2 > self.dedup.len() {
+            let new_cap = if self.dedup.is_empty() { 256 } else { self.dedup.len() * 2 };
+            let mut nt = alloc::vec::Vec::new();
+            nt.resize(new_cap, (0u64, 0u32, 0u32));
+            let mask = new_cap - 1;
+            for &(eh, eoff, elen) in &self.dedup {
+                if elen != 0 {
+                    let mut idx = (eh as usize) & mask;
+                    while nt[idx].2 != 0 { idx = (idx + 1) & mask; }
+                    nt[idx] = (eh, eoff, elen);
+                }
+            }
+            self.dedup = nt;
+        }
+        let mask = self.dedup.len() - 1;
+        let mut idx = (h as usize) & mask;
+        loop {
+            let (eh, eoff, elen) = self.dedup[idx];
+            if elen == 0 {
+                let c = self.str(s);
+                self.dedup[idx] = (h, c.off, c.len);
+                self.dedup_len += 1;
+                return c;
+            }
+            if eh == h && (elen as usize) == sb.len() {
+                let st = self.base + (eoff as usize);
+                if &self.buf[st..st + (elen as usize)] == sb {
+                    return CapnStr { off: eoff, len: elen };
+                }
+            }
+            idx = (idx + 1) & mask;
+        }
     }
     ${v}fn opt_str(&mut self, s: Option<&str>) -> CapnOptStr {
         match s { None => CapnOptStr::none(), Some("") => CapnOptStr { off: 1, len: 0 }, Some(s) => { let c = self.str(s); CapnOptStr { off: c.off, len: c.len } } }
@@ -512,6 +576,7 @@ ${alw}impl CapnBuilder {
     ${v}fn build_vec<T: CapnPack>(&mut self, f: impl FnOnce(&mut Self) -> T) -> alloc::vec::Vec<u8> {
         self.build(f);
         self.dedup.clear();
+        self.dedup_len = 0;
         self.base = 0;
         core::mem::take(&mut self.buf)
     }
@@ -541,6 +606,7 @@ ${alw}impl CapnBuilder {
     ${v}fn build_envelope_vec<T: CapnRoot>(&mut self, f: impl FnOnce(&mut Self) -> T) -> alloc::vec::Vec<u8> {
         self.build_envelope(f);
         self.dedup.clear();
+        self.dedup_len = 0;
         self.base = 0;
         core::mem::take(&mut self.buf)
     }
@@ -639,8 +705,12 @@ ${expCfg}mod _inner {
       const packImpl = emitBuilder
         ? `\n${alw}impl CapnPack for ${n} {\n    const CAPN_SIZE: usize = ${def.size};\n    const CAPN_ALIGN: usize = ${def.align};\n    fn capn_write(&self, dst: &mut [u8]) {\n        match self {\n${def.variantList.map((vr) => vr.desc === null ? `            Self::${vr.name} => { dst[0] = ${vr.tag}; }` : `            Self::${vr.name}(val) => { dst[0] = ${vr.tag}; val.capn_write(&mut dst[${vr.payloadOffset}..${vr.payloadOffset + vr.desc.size}]); }`).join('\n')}\n        }\n    }\n}`
         : '';
+      const v0 = def.variantList[0]!;
+      const defImpl = emitDefault
+        ? `\n${alw}impl Default for ${n} {\n    fn default() -> Self { Self::${v0.name}${v0.desc === null ? '' : `(${defaultExpr(v0.desc)})`} }\n}`
+        : '';
       blocks.push(
-        `${alw}${repr}\n${dLine}${v}enum ${n} {\n${body}\n}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};\n}\n${alw}${rDrv}${v}enum ${n}Reader${lt} {\n${rVariants}\n}\n${alw}impl<'a> ${n}Reader${lt} {\n    fn read_at(buf: &'a [u8], off: usize, ws: usize, table: &'a CapnTable) -> Result<Self, CapnError> {\n        let wt = table.wire_type(${n}::_CAPN_IDX)?;\n        if ws == 0 || off.checked_add(ws).map_or(true, |e| e > buf.len()) { return Err(CapnError::OutOfBounds); }\n        let tag = buf[off];\n        if tag >= wt.variant_count { return Err(CapnError::InvalidTag(tag)); }${def.unitOnly ? '' : '\n        let po = wt.payload_off;'}\n        match tag {\n${rArms}\n            _ => Ok(Self::${uv}(tag)),\n        }\n    }\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader${lt};\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> { ${n}Reader::read_at(b, o, ws, t) }\n}${packImpl}${a}`,
+        `${alw}${repr}\n${dLine}${v}enum ${n} {\n${body}\n}${defImpl}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};\n}\n${alw}${rDrv}${v}enum ${n}Reader${lt} {\n${rVariants}\n}\n${alw}impl<'a> ${n}Reader${lt} {\n    fn read_at(buf: &'a [u8], off: usize, ws: usize, table: &'a CapnTable) -> Result<Self, CapnError> {\n        let wt = table.wire_type(${n}::_CAPN_IDX)?;\n        if ws == 0 || off.checked_add(ws).map_or(true, |e| e > buf.len()) { return Err(CapnError::OutOfBounds); }\n        let tag = buf[off];\n        if tag >= wt.variant_count { return Err(CapnError::InvalidTag(tag)); }${def.unitOnly ? '' : '\n        let po = wt.payload_off;'}\n        match tag {\n${rArms}\n            _ => Ok(Self::${uv}(tag)),\n        }\n    }\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader${lt};\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> { ${n}Reader::read_at(b, o, ws, t) }\n}${packImpl}${a}`,
       );
     } else {
       const body = fmtBody(def, (f) => `    ${v}${f.name}: ${f.desc.rustType},`, (p, s) => `    ${v}${p}: [u8; ${s}],`);
@@ -709,8 +779,16 @@ ${expCfg}mod _inner {
         ? `\n${alw}impl CapnPack for ${n} {\n    const CAPN_SIZE: usize = ${def.size};\n    const CAPN_ALIGN: usize = ${def.align};\n    fn capn_write(&self, dst: &mut [u8]) {\n${def.fieldList.length ? def.fieldList.map((f) => `        self.${f.name}.capn_write(&mut dst[${f.offset}..${f.offset + f.size}]);`).join('\n') : '        let _ = dst;'}\n    }\n}\n${alw}impl CapnRoot for ${n} {\n    const TYPE_HASH: u32 = ${hash};\n}`
         : '';
       const a = opts.assertions ?? true ? `\n${alw}const _: () = {\n${u(`size_of::<${n}>()`, def.size)}\n${u(`align_of::<${n}>()`, def.align)}\n${def.fieldList.map((f) => u(`offset_of!(${n}, ${f.name})`, f.offset)).join('\n')}\n};` : '';
+      const defFields = fmtBody(
+        def,
+        (f) => `            ${f.name}: ${defaultExpr(f.desc)},`,
+        (p, s) => `            ${p}: [0; ${s}],`,
+      );
+      const defImpl = emitDefault
+        ? `\n${alw}impl Default for ${n} {\n    fn default() -> Self {\n        Self {\n${defFields}\n        }\n    }\n}`
+        : '';
       blocks.push(
-        `${alw}#[repr(C)]\n${dLine}${v}struct ${n} {\n${body}\n}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};${emitUnsafe ? `\n    ${v}fn as_slice(base: &[u8], len: usize) -> &[Self] { _cs(base, 0, len) }` : ''}\n    ${v}fn parse_envelope(b: &[u8]) -> Result<CapnTable, CapnError> { CapnTable::parse_envelope(b, Self::TYPE_HASH, Self::_CAPN_IDX) }\n    ${v}fn reader<'a>(b: &'a [u8], t: &'a CapnTable) -> Result<${n}Reader<'a>, CapnError> {\n        let wt = t.wire_type(Self::_CAPN_IDX)?;\n        let e = t.payload_off.checked_add(wt.wire_size).ok_or(CapnError::OutOfBounds)?;\n        if e > b.len() { return Err(CapnError::Truncated); }\n        Ok(${n}Reader { _b: b, _o: t.payload_off, _ws: wt.wire_size, _t: t })\n    }\n    ${v}fn read<'a>(b: &'a [u8]) -> Result<${n}Reader<'a>, CapnError> { Self::reader(b, &_CAPN_NATIVE_TABLE) }\n    ${v}fn read_slice<'a>(b: &'a [u8], n: usize) -> Result<CapnSliceReader<'a, Self>, CapnError> {\n        let bytes = n.checked_mul(${def.size}).ok_or(CapnError::OutOfBounds)?;\n        if bytes > b.len() { return Err(CapnError::Truncated); }\n        Ok(CapnSliceReader { _b: b, _o: 0, _len: n, _st: ${def.size}, _t: &_CAPN_NATIVE_TABLE, _m: core::marker::PhantomData })\n    }${sHelpers}\n}\n${alw}#[derive(Copy, Clone, Debug)]\n${v}struct ${n}Reader<'a> {\n    _b: &'a [u8],\n    _o: usize,\n    _ws: usize,\n    _t: &'a CapnTable,\n}\n${alw}impl<'a> ${n}Reader<'a> {\n${rMethods}\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader<'a>;\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> {\n        if o.checked_add(ws).map_or(true, |e| e > b.len()) { return Err(CapnError::OutOfBounds); }\n        Ok(${n}Reader { _b: b, _o: o, _ws: ws, _t: t })\n    }\n}${packImpl}${a}`,
+        `${alw}#[repr(C)]\n${dLine}${v}struct ${n} {\n${body}\n}${defImpl}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};${emitUnsafe ? `\n    ${v}fn as_slice(base: &[u8], len: usize) -> &[Self] { _cs(base, 0, len) }` : ''}\n    ${v}fn parse_envelope(b: &[u8]) -> Result<CapnTable, CapnError> { CapnTable::parse_envelope(b, Self::TYPE_HASH, Self::_CAPN_IDX) }\n    ${v}fn reader<'a>(b: &'a [u8], t: &'a CapnTable) -> Result<${n}Reader<'a>, CapnError> {\n        let wt = t.wire_type(Self::_CAPN_IDX)?;\n        let e = t.payload_off.checked_add(wt.wire_size).ok_or(CapnError::OutOfBounds)?;\n        if e > b.len() { return Err(CapnError::Truncated); }\n        Ok(${n}Reader { _b: b, _o: t.payload_off, _ws: wt.wire_size, _t: t })\n    }\n    ${v}fn read<'a>(b: &'a [u8]) -> Result<${n}Reader<'a>, CapnError> { Self::reader(b, &_CAPN_NATIVE_TABLE) }\n    ${v}fn read_slice<'a>(b: &'a [u8], n: usize) -> Result<CapnSliceReader<'a, Self>, CapnError> {\n        let bytes = n.checked_mul(${def.size}).ok_or(CapnError::OutOfBounds)?;\n        if bytes > b.len() { return Err(CapnError::Truncated); }\n        Ok(CapnSliceReader { _b: b, _o: 0, _len: n, _st: ${def.size}, _t: &_CAPN_NATIVE_TABLE, _m: core::marker::PhantomData })\n    }${sHelpers}\n}\n${alw}#[derive(Copy, Clone, Debug)]\n${v}struct ${n}Reader<'a> {\n    _b: &'a [u8],\n    _o: usize,\n    _ws: usize,\n    _t: &'a CapnTable,\n}\n${alw}impl<'a> ${n}Reader<'a> {\n${rMethods}\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader<'a>;\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> {\n        if o.checked_add(ws).map_or(true, |e| e > b.len()) { return Err(CapnError::OutOfBounds); }\n        Ok(${n}Reader { _b: b, _o: o, _ws: ws, _t: t })\n    }\n}${packImpl}${a}`,
       );
     }
   }

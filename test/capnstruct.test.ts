@@ -3827,5 +3827,153 @@ fn main() {
         rmSync(tmp, { recursive: true, force: true });
       }
     });
+
+    it('supports innerAllow (--inner-allow), Default (no manual _pad0), CapnSliceReader::at, O(1) str_dedup hash table, and same-version viewEnvelope fast path', () => {
+      const Kind = defineUnion('ErgKind', { Empty: null, Code: u32, Text: str });
+      const Item = defineStruct('ErgItem', {
+        flag: bool,
+        label: str,
+        note: optStr,
+        kind: Kind,
+        big: fixedBytes(64),
+      });
+      const Root = defineStruct('ErgRoot', {
+        ok: bool,
+        items: slice(Item),
+        extra: ref(Item),
+      });
+
+      // 1. innerAllow emits one top-level #![allow(...)] and zero per-item #[allow(...)]
+      const rs = toRustReprC([Kind, Item, Root], {
+        builder: true,
+        wasmExports: false,
+        unsafeSlice: false,
+        innerAllow: true,
+      });
+      expect(rs).toContain('#![allow(');
+      expect(rs).not.toContain('#[allow(');
+      expect(rs).not.toContain('unsafe');
+      expect(rs).toContain('impl Default for ErgItem');
+      expect(rs).toContain('impl Default for ErgKind');
+      expect(rs).toContain('pub fn at(&self, i: usize) -> Result<T::Out, CapnError>');
+
+      // 2. CLI --inner-allow flag smoke test
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-v051-'));
+      try {
+        const schemaPath = join(tmp, 'schema.mjs');
+        const distIndex = join(process.cwd(), 'dist/index.js');
+        const cliPath = join(process.cwd(), 'dist/cli.js');
+        writeFileSync(
+          schemaPath,
+          `import { defineStruct, bool, u32 } from ${JSON.stringify(distIndex)};\nexport const S = defineStruct('S', { b: bool, n: u32 });\n`,
+        );
+        const cliOut = execFileSync(process.execPath, [cliPath, schemaPath, '--builder', '--no-wasm-exports', '--no-unsafe-slice', '--inner-allow'], { encoding: 'utf8' });
+        expect(cliOut).toContain('#![allow(');
+        expect(cliOut).not.toContain('#[allow(');
+
+        // 3. Compile & run under #![no_std] / #![forbid(unsafe_code)] + Rust 2021/2024 + Clippy + runtime test
+        const modPath = join(tmp, 'erg_schema.rs');
+        const libPath = join(tmp, 'lib.rs');
+        const mainPath = join(tmp, 'main.rs');
+        const binPath = join(tmp, 'erg_test');
+        const outPath = join(tmp, 'erg.bin');
+        writeFileSync(modPath, rs);
+        writeFileSync(
+          libPath,
+          `#![no_std]\n#![forbid(unsafe_code)]\n#![deny(clippy::all, clippy::pedantic)]\nmod erg_schema;\n`,
+        );
+        for (const edition of ['2021', '2024']) {
+          execFileSync('rustc', ['--edition', edition, '--crate-type=lib', '-D', 'warnings', libPath, '-o', join(tmp, `lib_${edition}.rlib`)], { stdio: 'pipe' });
+        }
+        let hasClippy = false;
+        try {
+          execFileSync('clippy-driver', ['--version'], { stdio: 'pipe' });
+          hasClippy = true;
+        } catch {
+          hasClippy = false;
+        }
+        if (hasClippy) {
+          execFileSync('clippy-driver', ['--edition=2024', '--crate-type=lib', '-D', 'warnings', libPath, '-o', join(tmp, 'clippy.rlib')], { stdio: 'pipe' });
+        }
+
+        writeFileSync(
+          mainPath,
+          `#![forbid(unsafe_code)]
+mod erg_schema;
+use erg_schema::*;
+
+fn main() {
+    let mut b = CapnBuilder::with_capacity(65536);
+    // Stress O(1) str_dedup hash table across multiple resizes (256 -> 512 -> 1024 -> 2048)
+    let env = b.build_envelope_vec(|b| {
+        let items = b.build_slice(600, |i, b| {
+            let unique = format!("key_{i}");
+            let s1 = b.str_dedup(&unique);
+            let s2 = b.str_dedup(&unique);
+            assert_eq!(s1, s2, "dedup must return identical offset/len");
+            let shared = b.str_dedup(if i % 2 == 0 { "even_tag" } else { "odd_tag" });
+            let note = b.opt_str_dedup(if i % 3 == 0 { Some("shared_note") } else if i % 3 == 1 { Some("") } else { None });
+            // Construct ErgItem using ..Default::default() without specifying _pad0 or big!
+            ErgItem {
+                flag: i % 2 == 0,
+                label: s1,
+                note,
+                kind: if i % 3 == 0 { ErgKind::Text(shared) } else if i % 3 == 1 { ErgKind::Code(i as u32) } else { ErgKind::Empty },
+                ..Default::default()
+            }
+        });
+        let extra = b.build_ref(|b| ErgItem {
+            flag: true,
+            label: b.str_dedup("extra_item"),
+            ..Default::default()
+        });
+        ErgRoot { ok: true, items, extra, ..Default::default() }
+    });
+    // Verify CapnSliceReader::at(i) + OutOfBounds
+    let tbl = ErgRoot::parse_envelope(&env).unwrap();
+    let doc = ErgRoot::reader(&env, &tbl).unwrap();
+    assert!(doc.ok().unwrap());
+    let items = doc.items().unwrap();
+    assert_eq!(items.len(), 600);
+    assert_eq!(items.at(0).unwrap().label().unwrap(), "key_0");
+    assert_eq!(items.at(599).unwrap().label().unwrap(), "key_599");
+    assert_eq!(items.at(0).unwrap().note().unwrap(), Some("shared_note"));
+    assert_eq!(items.at(1).unwrap().note().unwrap(), Some(""));
+    assert_eq!(items.at(2).unwrap().note().unwrap(), None);
+    assert_eq!(items.at(600).unwrap_err(), CapnError::OutOfBounds);
+    assert_eq!(doc.extra().unwrap().unwrap().label().unwrap(), "extra_item");
+    // Verify reset() clears dedup table cleanly for reuse
+    let env2 = b.build_envelope_vec(|b| {
+        let s = b.str_dedup("key_0");
+        let extra = b.build_ref(|_| ErgItem { label: s, ..Default::default() });
+        ErgRoot { ok: false, extra, ..Default::default() }
+    });
+    let tbl2 = ErgRoot::parse_envelope(&env2).unwrap();
+    let doc2 = ErgRoot::reader(&env2, &tbl2).unwrap();
+    assert!(!doc2.ok().unwrap());
+    assert_eq!(doc2.extra().unwrap().unwrap().label().unwrap(), "key_0");
+    std::fs::write(std::env::args().nth(1).unwrap(), &env).unwrap();
+}
+`,
+        );
+        execFileSync('rustc', ['--edition=2024', mainPath, '-o', binPath], { stdio: 'pipe' });
+        execFileSync(binPath, [outPath], { stdio: 'pipe' });
+
+        // 4. Verify JS viewEnvelope takes the exact same-version fast path (_e === null) and reads all 600 items
+        const envBytes = new Uint8Array(readFileSync(outPath));
+        const view = Root.viewEnvelope(envBytes);
+        expect((view as unknown as { _e: unknown })._e).toBeNull();
+        expect(view.ok).toBe(true);
+        expect(view.items.length).toBe(600);
+        expect(view.items.at(0).label).toBe('key_0');
+        expect(view.items.at(0).kind).toEqual({ tag: 'Text', value: 'even_tag' });
+        expect(view.items.at(1).note).toBe('');
+        expect(view.items.at(2).note).toBeNull();
+        expect(view.items.at(599).label).toBe('key_599');
+        expect(view.extra?.label).toBe('extra_item');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 });

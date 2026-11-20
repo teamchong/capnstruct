@@ -154,6 +154,10 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 
 ```text
 +------------------------------------------------------------------+
+| Optional CS01 Envelope Header (16 + typeCount * 8 bytes)         |
+|   "CS01" | ver=1 | typeCount | rootHash (FNV-1a) | payloadOff    |
+|   type table: [hash:u32, wireSize:u16, payloadOff:u8, variants:u8]|
++------------------------------------------------------------------+
 | Fixed #[repr(C)] Struct Table (N * def.size bytes, 8B-aligned)   |
 |   Row 0: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]|
 |   Row 1: [primitive | fixedStr | CapnStr(off,len) | CapnRef(off)]|
@@ -163,7 +167,9 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 +------------------------------------------------------------------+
 ```
 
+Use `Schema.packEnvelope(row)` / `Schema.viewEnvelope(bytes)` in JS and `CapnBuilder::build_envelope_vec` / `Schema::parse_envelope` + `Schema::reader` in Rust for self-describing, forward- and backward-compatible schema evolution. Generated Rust readers (`*Reader<'a>`, `CapnSliceReader`, `CapnError`) compile cleanly under `#![no_std]` and `#![forbid(unsafe_code)]` (pass `{ unsafeSlice: false }` or `--no-unsafe-slice`) with no raw pointer casts and no alignment requirements on untrusted buffers.
+
 | Entrypoint | Minified | Minified + Gzip |
 | :--- | :--- | :--- |
-| `capnstruct` (Core Runtime + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 24.7 KiB | **~9.1 KiB** (`8.6 KiB` schema core) |
-| `capnstruct/codegen` (Rust `#[repr(C)]`/`#[repr(C, u8)]` + Go/TinyGo Codegen + `CapnBuilder` + `CapnOptStr`) | 15.9 KiB | **~5.2 KiB** |
+| `capnstruct` (Core Runtime + `CS01` Envelope Evolution + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 27.1 KB | **~10.0 KiB** (`9.5 KiB` schema core) |
+| `capnstruct/codegen` (Safe `#![forbid(unsafe_code)]` Rust Readers + `#[repr(C)]`/`#[repr(C, u8)]` + `CapnBuilder` + Go/TinyGo Codegen) | 62.5 KB | **~17.2 KiB** |

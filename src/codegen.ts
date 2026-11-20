@@ -1,4 +1,4 @@
-import type { FieldDesc, FieldLayout, StructDefLike, UnionDefLike } from './index.js';
+import { typeHash, type FieldDesc, type FieldLayout, type StructDefLike, type UnionDefLike } from './index.js';
 
 export interface RustCodegenOptions {
   /** Additional `#[derive(...)]` traits (default: `['Copy', 'Clone', 'Debug', 'PartialEq']`). */
@@ -11,9 +11,11 @@ export interface RustCodegenOptions {
   wasm?: boolean;
   /** Emit `extern crate alloc` and `CapnBuilder` without requiring WASM exports (default: `opts.wasm ?? false`). */
   builder?: boolean;
-  /** Emit `capn_alloc`/`capn_reset` WASM exports: `true` (unconditional), `false` (omit), or a `#[cfg(...)]` expression string (default: `opts.wasm ?? false`). */
+  /** Emit `capn_alloc`/`capn_reset` WASM arena exports: `true` (unconditional), `false` (omit), or a `#[cfg(...)]` expression string (default: `opts.wasm ?? false`). */
   wasmExports?: boolean | string;
-  /** Custom lint list for per-item `#[allow(...)]` attributes. Defaults cover Rust 2021/2024 + strict Clippy (`clippy::all`, `clippy::pedantic`, `clippy::restriction`). */
+  /** Emit legacy unsafe `as_slice`/`as_ref` raw-pointer casts (default: `true`). Set `false` for `#![forbid(unsafe_code)]` output. */
+  unsafeSlice?: boolean;
+  /** Custom lint list for per-item `#[allow(...)]` attributes (default suppresses `clippy::all`, `clippy::pedantic`, `clippy::restriction`, etc.). */
   allow?: readonly string[];
 }
 export interface GoCodegenOptions {
@@ -24,39 +26,43 @@ export interface GoCodegenOptions {
   /** Emit `//go:wasmexport capn_alloc` & `capn_reset` arena helpers for Go (`GOOS=wasip1 GOARCH=wasm`) and TinyGo (`-target=wasi`) WebAssembly (default: `false`). */
   wasm?: boolean;
 }
-
 export type SchemaDef = StructDefLike<any> | UnionDefLike<any>;
 export type SchemaCollection = SchemaDef | readonly SchemaDef[] | Record<string, unknown>;
 
-function collectDefs(input: SchemaCollection): SchemaDef[] {
-  const seen = new Set<string>(),
-    out: SchemaDef[] = [],
-    visit = (d: unknown, name?: string): void => {
-      if (!d || typeof d !== 'object') return;
-      const f = d as FieldDesc & { element?: FieldDesc };
-      const nm = name || ('name' in f && f.name) || (f.kind === 'union' ? 'AnonUnion' : 'AnonStruct');
-      if (f.kind === 'struct') {
-        if (!seen.has(nm)) {
-          seen.add(nm);
-          for (const fl of f.fieldList) visit(fl.desc);
-          out.push({ ...f, name: nm, rustType: nm });
-        }
-      } else if (f.kind === 'union') {
-        if (!seen.has(nm)) {
-          seen.add(nm);
-          for (const vr of f.variantList) if (vr.desc) visit(vr.desc);
-          out.push({ ...f, name: nm, rustType: nm });
-        }
-      } else if (f.element) visit(f.element);
-    };
-  if (input && typeof input === 'object' && ('kind' in input) && (input.kind === 'struct' || input.kind === 'union')) {
-    const def = input as SchemaDef;
+function collectDefs(schemas: SchemaCollection): SchemaDef[] {
+  const seen = new Set<string>(), out: SchemaDef[] = [];
+  const visit = (d: unknown, name?: string): void => {
+    if (!d || typeof d !== 'object') return;
+    const f = d as FieldDesc & { element?: FieldDesc };
+    const nm = name || ('name' in f && f.name) || (f.kind === 'union' ? 'AnonUnion' : 'AnonStruct');
+    if (f.kind === 'struct') {
+      if (!seen.has(nm)) {
+        seen.add(nm);
+        for (const fl of f.fieldList) visit(fl.desc);
+        out.push({ ...f, name: nm, rustType: nm });
+      }
+    } else if (f.kind === 'union') {
+      if (!seen.has(nm)) {
+        seen.add(nm);
+        for (const vr of f.variantList) if (vr.desc) visit(vr.desc);
+        out.push({ ...f, name: nm, rustType: nm });
+      }
+    } else if (f.element) visit(f.element);
+  };
+  if (typeof schemas === 'object' && 'kind' in schemas && (schemas.kind === 'struct' || schemas.kind === 'union')) {
+    const def = schemas as SchemaDef;
     visit(def, def.name || 'Root');
   } else {
-    for (const [k, v] of Object.entries(input)) {
+    for (const [k, v] of Object.entries(schemas)) {
       const vn = v && typeof v === 'object' && 'name' in v && typeof v.name === 'string' ? v.name : '';
-      visit(v, vn || (Array.isArray(input) ? `Struct${k}` : k));
+      visit(v, vn || (Array.isArray(schemas) ? `Struct${k}` : k));
     }
+  }
+  const hashes = new Set<number>();
+  for (const d of out) {
+    const h = typeHash(d.name);
+    if (hashes.has(h)) throw new Error(`capnstruct type hash collision for ${d.name}`);
+    hashes.add(h);
   }
   return out;
 }
@@ -65,18 +71,42 @@ const hasFloat = (d: FieldDesc, s = new Set<FieldDesc>()): boolean => {
   if (s.has(d)) return false;
   s.add(d);
   if (d.kind === 'primitive') return 'float' in d && d.float;
-  if (d.kind === 'array' || d.kind === 'slice' || d.kind === 'ref') return hasFloat(d.element as FieldDesc, s);
+  if (d.kind === 'array' || d.kind === 'slice') return hasFloat(d.element as FieldDesc, s);
   if (d.kind === 'union') return d.variantList.some((vr) => vr.desc !== null && hasFloat(vr.desc, s));
-  if (d.kind === 'struct') return d.fieldList.some((f) => hasFloat(f.desc, s));
+  return d.kind === 'struct' && d.fieldList.some((fl) => hasFloat(fl.desc, s));
+};
+
+const unionNeedsLifetime = (u: UnionDefLike, seen = new Set<string>()): boolean => {
+  if (seen.has(u.name)) return false;
+  seen.add(u.name);
+  for (const vr of u.variantList) {
+    if (!vr.desc) continue;
+    const d = vr.desc;
+    if (d.kind === 'union') {
+      if (unionNeedsLifetime(d as UnionDefLike, seen)) return true;
+    } else if (d.kind !== 'primitive' || (d as { type?: string }).type === 'fixedStr' || (d as { type?: string }).type === 'fixedBytes') {
+      return true;
+    }
+  }
   return false;
 };
 
-const HDR = '// Auto-generated by capnstruct. DO NOT EDIT.\n';
-const DEF_ALLOW = ['dead_code', 'non_camel_case_types', 'non_snake_case', 'unused_imports', 'unsafe_code', 'clippy::all', 'clippy::pedantic', 'clippy::restriction'];
+const sentinelLit = (d: FieldDesc, nv: number | bigint | boolean): { t: string; lit: string; isNaN: boolean } => {
+  const t = d.rustType;
+  const isNaN = typeof nv === 'number' && Number.isNaN(nv);
+  const lit = typeof nv === 'boolean' ? String(nv)
+    : isNaN ? (t === 'u16' && (d as { type?: string }).type === 'f16' ? '0x7e00' : `${t}::NAN`)
+    : typeof nv === 'number' && !Number.isFinite(nv) ? `${t}::${nv < 0 ? 'NEG_' : ''}INFINITY`
+    : (t === 'f32' || t === 'f64') && Number.isInteger(nv) ? `${nv}.0`
+    : String(nv);
+  return { t, lit, isNaN };
+};
+
+const HDR = '// Generated by capnstruct — do not edit manually\n';
+const _DEF_ALLOW = ['dead_code', 'unused_imports', 'non_snake_case', 'non_camel_case_types', 'non_upper_case_globals', 'unused_parens', 'clippy::all', 'clippy::pedantic', 'clippy::restriction'];
 
 const fmtBody = (def: StructDefLike, fmtF: (f: FieldLayout) => string, fmtP: (p: string, n: number) => string): string => {
-  let cur = 0,
-    pad = 0;
+  let cur = 0, pad = 0;
   const out: string[] = [];
   for (const f of def.fieldList) {
     if (f.offset > cur) out.push(fmtP(`_pad${pad++}`, f.offset - cur));
@@ -88,86 +118,599 @@ const fmtBody = (def: StructDefLike, fmtF: (f: FieldLayout) => string, fmtP: (p:
 };
 
 export function toRustReprC(schemas: SchemaCollection, opts: RustCodegenOptions = {}): string {
-  const defs = collectDefs(schemas),
-    drv0 = opts.derive ?? ['Copy', 'Clone', 'Debug', 'PartialEq'],
-    drvEq = opts.derive ? drv0 : [...drv0, 'Eq'],
-    v = opts.vis === '' ? '' : `${opts.vis ?? 'pub'} `,
-    wasmExp = opts.wasmExports ?? opts.wasm ?? false,
-    emitBuilder = opts.builder ?? Boolean(opts.wasm || wasmExp),
-    expCfg = typeof wasmExp === 'string' ? `#[cfg(${wasmExp})]\n` : '',
-    alw = `#[allow(${(opts.allow ?? [...DEF_ALLOW, ...(expCfg ? ['unexpected_cfgs'] : [])]).join(', ')})]\n`,
-    drv = (d: readonly string[]) => (d.length ? `#[derive(${d.join(', ')})]\n` : ''),
-    eDrv = drv(drvEq),
-    hdr = (t: string, f = 'len', m = '') => `${alw}#[repr(C)]\n${eDrv}${v}struct ${t} {\n  ${v}off: u32,\n  ${v}${f}: u32,${m}\n}`,
-    mk = `\n  ${v}_marker: core::marker::PhantomData<T>,`,
-    blocks = [
-      `${HDR}${emitBuilder ? `${alw}extern crate alloc;\n` : ''}${alw}fn _cs<T>(b: &[u8], o: usize, n: usize) -> &[T] {\n  if n == 0 { return &[]; }\n  let s = &b[o..o.checked_add(n.checked_mul(core::mem::size_of::<T>()).unwrap()).unwrap()];\n  unsafe { core::slice::from_raw_parts(s.as_ptr() as *const T, n) }\n}\n${hdr('CapnStr')}\n${alw}impl CapnStr {\n  ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> &'a [u8] { _cs(b, self.off as usize, self.len as usize) }\n  ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> { core::str::from_utf8(self.as_bytes(b)) }\n}\n${hdr('CapnOptStr')}\n${alw}impl CapnOptStr {\n  ${v}const fn none() -> Self { Self { off: 0, len: 0 } }\n  ${v}const fn is_some(&self) -> bool { self.off != 0 || self.len != 0 }\n  ${v}const fn is_none(&self) -> bool { self.off == 0 && self.len == 0 }\n  ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> Option<&'a [u8]> { if self.is_none() { None } else if self.len == 0 { Some(&[]) } else { Some(_cs(b, self.off as usize, self.len as usize)) } }\n  ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<Option<&'a str>, core::str::Utf8Error> { self.as_bytes(b).map(core::str::from_utf8).transpose() }\n}\n${hdr('CapnSlice<T>', 'len', mk)}\n${alw}impl<T> CapnSlice<T> {\n  ${v}const fn empty() -> Self { Self { off: 0, len: 0, _marker: core::marker::PhantomData } }\n  ${v}const fn is_empty(&self) -> bool { self.len == 0 }\n  ${v}fn as_slice<'a>(&self, b: &'a [u8]) -> &'a [T] { _cs(b, self.off as usize, self.len as usize) }\n}\n${hdr('CapnRef<T>', 'present', mk)}\n${alw}impl<T> CapnRef<T> {\n  ${v}const fn none() -> Self { Self { off: 0, present: 0, _marker: core::marker::PhantomData } }\n  ${v}const fn is_some(&self) -> bool { self.present != 0 }\n  ${v}const fn is_none(&self) -> bool { self.present == 0 }\n  ${v}fn as_ref<'a>(&self, b: &'a [u8]) -> Option<&'a T> { if self.present == 0 { None } else { _cs(b, self.off as usize, 1).first() } }\n}`,
-    ];
+  const defs = collectDefs(schemas);
+  const drvO = opts.derive ?? ['Copy', 'Clone', 'Debug', 'PartialEq'];
+  const drvEq = opts.derive ? drvO : [...drvO, 'Eq'];
+  const v = opts.vis === '' ? '' : `${opts.vis ?? 'pub'} `;
+  const wasmExp = opts.wasmExports ?? opts.wasm ?? false;
+  const emitBuilder = opts.builder ?? Boolean(opts.wasm || wasmExp);
+  const emitUnsafe = opts.unsafeSlice ?? true;
+  const expCfg = typeof wasmExp === 'string' ? `#[cfg(${wasmExp})]\n` : '';
+  const alw = `#[allow(${(opts.allow ?? [..._DEF_ALLOW, ...(emitUnsafe ? ['unsafe_code'] : []), ...(expCfg ? ['unexpected_cfgs'] : [])]).join(', ')})]\n`;
+  const drv = (d: readonly string[]) => (d.length ? `#[derive(${d.join(', ')})]\n` : '');
+  const eDrv = drv(drvEq);
+  const hdr = (t: string, f = 'len', m = '') => `${alw}#[repr(C)]\n${eDrv}${v}struct ${t} {\n    ${v}off: u32,\n    ${v}${f}: u32,${m}\n}`;
+  const mk = '\n    _m: core::marker::PhantomData<T>,';
+  const defIdx = new Map<string, number>();
+  defs.forEach((d, i) => defIdx.set(d.name, i));
+
+  const metaEntries = defs.map((d) => {
+    const h = typeHash(d.name);
+    const po = d.kind === 'union' ? (d.unitOnly ? 0 : d.align) : d.align;
+    const vc = d.kind === 'union' ? d.variantList.length : 0;
+    return `(0x${h.toString(16).padStart(8, '0')}u32, ${d.size}u16, ${po}u8, ${vc}u8)`;
+  });
+  const nativeEntries = defs.map((d) => {
+    const po = d.kind === 'union' ? (d.unitOnly ? 0 : d.align) : d.align;
+    const vc = d.kind === 'union' ? d.variantList.length : 0;
+    return `CapnWireType { wire_size: ${d.size}, payload_off: ${po}, variant_count: ${vc}, present: true }`;
+  });
+
+  const primRead = (t: string) => `_r_${t}`;
+  const primZero = (t: string) => (t === 'f32' ? '0.0f32' : t === 'f64' ? '0.0f64' : '0');
+
+  const readerTypeOf = (d: FieldDesc): string => {
+    if (d.kind === 'primitive') {
+      const pt = (d as { type?: string }).type;
+      if (pt === 'fixedStr') return "&'a str";
+      if (pt === 'fixedBytes') return "&'a [u8]";
+      const nv = (d as { _null?: number | bigint | boolean })._null;
+      return nv !== undefined ? `Option<${d.rustType}>` : d.rustType;
+    }
+    if (d.kind === 'str') return "&'a str";
+    if (d.kind === 'optStr') return "Option<&'a str>";
+    if (d.kind === 'slice') return `CapnSliceReader<'a, ${(d as { element: FieldDesc }).element.rustType}>`;
+    if (d.kind === 'ref') return `Option<${(d as { element: StructDefLike }).element.name}Reader<'a>>`;
+    if (d.kind === 'struct') return `${(d as StructDefLike).name}Reader<'a>`;
+    if (d.kind === 'union') {
+      const u = d as UnionDefLike;
+      return `${u.name}Reader${unionNeedsLifetime(u) ? "<'a>" : ''}`;
+    }
+    return `CapnSliceReader<'a, ${(d as { element: FieldDesc }).element.rustType}>`;
+  };
+
+  const blocks = [
+    `${HDR}${emitBuilder ? `${alw}extern crate alloc;\n` : ''}${emitUnsafe ? `${alw}fn _cs<T>(b: &[u8], o: usize, n: usize) -> &[T] {\n    if n == 0 { return &[]; }\n    let s = &b[o..o.checked_add(n.checked_mul(core::mem::size_of::<T>()).unwrap()).unwrap()];\n    assert_eq!((s.as_ptr() as usize) % core::mem::align_of::<T>(), 0, "unaligned capnstruct buffer");\n    unsafe { core::slice::from_raw_parts(s.as_ptr() as *const T, n) }\n}\n` : ''}${hdr('CapnStr')}\n${alw}impl CapnStr {\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> &'a [u8] {\n        if self.len == 0 { return &[]; }\n        let o = self.off as usize;\n        &b[o..o.checked_add(self.len as usize).unwrap()]\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<&'a str, core::str::Utf8Error> { core::str::from_utf8(self.as_bytes(b)) }\n}\n${hdr('CapnOptStr')}\n${alw}impl CapnOptStr {\n    ${v}const fn none() -> Self { Self { off: 0, len: 0 } }\n    ${v}const fn is_none(&self) -> bool { self.off == 0 && self.len == 0 }\n    ${v}const fn is_some(&self) -> bool { !self.is_none() }\n    ${v}fn as_bytes<'a>(&self, b: &'a [u8]) -> Option<&'a [u8]> {\n        if self.is_none() { None } else if self.len == 0 { Some(&[]) } else {\n            let o = self.off as usize;\n            Some(&b[o..o.checked_add(self.len as usize).unwrap()])\n        }\n    }\n    ${v}fn as_str<'a>(&self, b: &'a [u8]) -> Result<Option<&'a str>, core::str::Utf8Error> { self.as_bytes(b).map(core::str::from_utf8).transpose() }\n}\n${hdr('CapnSlice<T>', 'len', mk)}\n${alw}impl<T> CapnSlice<T> {\n    ${v}const fn empty() -> Self { Self { off: 0, len: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_empty(&self) -> bool { self.len == 0 }${emitUnsafe ? `\n    ${v}fn as_slice<'a>(&self, b: &'a [u8]) -> &'a [T] { _cs(b, self.off as usize, self.len as usize) }` : ''}\n}\n${hdr('CapnRef<T>', 'present', mk)}\n${alw}impl<T> CapnRef<T> {\n    ${v}const fn none() -> Self { Self { off: 0, present: 0, _m: core::marker::PhantomData } }\n    ${v}const fn is_some(&self) -> bool { self.present != 0 }\n    ${v}const fn is_none(&self) -> bool { self.present == 0 }${emitUnsafe ? `\n    ${v}fn as_ref<'a>(&self, b: &'a [u8]) -> Option<&'a T> { if self.present == 0 { None } else { _cs(b, self.off as usize, 1).first() } }` : ''}\n}`,
+    `${alw}const CAPN_TYPE_COUNT: usize = ${defs.length};
+${alw}const CAPN_SCHEMA_META: [(u32, u16, u8, u8); CAPN_TYPE_COUNT] = [${metaEntries.join(', ')}];
+${alw}#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+${v}enum CapnError {
+    Truncated,
+    BadMagic,
+    UnsupportedVersion(u16),
+    RootHashMismatch { expected: u32, found: u32 },
+    MissingType(u32),
+    OutOfBounds,
+    InvalidBool(u8),
+    InvalidTag(u8),
+    InvalidUtf8(core::str::Utf8Error),
+}
+${alw}impl core::fmt::Display for CapnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::Truncated => f.write_str("capnstruct: truncated buffer"),
+            Self::BadMagic => f.write_str("capnstruct: bad envelope magic"),
+            Self::UnsupportedVersion(ver) => write!(f, "capnstruct: unsupported envelope version {ver}"),
+            Self::RootHashMismatch { expected, found } => write!(f, "capnstruct: root type mismatch (expected 0x{expected:08x}, found 0x{found:08x})"),
+            Self::MissingType(h) => write!(f, "capnstruct: missing wire type 0x{h:08x}"),
+            Self::OutOfBounds => f.write_str("capnstruct: out of bounds"),
+            Self::InvalidBool(b) => write!(f, "capnstruct: invalid bool byte {b}"),
+            Self::InvalidTag(t) => write!(f, "capnstruct: invalid union tag {t}"),
+            Self::InvalidUtf8(e) => write!(f, "capnstruct: invalid utf-8: {e}"),
+        }
+    }
+}
+${alw}impl core::error::Error for CapnError {}
+${alw}#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+${v}struct CapnWireType {
+    ${v}wire_size: usize,
+    ${v}payload_off: usize,
+    ${v}variant_count: u8,
+    ${v}present: bool,
+}
+${alw}const _CAPN_NATIVE_TYPES: [CapnWireType; CAPN_TYPE_COUNT] = [${nativeEntries.join(', ')}];
+${alw}const _CAPN_NATIVE_TABLE: CapnTable = CapnTable { payload_off: 0, types: _CAPN_NATIVE_TYPES };
+${alw}#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+${v}struct CapnTable {
+    ${v}payload_off: usize,
+    types: [CapnWireType; CAPN_TYPE_COUNT],
+}
+${alw}impl CapnTable {
+    ${v}const fn native() -> Self { _CAPN_NATIVE_TABLE }
+    ${v}fn wire_type(&self, idx: usize) -> Result<CapnWireType, CapnError> {
+        let wt = self.types[idx];
+        if wt.present { Ok(wt) } else { Err(CapnError::MissingType(CAPN_SCHEMA_META[idx].0)) }
+    }
+    ${v}fn parse_envelope(b: &[u8], expected_root_hash: u32, root_idx: usize) -> Result<Self, CapnError> {
+        if b.len() < 16 { return Err(CapnError::Truncated); }
+        if _r_u32(b, 0) != 0x3130_5343 { return Err(CapnError::BadMagic); }
+        let ver = _r_u16(b, 4);
+        if ver != 1 { return Err(CapnError::UnsupportedVersion(ver)); }
+        let tc = _r_u16(b, 6) as usize;
+        let rh = _r_u32(b, 8);
+        let po = _r_u32(b, 12) as usize;
+        if rh != expected_root_hash { return Err(CapnError::RootHashMismatch { expected: expected_root_hash, found: rh }); }
+        let exp_po = 16usize.checked_add(tc.checked_mul(8).ok_or(CapnError::Truncated)?).ok_or(CapnError::Truncated)?;
+        if po != exp_po || po > b.len() { return Err(CapnError::Truncated); }
+        let mut types = [CapnWireType { wire_size: 0, payload_off: 0, variant_count: 0, present: false }; CAPN_TYPE_COUNT];
+        let mut i = 0;
+        while i < tc {
+            let o = 16 + i * 8;
+            let h = _r_u32(b, o);
+            let sz = _r_u16(b, o + 4) as usize;
+            let tpo = b[o + 6] as usize;
+            let vc = b[o + 7];
+            let mut j = 0;
+            while j < CAPN_TYPE_COUNT {
+                if CAPN_SCHEMA_META[j].0 == h {
+                    types[j] = CapnWireType { wire_size: sz, payload_off: tpo, variant_count: vc, present: true };
+                    break;
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        if !types[root_idx].present { return Err(CapnError::MissingType(expected_root_hash)); }
+        if b.len() - po < types[root_idx].wire_size { return Err(CapnError::Truncated); }
+        Ok(Self { payload_off: po, types })
+    }
+}
+${alw}#[inline] fn _r_u8(b: &[u8], o: usize) -> u8 { b[o] }
+${alw}#[inline] fn _r_i8(b: &[u8], o: usize) -> i8 { b[o] as i8 }
+${alw}#[inline] fn _r_u16(b: &[u8], o: usize) -> u16 { u16::from_le_bytes([b[o], b[o + 1]]) }
+${alw}#[inline] fn _r_i16(b: &[u8], o: usize) -> i16 { i16::from_le_bytes([b[o], b[o + 1]]) }
+${alw}#[inline] fn _r_u32(b: &[u8], o: usize) -> u32 { u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) }
+${alw}#[inline] fn _r_i32(b: &[u8], o: usize) -> i32 { i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) }
+${alw}#[inline] fn _r_u64(b: &[u8], o: usize) -> u64 { u64::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7]]) }
+${alw}#[inline] fn _r_i64(b: &[u8], o: usize) -> i64 { i64::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7]]) }
+${alw}#[inline] fn _r_f32(b: &[u8], o: usize) -> f32 { f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) }
+${alw}#[inline] fn _r_f64(b: &[u8], o: usize) -> f64 { f64::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7]]) }
+${alw}#[inline] fn _r_bool(b: &[u8], o: usize) -> Result<bool, CapnError> { match b[o] { 0 => Ok(false), 1 => Ok(true), x => Err(CapnError::InvalidBool(x)) } }
+${alw}#[inline] fn _r_str<'a>(b: &'a [u8], o: usize, base: usize) -> Result<&'a str, CapnError> {
+    let off = _r_u32(b, o) as usize;
+    let len = _r_u32(b, o + 4) as usize;
+    if len == 0 { return Ok(""); }
+    let s = base.checked_add(off).ok_or(CapnError::OutOfBounds)?;
+    let e = s.checked_add(len).ok_or(CapnError::OutOfBounds)?;
+    core::str::from_utf8(b.get(s..e).ok_or(CapnError::OutOfBounds)?).map_err(CapnError::InvalidUtf8)
+}
+${alw}#[inline] fn _r_opt_str<'a>(b: &'a [u8], o: usize, base: usize) -> Result<Option<&'a str>, CapnError> {
+    let off = _r_u32(b, o) as usize;
+    let len = _r_u32(b, o + 4) as usize;
+    if off == 0 && len == 0 { return Ok(None); }
+    if len == 0 { return Ok(Some("")); }
+    let s = base.checked_add(off).ok_or(CapnError::OutOfBounds)?;
+    let e = s.checked_add(len).ok_or(CapnError::OutOfBounds)?;
+    core::str::from_utf8(b.get(s..e).ok_or(CapnError::OutOfBounds)?).map(Some).map_err(CapnError::InvalidUtf8)
+}
+${alw}#[inline] fn _r_slice<'a, T: CapnRead<'a>>(b: &'a [u8], o: usize, t: &'a CapnTable) -> Result<CapnSliceReader<'a, T>, CapnError> {
+    let off = _r_u32(b, o) as usize;
+    let len = _r_u32(b, o + 4) as usize;
+    if len == 0 { return Ok(CapnSliceReader::empty(t)); }
+    let st = T::capn_elem_stride(t)?;
+    let s = t.payload_off.checked_add(off).ok_or(CapnError::OutOfBounds)?;
+    let bytes = len.checked_mul(st).ok_or(CapnError::OutOfBounds)?;
+    let e = s.checked_add(bytes).ok_or(CapnError::OutOfBounds)?;
+    if e > b.len() { return Err(CapnError::OutOfBounds); }
+    Ok(CapnSliceReader { _b: b, _o: s, _len: len, _st: st, _t: t, _m: core::marker::PhantomData })
+}
+${alw}#[inline] fn _r_ref<'a, T: CapnRead<'a>>(b: &'a [u8], o: usize, t: &'a CapnTable) -> Result<Option<T::Out>, CapnError> {
+    let off = _r_u32(b, o) as usize;
+    let present = _r_u32(b, o + 4);
+    if present == 0 { return Ok(None); }
+    let st = T::capn_elem_stride(t)?;
+    let s = t.payload_off.checked_add(off).ok_or(CapnError::OutOfBounds)?;
+    let e = s.checked_add(st).ok_or(CapnError::OutOfBounds)?;
+    if e > b.len() { return Err(CapnError::OutOfBounds); }
+    T::capn_read_at(b, s, st, t).map(Some)
+}
+${alw}${v}trait CapnRead<'a>: Sized {
+    type Out;
+    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError>;
+    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError>;
+}
+${alw}${v}struct CapnSliceReader<'a, T> {
+    _b: &'a [u8],
+    _o: usize,
+    _len: usize,
+    _st: usize,
+    _t: &'a CapnTable,
+    _m: core::marker::PhantomData<T>,
+}
+${alw}impl<'a, T> Copy for CapnSliceReader<'a, T> {}
+${alw}impl<'a, T> Clone for CapnSliceReader<'a, T> { fn clone(&self) -> Self { *self } }
+${alw}impl<'a, T> core::fmt::Debug for CapnSliceReader<'a, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { f.debug_struct("CapnSliceReader").field("len", &self._len).finish() }
+}
+${alw}impl<'a, T> CapnSliceReader<'a, T> {
+    ${v}const fn empty(t: &'a CapnTable) -> Self { Self { _b: &[], _o: 0, _len: 0, _st: 0, _t: t, _m: core::marker::PhantomData } }
+    ${v}const fn len(&self) -> usize { self._len }
+    ${v}const fn is_empty(&self) -> bool { self._len == 0 }
+    ${v}fn raw_bytes(&self) -> &'a [u8] { &self._b[self._o..self._o + self._len * self._st] }
+}
+${alw}impl<'a, T: CapnRead<'a>> CapnSliceReader<'a, T> {
+    ${v}fn get(&self, i: usize) -> Option<Result<T::Out, CapnError>> {
+        if i >= self._len { return None; }
+        Some(T::capn_read_at(self._b, self._o + i * self._st, self._st, self._t))
+    }
+    ${v}fn iter(&self) -> CapnSliceIter<'a, T> { CapnSliceIter { _s: *self, _i: 0, _e: self._len } }
+}
+${alw}impl<'a, T: CapnRead<'a>> IntoIterator for CapnSliceReader<'a, T> {
+    type Item = Result<T::Out, CapnError>;
+    type IntoIter = CapnSliceIter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter { self.iter() }
+}
+${alw}${v}struct CapnSliceIter<'a, T> { _s: CapnSliceReader<'a, T>, _i: usize, _e: usize }
+${alw}impl<'a, T: CapnRead<'a>> Iterator for CapnSliceIter<'a, T> {
+    type Item = Result<T::Out, CapnError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self._i >= self._e { return None; }
+        let idx = self._i;
+        self._i += 1;
+        self._s.get(idx)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) { let r = self._e - self._i; (r, Some(r)) }
+}
+${alw}impl<'a, T: CapnRead<'a>> ExactSizeIterator for CapnSliceIter<'a, T> {}
+${alw}impl<'a, T: CapnRead<'a>> DoubleEndedIterator for CapnSliceIter<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self._i >= self._e { return None; }
+        self._e -= 1;
+        self._s.get(self._e)
+    }
+}
+${(['u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'u64', 'i64', 'f32', 'f64'] as const).map((t) => `${alw}impl<'a> CapnRead<'a> for ${t} {\n    type Out = ${t};\n    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(core::mem::size_of::<${t}>()) }\n    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, _t: &'a CapnTable) -> Result<${t}, CapnError> { Ok(_r_${t}(b, o)) }\n}`).join('\n')}
+${alw}impl<'a> CapnRead<'a> for bool {
+    type Out = bool;
+    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(1) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, _t: &'a CapnTable) -> Result<bool, CapnError> { _r_bool(b, o) }
+}
+${alw}impl<'a> CapnRead<'a> for CapnStr {
+    type Out = &'a str;
+    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(8) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, t: &'a CapnTable) -> Result<&'a str, CapnError> { _r_str(b, o, t.payload_off) }
+}
+${alw}impl<'a> CapnRead<'a> for CapnOptStr {
+    type Out = Option<&'a str>;
+    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(8) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, t: &'a CapnTable) -> Result<Option<&'a str>, CapnError> { _r_opt_str(b, o, t.payload_off) }
+}
+${alw}impl<'a, T: CapnRead<'a>> CapnRead<'a> for CapnSlice<T> {
+    type Out = CapnSliceReader<'a, T>;
+    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(8) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> { _r_slice(b, o, t) }
+}
+${alw}impl<'a, T: CapnRead<'a>> CapnRead<'a> for CapnRef<T> {
+    type Out = Option<T::Out>;
+    fn capn_elem_stride(_t: &'a CapnTable) -> Result<usize, CapnError> { Ok(8) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> { _r_ref::<T>(b, o, t) }
+}
+${alw}impl<'a, T: CapnRead<'a>, const N: usize> CapnRead<'a> for [T; N] {
+    type Out = CapnSliceReader<'a, T>;
+    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { T::capn_elem_stride(t)?.checked_mul(N).ok_or(CapnError::OutOfBounds) }
+    fn capn_read_at(b: &'a [u8], o: usize, _ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> {
+        let st = T::capn_elem_stride(t)?;
+        Ok(CapnSliceReader { _b: b, _o: o, _len: N, _st: st, _t: t, _m: core::marker::PhantomData })
+    }
+}`,
+  ];
+
   if (emitBuilder) {
     blocks.push(
-        `${alw}#[derive(Default)]\n${v}struct CapnBuilder {\n  ${v}buf: alloc::vec::Vec<u8>,\n  dedup: alloc::collections::BTreeMap<alloc::string::String, CapnStr>,\n}\n${alw}impl CapnBuilder {\n  ${v}const fn new() -> Self { Self { buf: alloc::vec::Vec::new(), dedup: alloc::collections::BTreeMap::new() } }\n  ${v}fn with_capacity(cap: usize) -> Self { Self { buf: alloc::vec::Vec::with_capacity(cap), dedup: alloc::collections::BTreeMap::new() } }\n  ${v}fn reset(&mut self) { self.buf.clear(); self.dedup.clear(); }\n  ${v}fn alloc(&mut self, n: usize, a: usize) -> usize { let a = if a == 0 { 1 } else { a }; let o = (self.buf.len() + a - 1) & !(a - 1); self.buf.resize(o + n, 0); o }\n  ${v}fn str(&mut self, s: &str) -> CapnStr { let b = s.as_bytes(); if b.is_empty() { return CapnStr { off: 0, len: 0 }; } let o = self.alloc(b.len(), 1); self.buf[o..o + b.len()].copy_from_slice(b); CapnStr { off: o as u32, len: b.len() as u32 } }\n  ${v}fn str_dedup(&mut self, s: &str) -> CapnStr { if s.is_empty() { return CapnStr { off: 0, len: 0 }; } if let Some(&c) = self.dedup.get(s) { return c; } let c = self.str(s); self.dedup.insert(alloc::string::String::from(s), c); c }\n  ${v}fn opt_str(&mut self, s: Option<&str>) -> CapnOptStr { match s { None => CapnOptStr::none(), Some("") => CapnOptStr { off: 1, len: 0 }, Some(s) => { let c = self.str(s); CapnOptStr { off: c.off, len: c.len } } } }\n  ${v}fn opt_str_dedup(&mut self, s: Option<&str>) -> CapnOptStr { match s { None => CapnOptStr::none(), Some("") => CapnOptStr { off: 1, len: 0 }, Some(s) => { let c = self.str_dedup(s); CapnOptStr { off: c.off, len: c.len } } } }\n  ${v}fn bytes(&self) -> &[u8] { &self.buf }\n  ${v}fn into_bytes(self) -> alloc::vec::Vec<u8> { self.buf }\n  ${v}fn build_slice<T: Copy>(&mut self, n: usize, mut f: impl FnMut(usize, &mut Self) -> T) -> CapnSlice<T> { if n == 0 { return CapnSlice::empty(); } let sz = core::mem::size_of::<T>(); let o = self.alloc(n.checked_mul(sz).unwrap(), core::mem::align_of::<T>()); for i in 0..n { let v = f(i, self); unsafe { core::ptr::write_unaligned(self.buf.as_mut_ptr().add(o + i * sz) as *mut T, v); } } CapnSlice { off: o as u32, len: n as u32, _marker: core::marker::PhantomData } }\n  ${v}fn build<T: Copy>(&mut self, f: impl FnOnce(&mut Self) -> T) -> &[u8] { self.reset(); let mut f = Some(f); self.build_slice(1, |_, b| f.take().unwrap()(b)); let e = (self.buf.len() + 7) & !7; self.buf.resize(e, 0); &self.buf }\n  ${v}fn build_vec<T: Copy>(&mut self, f: impl FnOnce(&mut Self) -> T) -> alloc::vec::Vec<u8> { self.build(f); self.dedup.clear(); core::mem::take(&mut self.buf) }\n  ${v}fn pack_slice<T: Copy>(&mut self, s: &[T]) -> CapnSlice<T> { if s.is_empty() { return CapnSlice::empty(); } let nb = s.len().checked_mul(core::mem::size_of::<T>()).unwrap(); let o = self.alloc(nb, core::mem::align_of::<T>()); unsafe { core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, self.buf.as_mut_ptr().add(o), nb); } CapnSlice { off: o as u32, len: s.len() as u32, _marker: core::marker::PhantomData } }\n  ${v}fn pack<T: Copy>(&mut self, s: &[T]) -> &[u8] { self.reset(); self.pack_slice(s); let e = (self.buf.len() + 7) & !7; self.buf.resize(e, 0); &self.buf }\n  ${v}fn pack_ref<T: Copy>(&mut self, v: Option<T>) -> CapnRef<T> { match v { None => CapnRef::none(), Some(x) => { let s = self.build_slice(1, |_, _| x); CapnRef { off: s.off, present: 1, _marker: core::marker::PhantomData } } } }\n  ${v}fn build_ref<T: Copy>(&mut self, f: impl FnOnce(&mut Self) -> T) -> CapnRef<T> { let mut f = Some(f); let s = self.build_slice(1, |_, b| f.take().unwrap()(b)); CapnRef { off: s.off, present: 1, _marker: core::marker::PhantomData } }\n  ${v}fn build_ref_opt<U, T: Copy>(&mut self, v: Option<U>, f: impl FnOnce(&mut Self, U) -> T) -> CapnRef<T> { match v { None => CapnRef::none(), Some(x) => self.build_ref(|b| f(b, x)) } }\n}` +
-        (wasmExp
-          ? `\n${alw}mod _capn_wasm_exports {\n  use super::CapnBuilder;\n  ${expCfg}struct _CapnCell(core::cell::UnsafeCell<CapnBuilder>);\n  ${expCfg}unsafe impl Sync for _CapnCell {}\n  ${expCfg}static _CAPN_B: _CapnCell = _CapnCell(core::cell::UnsafeCell::new(CapnBuilder::new()));\n  ${expCfg}#[unsafe(no_mangle)]\n  pub extern "C" fn capn_alloc(n: u32) -> *mut u8 { if n == 0 { return core::ptr::null_mut(); } unsafe { let b = &mut *_CAPN_B.0.get(); let o = b.alloc(n as usize, 8); b.buf.as_mut_ptr().add(o) } }\n  ${expCfg}#[unsafe(no_mangle)]\n  pub extern "C" fn capn_reset() { unsafe { (&mut *_CAPN_B.0.get()).reset(); } }\n}`
-          : ''),
+      `${alw}${v}trait CapnPack: Sized {
+    const CAPN_SIZE: usize;
+    const CAPN_ALIGN: usize;
+    fn capn_write(&self, dst: &mut [u8]);
+}
+${alw}${v}trait CapnRoot: CapnPack {
+    const TYPE_HASH: u32;
+}
+${(['u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'u64', 'i64', 'f32', 'f64'] as const).map((t) => `${alw}impl CapnPack for ${t} {\n    const CAPN_SIZE: usize = core::mem::size_of::<${t}>();\n    const CAPN_ALIGN: usize = core::mem::align_of::<${t}>();\n    fn capn_write(&self, dst: &mut [u8]) { dst.copy_from_slice(&self.to_le_bytes()); }\n}`).join('\n')}
+${alw}impl CapnPack for bool {
+    const CAPN_SIZE: usize = 1;
+    const CAPN_ALIGN: usize = 1;
+    fn capn_write(&self, dst: &mut [u8]) { dst[0] = u8::from(*self); }
+}
+${alw}impl<T: CapnPack, const N: usize> CapnPack for [T; N] {
+    const CAPN_SIZE: usize = T::CAPN_SIZE * N;
+    const CAPN_ALIGN: usize = T::CAPN_ALIGN;
+    fn capn_write(&self, dst: &mut [u8]) {
+        for (i, x) in self.iter().enumerate() {
+            x.capn_write(&mut dst[i * T::CAPN_SIZE..(i + 1) * T::CAPN_SIZE]);
+        }
+    }
+}
+${alw}impl CapnPack for CapnStr {
+    const CAPN_SIZE: usize = 8;
+    const CAPN_ALIGN: usize = 4;
+    fn capn_write(&self, dst: &mut [u8]) {
+        dst[0..4].copy_from_slice(&self.off.to_le_bytes());
+        dst[4..8].copy_from_slice(&self.len.to_le_bytes());
+    }
+}
+${alw}impl CapnPack for CapnOptStr {
+    const CAPN_SIZE: usize = 8;
+    const CAPN_ALIGN: usize = 4;
+    fn capn_write(&self, dst: &mut [u8]) {
+        dst[0..4].copy_from_slice(&self.off.to_le_bytes());
+        dst[4..8].copy_from_slice(&self.len.to_le_bytes());
+    }
+}
+${alw}impl<T> CapnPack for CapnSlice<T> {
+    const CAPN_SIZE: usize = 8;
+    const CAPN_ALIGN: usize = 4;
+    fn capn_write(&self, dst: &mut [u8]) {
+        dst[0..4].copy_from_slice(&self.off.to_le_bytes());
+        dst[4..8].copy_from_slice(&self.len.to_le_bytes());
+    }
+}
+${alw}impl<T> CapnPack for CapnRef<T> {
+    const CAPN_SIZE: usize = 8;
+    const CAPN_ALIGN: usize = 4;
+    fn capn_write(&self, dst: &mut [u8]) {
+        dst[0..4].copy_from_slice(&self.off.to_le_bytes());
+        dst[4..8].copy_from_slice(&self.present.to_le_bytes());
+    }
+}
+${alw}#[derive(Default)]
+${v}struct CapnBuilder {
+    ${v}buf: alloc::vec::Vec<u8>,
+    dedup: alloc::collections::BTreeMap<alloc::string::String, CapnStr>,
+    base: usize,
+}
+${alw}impl CapnBuilder {
+    ${v}const fn new() -> Self { Self { buf: alloc::vec::Vec::new(), dedup: alloc::collections::BTreeMap::new(), base: 0 } }
+    ${v}fn with_capacity(cap: usize) -> Self { Self { buf: alloc::vec::Vec::with_capacity(cap), dedup: alloc::collections::BTreeMap::new(), base: 0 } }
+    ${v}fn reset(&mut self) { self.buf.clear(); self.dedup.clear(); self.base = 0; }
+    ${v}fn alloc(&mut self, n: usize, a: usize) -> usize {
+        let a = if a == 0 { 1 } else { a };
+        let rel = self.buf.len() - self.base;
+        let o = self.base + ((rel + a - 1) & !(a - 1));
+        self.buf.resize(o + n, 0);
+        o
+    }
+    ${v}fn str(&mut self, s: &str) -> CapnStr {
+        let b = s.as_bytes();
+        if b.is_empty() { return CapnStr { off: 0, len: 0 }; }
+        let o = self.alloc(b.len(), 1);
+        self.buf[o..o + b.len()].copy_from_slice(b);
+        CapnStr { off: (o - self.base) as u32, len: b.len() as u32 }
+    }
+    ${v}fn str_dedup(&mut self, s: &str) -> CapnStr {
+        if s.is_empty() { return CapnStr { off: 0, len: 0 }; }
+        if let Some(&c) = self.dedup.get(s) { return c; }
+        let c = self.str(s);
+        self.dedup.insert(alloc::string::String::from(s), c);
+        c
+    }
+    ${v}fn opt_str(&mut self, s: Option<&str>) -> CapnOptStr {
+        match s { None => CapnOptStr::none(), Some("") => CapnOptStr { off: 1, len: 0 }, Some(s) => { let c = self.str(s); CapnOptStr { off: c.off, len: c.len } } }
+    }
+    ${v}fn opt_str_dedup(&mut self, s: Option<&str>) -> CapnOptStr {
+        match s { None => CapnOptStr::none(), Some("") => CapnOptStr { off: 1, len: 0 }, Some(s) => { let c = self.str_dedup(s); CapnOptStr { off: c.off, len: c.len } } }
+    }
+    ${v}fn bytes(&self) -> &[u8] { &self.buf }
+    ${v}fn into_bytes(self) -> alloc::vec::Vec<u8> { self.buf }
+    ${v}fn build_slice<T: CapnPack>(&mut self, n: usize, mut f: impl FnMut(usize, &mut Self) -> T) -> CapnSlice<T> {
+        if n == 0 { return CapnSlice::empty(); }
+        let sz = T::CAPN_SIZE;
+        let o = self.alloc(n.checked_mul(sz).unwrap(), T::CAPN_ALIGN);
+        for i in 0..n {
+            let v = f(i, self);
+            v.capn_write(&mut self.buf[o + i * sz..o + (i + 1) * sz]);
+        }
+        CapnSlice { off: (o - self.base) as u32, len: n as u32, _m: core::marker::PhantomData }
+    }
+    ${v}fn build<T: CapnPack>(&mut self, f: impl FnOnce(&mut Self) -> T) -> &[u8] {
+        self.reset();
+        let mut f = Some(f);
+        self.build_slice(1, |_, b| f.take().unwrap()(b));
+        let e = (self.buf.len() + 7) & !7;
+        self.buf.resize(e, 0);
+        &self.buf
+    }
+    ${v}fn build_vec<T: CapnPack>(&mut self, f: impl FnOnce(&mut Self) -> T) -> alloc::vec::Vec<u8> {
+        self.build(f);
+        self.dedup.clear();
+        self.base = 0;
+        core::mem::take(&mut self.buf)
+    }
+    ${v}fn build_envelope<T: CapnRoot>(&mut self, f: impl FnOnce(&mut Self) -> T) -> &[u8] {
+        self.reset();
+        let hdr_len = 16 + CAPN_SCHEMA_META.len() * 8;
+        self.buf.resize(hdr_len, 0);
+        self.buf[0..4].copy_from_slice(&0x3130_5343u32.to_le_bytes());
+        self.buf[4..6].copy_from_slice(&1u16.to_le_bytes());
+        self.buf[6..8].copy_from_slice(&(CAPN_SCHEMA_META.len() as u16).to_le_bytes());
+        self.buf[8..12].copy_from_slice(&T::TYPE_HASH.to_le_bytes());
+        self.buf[12..16].copy_from_slice(&(hdr_len as u32).to_le_bytes());
+        for (i, &(h, sz, po, vc)) in CAPN_SCHEMA_META.iter().enumerate() {
+            let o = 16 + i * 8;
+            self.buf[o..o + 4].copy_from_slice(&h.to_le_bytes());
+            self.buf[o + 4..o + 6].copy_from_slice(&sz.to_le_bytes());
+            self.buf[o + 6] = po;
+            self.buf[o + 7] = vc;
+        }
+        self.base = hdr_len;
+        let mut f = Some(f);
+        self.build_slice(1, |_, b| f.take().unwrap()(b));
+        let e = (self.buf.len() + 7) & !7;
+        self.buf.resize(e, 0);
+        &self.buf
+    }
+    ${v}fn build_envelope_vec<T: CapnRoot>(&mut self, f: impl FnOnce(&mut Self) -> T) -> alloc::vec::Vec<u8> {
+        self.build_envelope(f);
+        self.dedup.clear();
+        self.base = 0;
+        core::mem::take(&mut self.buf)
+    }
+    ${v}fn pack_slice<T: CapnPack>(&mut self, s: &[T]) -> CapnSlice<T> {
+        if s.is_empty() { return CapnSlice::empty(); }
+        let sz = T::CAPN_SIZE;
+        let o = self.alloc(s.len().checked_mul(sz).unwrap(), T::CAPN_ALIGN);
+        for (i, val) in s.iter().enumerate() {
+            val.capn_write(&mut self.buf[o + i * sz..o + (i + 1) * sz]);
+        }
+        CapnSlice { off: (o - self.base) as u32, len: s.len() as u32, _m: core::marker::PhantomData }
+    }
+    ${v}fn pack<T: CapnPack>(&mut self, s: &[T]) -> &[u8] {
+        self.reset();
+        self.pack_slice(s);
+        let e = (self.buf.len() + 7) & !7;
+        self.buf.resize(e, 0);
+        &self.buf
+    }
+    ${v}fn pack_ref<T: CapnPack>(&mut self, y: Option<T>) -> CapnRef<T> {
+        match y { None => CapnRef::none(), Some(x) => { let mut x = Some(x); let s = self.build_slice(1, |_, _| x.take().unwrap()); CapnRef { off: s.off, present: 1, _m: core::marker::PhantomData } } }
+    }
+    ${v}fn build_ref<T: CapnPack>(&mut self, f: impl FnOnce(&mut Self) -> T) -> CapnRef<T> {
+        let mut f = Some(f);
+        let s = self.build_slice(1, |_, b| f.take().unwrap()(b));
+        CapnRef { off: s.off, present: 1, _m: core::marker::PhantomData }
+    }
+    ${v}fn build_ref_opt<T: CapnPack, U>(&mut self, v: Option<U>, f: impl FnOnce(&mut Self, U) -> T) -> CapnRef<T> {
+        match v { None => CapnRef::none(), Some(u) => self.build_ref(|b| f(b, u)) }
+    }
+}` + (wasmExp ? `\n${alw}mod _capn_wasm_exports {
+${expCfg}mod _inner {
+    #![allow(unsafe_code)]
+    use super::super::CapnBuilder;
+    struct _CapnCell(core::cell::UnsafeCell<CapnBuilder>);
+    unsafe impl Sync for _CapnCell {}
+    static _CAPN_B: _CapnCell = _CapnCell(core::cell::UnsafeCell::new(CapnBuilder::new()));
+    #[unsafe(no_mangle)]
+    pub extern "C" fn capn_alloc(n: u32) -> *mut u8 {
+        if n == 0 { return core::ptr::null_mut(); }
+        unsafe { let b = &mut *_CAPN_B.0.get(); let o = b.alloc(n as usize, 8); b.buf.as_mut_ptr().add(o) }
+    }
+    #[unsafe(no_mangle)]
+    pub extern "C" fn capn_reset() { unsafe { (&mut *_CAPN_B.0.get()).reset(); } }
+}
+}` : ''),
     );
   }
+  const unkVar = (u: UnionDefLike) => { let nm = 'Unknown'; while (u.byName[nm]) nm = nm === 'Unknown' ? 'UnknownTag' : `${nm}_`; return nm; };
   for (const def of defs) {
-    const n = def.name,
-      u = (e: string, s: number) => `  assert!(core::mem::${e} == ${s});`,
-      dLine = drv(hasFloat(def) ? drv0 : drvEq);
+    const n = def.name;
+    const idx = defIdx.get(n)!;
+    const hash = `0x${typeHash(n).toString(16).padStart(8, '0')}u32`;
+    const u = (e: string, s: number) => `    assert!(core::mem::${e} == ${s});`;
+    const dLine = drv(hasFloat(def) ? drvO : drvEq);
     if (def.kind === 'union') {
-      const repr = def.unitOnly ? '#[repr(u8)]' : '#[repr(C, u8)]',
-        body = def.variantList
-          .map((vr) => `  ${vr.name}${vr.desc === null ? '' : `(${vr.desc.rustType})`} = ${vr.tag},`)
-          .join('\n'),
-        a =
-          opts.assertions ?? true
-            ? `\n${alw}const _: () = {\n${u(`size_of::<${n}>()`, def.size)}\n${u(`align_of::<${n}>()`, def.align)}\n};`
-            : '';
-      blocks.push(`${alw}${repr}\n${dLine}${v}enum ${n} {\n${body}\n}${a}`);
-    } else {
-      const body = fmtBody(
-          def,
-          (f) => `  ${v}${f.name}: ${f.desc.rustType},`,
-          (p, s) => `  ${v}${p}: [u8; ${s}],`,
-        ),
-        sHelpers = def.fieldList
-          .flatMap((f) => {
-            const nv = (f.desc as { _null?: number | bigint | boolean })._null;
-            if (nv === undefined) return [];
-            const t = f.desc.rustType,
-              cn = `${f.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_NULL`,
-              isNan = typeof nv === 'number' && Number.isNaN(nv),
-              lit =
-                typeof nv === 'boolean'
-                  ? nv
-                    ? '1'
-                    : '0'
-                  : t === 'u16' && (f.desc as { type?: string }).type === 'f16'
-                    ? isNan
-                      ? '0x7e00'
-                      : String(nv)
-                    : isNan
-                      ? `${t}::NAN`
-                      : typeof nv === 'number' && !Number.isFinite(nv)
-                        ? `${t}::${nv < 0 ? 'NEG_' : ''}INFINITY`
-                        : t === 'f32' || t === 'f64'
-                          ? Number.isInteger(nv)
-                            ? `${nv}.0`
-                            : String(nv)
-                          : String(nv),
-              optFn = def.fields[`${f.name}_opt`]
-                ? ''
-                : `\n  ${v}fn ${f.name}_opt(&self) -> Option<${t}> { if ${isNan && (t === 'f32' || t === 'f64') ? `self.${f.name}.is_nan()` : `self.${f.name} == Self::${cn}`} { None } else { Some(self.${f.name}) } }`;
-            return [`\n  ${v}const ${cn}: ${t} = ${lit};${optFn}`];
-          })
-          .join(''),
-        a =
-          opts.assertions ?? true
-            ? `\n${alw}const _: () = {\n${u(`size_of::<${n}>()`, def.size)}\n${u(`align_of::<${n}>()`, def.align)}\n${def.fieldList.map((f) => u(`offset_of!(${n}, ${f.name})`, f.offset)).join('\n')}\n};`
-            : '';
+      const repr = def.unitOnly ? '#[repr(u8)]' : '#[repr(C, u8)]';
+      const body = def.variantList.map((vr) => `    ${vr.name}${vr.desc === null ? '' : `(${vr.desc.rustType})`} = ${vr.tag},`).join('\n');
+      const a = opts.assertions ?? true ? `\n${alw}const _: () = {\n${u(`size_of::<${n}>()`, def.size)}\n${u(`align_of::<${n}>()`, def.align)}\n};` : '';
+      const needsLt = unionNeedsLifetime(def);
+      const lt = needsLt ? "<'a>" : '';
+      const rDrv = def.unitOnly ? '#[derive(Copy, Clone, Debug, PartialEq, Eq)]\n' : '#[derive(Copy, Clone, Debug)]\n';
+      const uv = unkVar(def);
+      const rVariants = [
+        ...def.variantList.map((vr) => `    ${vr.name}${vr.desc === null ? '' : `(${readerTypeOf(vr.desc)})`},`),
+      `    ${uv}(u8),`,
+    ].join('\n');
+    const rArms = def.variantList.map((vr) => {
+      if (vr.desc === null) return `            ${vr.tag} => Ok(Self::${vr.name}),`;
+      const d = vr.desc;
+      const pt = d.kind === 'primitive' ? (d as { type?: string }).type : '';
+          if (pt === 'fixedStr') {
+            return `            ${vr.tag} => { if po.checked_add(${d.size}).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } let b = &buf[off + po..off + po + ${d.size}]; let end = b.iter().position(|&c| c == 0).unwrap_or(b.len()); Ok(Self::${vr.name}(core::str::from_utf8(&b[..end]).map_err(CapnError::InvalidUtf8)?)) }`;
+          }
+        if (pt === 'fixedBytes') {
+          return `            ${vr.tag} => { if po.checked_add(${d.size}).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } Ok(Self::${vr.name}(&buf[off + po..off + po + ${d.size}])) }`;
+        }
+        const nv = d.kind === 'primitive' ? (d as { _null?: number | bigint | boolean })._null : undefined;
+        if (nv !== undefined) {
+          const { t, lit, isNaN } = sentinelLit(d, nv);
+          if (t === 'bool') {
+            return `            ${vr.tag} => { if po.checked_add(1).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } let val = _r_bool(buf, off + po)?; Ok(Self::${vr.name}(if val == ${lit} { None } else { Some(val) })) }`;
+          }
+          const chk = isNaN && (t === 'f32' || t === 'f64') ? 'val.is_nan()' : `val == ${lit}`;
+          return `            ${vr.tag} => { if po.checked_add(${d.size}).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } let val = ${primRead(t)}(buf, off + po); Ok(Self::${vr.name}(if ${chk} { None } else { Some(val) })) }`;
+        }
+        if (d.kind === 'struct' || d.kind === 'union') {
+          const tn = (d as StructDefLike | UnionDefLike).name;
+          return `            ${vr.tag} => { let pwt = table.wire_type(${tn}::_CAPN_IDX)?; if po.checked_add(pwt.wire_size).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } Ok(Self::${vr.name}(<${tn} as CapnRead>::capn_read_at(buf, off + po, pwt.wire_size, table)?)) }`;
+        }
+        if (d.kind === 'array') {
+          return `            ${vr.tag} => { let psz = <${d.rustType} as CapnRead>::capn_elem_stride(table)?; if po.checked_add(psz).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } Ok(Self::${vr.name}(<${d.rustType} as CapnRead>::capn_read_at(buf, off + po, psz, table)?)) }`;
+        }
+        return `            ${vr.tag} => { if po.checked_add(${d.size}).map_or(true, |e| e > ws) { return Err(CapnError::OutOfBounds); } Ok(Self::${vr.name}(<${d.rustType} as CapnRead>::capn_read_at(buf, off + po, ${d.size}, table)?)) }`;
+      }).join('\n');
+      const packImpl = emitBuilder
+        ? `\n${alw}impl CapnPack for ${n} {\n    const CAPN_SIZE: usize = ${def.size};\n    const CAPN_ALIGN: usize = ${def.align};\n    fn capn_write(&self, dst: &mut [u8]) {\n        match self {\n${def.variantList.map((vr) => vr.desc === null ? `            Self::${vr.name} => { dst[0] = ${vr.tag}; }` : `            Self::${vr.name}(val) => { dst[0] = ${vr.tag}; val.capn_write(&mut dst[${vr.payloadOffset}..${vr.payloadOffset + vr.desc.size}]); }`).join('\n')}\n        }\n    }\n}`
+        : '';
       blocks.push(
-        `${alw}#[repr(C)]\n${dLine}${v}struct ${n} {\n${body}\n}\n${alw}impl ${n} {\n  ${v}fn as_slice(base: &[u8], len: usize) -> &[Self] { _cs(base, 0, len) }${sHelpers}\n}${a}`,
+        `${alw}${repr}\n${dLine}${v}enum ${n} {\n${body}\n}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};\n}\n${alw}${rDrv}${v}enum ${n}Reader${lt} {\n${rVariants}\n}\n${alw}impl<'a> ${n}Reader${lt} {\n    fn read_at(buf: &'a [u8], off: usize, ws: usize, table: &'a CapnTable) -> Result<Self, CapnError> {\n        let wt = table.wire_type(${n}::_CAPN_IDX)?;\n        if ws == 0 || off.checked_add(ws).map_or(true, |e| e > buf.len()) { return Err(CapnError::OutOfBounds); }\n        let tag = buf[off];\n        if tag >= wt.variant_count { return Err(CapnError::InvalidTag(tag)); }${def.unitOnly ? '' : '\n        let po = wt.payload_off;'}\n        match tag {\n${rArms}\n            _ => Ok(Self::${uv}(tag)),\n        }\n    }\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader${lt};\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> { ${n}Reader::read_at(b, o, ws, t) }\n}${packImpl}${a}`,
+      );
+    } else {
+      const body = fmtBody(def, (f) => `    ${v}${f.name}: ${f.desc.rustType},`, (p, s) => `    ${v}${p}: [u8; ${s}],`);
+      const sHelpers = def.fieldList.flatMap((f) => {
+        const nv = (f.desc as { _null?: number | bigint | boolean })._null;
+        if (nv === undefined) return [];
+        const cn = `${f.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_NULL`;
+        const { t, lit, isNaN } = sentinelLit(f.desc, nv);
+        const optFn = def.fields[`${f.name}_opt`] ? '' : `\n    ${v}fn ${f.name}_opt(&self) -> Option<${t}> { if ${isNaN && (t === 'f32' || t === 'f64') ? `self.${f.name}.is_nan()` : `self.${f.name} == Self::${cn}`} { None } else { Some(self.${f.name}) } }`;
+        return [`\n    ${v}const ${cn}: ${t} = ${lit};${optFn}`];
+      }).join('');
+      const rMethods = def.fieldList.map((f) => {
+        const d = f.desc;
+        const fo = f.offset;
+        const fe = fo + f.size;
+        if (d.kind === 'primitive') {
+          const pt = (d as { type?: string }).type;
+          if (pt === 'fixedStr') {
+            return `    ${v}fn ${f.name}(&self) -> Result<&'a str, CapnError> {\n        if ${fe} > self._ws { return Ok(""); }\n        let b = &self._b[self._o + ${fo}..self._o + ${fe}];\n        let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());\n        core::str::from_utf8(&b[..end]).map_err(CapnError::InvalidUtf8)\n    }`;
+          }
+          if (pt === 'fixedBytes') {
+            return `    ${v}fn ${f.name}(&self) -> &'a [u8] {\n        if ${fe} > self._ws { return &[]; }\n        &self._b[self._o + ${fo}..self._o + ${fe}]\n    }`;
+          }
+          const nv = (d as { _null?: number | bigint | boolean })._null;
+          if (nv !== undefined) {
+            const cn = `${f.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_NULL`;
+            const { t, isNaN } = sentinelLit(d, nv);
+            if (t === 'bool') {
+              return `    ${v}fn ${f.name}(&self) -> Result<Option<bool>, CapnError> {\n        if ${fe} > self._ws { return Ok(None); }\n        let val = _r_bool(self._b, self._o + ${fo})?;\n        Ok(if val == ${n}::${cn} { None } else { Some(val) })\n    }`;
+            }
+            const chk = isNaN && (t === 'f32' || t === 'f64') ? 'val.is_nan()' : `val == ${n}::${cn}`;
+            return `    ${v}fn ${f.name}(&self) -> Option<${t}> {\n        if ${fe} > self._ws { return None; }\n        let val = ${primRead(t)}(self._b, self._o + ${fo});\n        if ${chk} { None } else { Some(val) }\n    }`;
+          }
+          if (d.rustType === 'bool') {
+            return `    ${v}fn ${f.name}(&self) -> Result<bool, CapnError> {\n        if ${fe} > self._ws { return Ok(false); }\n        _r_bool(self._b, self._o + ${fo})\n    }`;
+          }
+          return `    ${v}fn ${f.name}(&self) -> ${d.rustType} {\n        if ${fe} > self._ws { return ${primZero(d.rustType)}; }\n        ${primRead(d.rustType)}(self._b, self._o + ${fo})\n    }`;
+        }
+        if (d.kind === 'str') {
+          return `    ${v}fn ${f.name}(&self) -> Result<&'a str, CapnError> {\n        if ${fe} > self._ws { return Ok(""); }\n        _r_str(self._b, self._o + ${fo}, self._t.payload_off)\n    }`;
+        }
+        if (d.kind === 'optStr') {
+          return `    ${v}fn ${f.name}(&self) -> Result<Option<&'a str>, CapnError> {\n        if ${fe} > self._ws { return Ok(None); }\n        _r_opt_str(self._b, self._o + ${fo}, self._t.payload_off)\n    }`;
+        }
+        if (d.kind === 'slice') {
+          const elT = (d as { element: FieldDesc }).element.rustType;
+          return `    ${v}fn ${f.name}(&self) -> Result<CapnSliceReader<'a, ${elT}>, CapnError> {\n        if ${fe} > self._ws { return Ok(CapnSliceReader::empty(self._t)); }\n        _r_slice(self._b, self._o + ${fo}, self._t)\n    }`;
+        }
+        if (d.kind === 'ref') {
+          const tn = (d as { element: StructDefLike }).element.name;
+          return `    ${v}fn ${f.name}(&self) -> Result<Option<${tn}Reader<'a>>, CapnError> {\n        if ${fe} > self._ws { return Ok(None); }\n        _r_ref::<${tn}>(self._b, self._o + ${fo}, self._t)\n    }`;
+      }
+      if (d.kind === 'struct') {
+        const tn = (d as StructDefLike).name;
+        return `    ${v}fn ${f.name}(&self) -> Result<${tn}Reader<'a>, CapnError> {\n        if ${fo} >= self._ws { return Ok(${tn}Reader { _b: self._b, _o: self._o, _ws: 0, _t: self._t }); }\n        let wt = self._t.wire_type(${tn}::_CAPN_IDX)?;\n        if (${fo}usize).checked_add(wt.wire_size).map_or(true, |e| e > self._ws) { return Ok(${tn}Reader { _b: self._b, _o: self._o, _ws: 0, _t: self._t }); }\n        Ok(${tn}Reader { _b: self._b, _o: self._o + ${fo}, _ws: wt.wire_size, _t: self._t })\n    }`;
+      }
+      if (d.kind === 'union') {
+        const u = d as UnionDefLike;
+        const ult = unionNeedsLifetime(u) ? "<'a>" : '';
+        return `    ${v}fn ${f.name}(&self) -> Result<${u.name}Reader${ult}, CapnError> {\n        if ${fo} >= self._ws { return Ok(${u.name}Reader::${unkVar(u)}(0)); }\n        let wt = self._t.wire_type(${u.name}::_CAPN_IDX)?;\n        if (${fo}usize).checked_add(wt.wire_size).map_or(true, |e| e > self._ws) { return Ok(${u.name}Reader::${unkVar(u)}(0)); }\n        ${u.name}Reader::read_at(self._b, self._o + ${fo}, wt.wire_size, self._t)\n    }`;
+      }
+      const arrEl = (d as { element: FieldDesc; length: number });
+      return `    ${v}fn ${f.name}(&self) -> Result<CapnSliceReader<'a, ${arrEl.element.rustType}>, CapnError> {\n        if ${fo} >= self._ws { return Ok(CapnSliceReader::empty(self._t)); }\n        let st = <${arrEl.element.rustType} as CapnRead>::capn_elem_stride(self._t)?;\n        let bytes = st.checked_mul(${arrEl.length}).ok_or(CapnError::OutOfBounds)?;\n        if (${fo}usize).checked_add(bytes).map_or(true, |e| e > self._ws) { return Ok(CapnSliceReader::empty(self._t)); }\n        Ok(CapnSliceReader { _b: self._b, _o: self._o + ${fo}, _len: ${arrEl.length}, _st: st, _t: self._t, _m: core::marker::PhantomData })\n    }`;
+    }).join('\n');
+      const packImpl = emitBuilder
+        ? `\n${alw}impl CapnPack for ${n} {\n    const CAPN_SIZE: usize = ${def.size};\n    const CAPN_ALIGN: usize = ${def.align};\n    fn capn_write(&self, dst: &mut [u8]) {\n${def.fieldList.length ? def.fieldList.map((f) => `        self.${f.name}.capn_write(&mut dst[${f.offset}..${f.offset + f.size}]);`).join('\n') : '        let _ = dst;'}\n    }\n}\n${alw}impl CapnRoot for ${n} {\n    const TYPE_HASH: u32 = ${hash};\n}`
+        : '';
+      const a = opts.assertions ?? true ? `\n${alw}const _: () = {\n${u(`size_of::<${n}>()`, def.size)}\n${u(`align_of::<${n}>()`, def.align)}\n${def.fieldList.map((f) => u(`offset_of!(${n}, ${f.name})`, f.offset)).join('\n')}\n};` : '';
+      blocks.push(
+        `${alw}#[repr(C)]\n${dLine}${v}struct ${n} {\n${body}\n}\n${alw}impl ${n} {\n    ${v}const TYPE_HASH: u32 = ${hash};\n    const _CAPN_IDX: usize = ${idx};${emitUnsafe ? `\n    ${v}fn as_slice(base: &[u8], len: usize) -> &[Self] { _cs(base, 0, len) }` : ''}\n    ${v}fn parse_envelope(b: &[u8]) -> Result<CapnTable, CapnError> { CapnTable::parse_envelope(b, Self::TYPE_HASH, Self::_CAPN_IDX) }\n    ${v}fn reader<'a>(b: &'a [u8], t: &'a CapnTable) -> Result<${n}Reader<'a>, CapnError> {\n        let wt = t.wire_type(Self::_CAPN_IDX)?;\n        let e = t.payload_off.checked_add(wt.wire_size).ok_or(CapnError::OutOfBounds)?;\n        if e > b.len() { return Err(CapnError::Truncated); }\n        Ok(${n}Reader { _b: b, _o: t.payload_off, _ws: wt.wire_size, _t: t })\n    }\n    ${v}fn read<'a>(b: &'a [u8]) -> Result<${n}Reader<'a>, CapnError> { Self::reader(b, &_CAPN_NATIVE_TABLE) }\n    ${v}fn read_slice<'a>(b: &'a [u8], n: usize) -> Result<CapnSliceReader<'a, Self>, CapnError> {\n        let bytes = n.checked_mul(${def.size}).ok_or(CapnError::OutOfBounds)?;\n        if bytes > b.len() { return Err(CapnError::Truncated); }\n        Ok(CapnSliceReader { _b: b, _o: 0, _len: n, _st: ${def.size}, _t: &_CAPN_NATIVE_TABLE, _m: core::marker::PhantomData })\n    }${sHelpers}\n}\n${alw}#[derive(Copy, Clone, Debug)]\n${v}struct ${n}Reader<'a> {\n    _b: &'a [u8],\n    _o: usize,\n    _ws: usize,\n    _t: &'a CapnTable,\n}\n${alw}impl<'a> ${n}Reader<'a> {\n${rMethods}\n}\n${alw}impl<'a> CapnRead<'a> for ${n} {\n    type Out = ${n}Reader<'a>;\n    fn capn_elem_stride(t: &'a CapnTable) -> Result<usize, CapnError> { Ok(t.wire_type(Self::_CAPN_IDX)?.wire_size) }\n    fn capn_read_at(b: &'a [u8], o: usize, ws: usize, t: &'a CapnTable) -> Result<Self::Out, CapnError> {\n        if o.checked_add(ws).map_or(true, |e| e > b.len()) { return Err(CapnError::OutOfBounds); }\n        Ok(${n}Reader { _b: b, _o: o, _ws: ws, _t: t })\n    }\n}${packImpl}${a}`,
       );
     }
   }

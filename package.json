@@ -1,7 +1,7 @@
 {
   "name": "capnstruct",
-  "version": "0.4.0",
-  "description": "Zero-Copy #[repr(C)] Structs for Web Workers, SharedArrayBuffer & WebAssembly — the missing shared-memory struct layer between JS, Workers, and Rust/Go WASM.",
+  "version": "0.5.0",
+  "description": "Zero-Copy #[repr(C)] Structs for Web Workers, SharedArrayBuffer & WebAssembly - the missing shared-memory struct layer between JS, Workers, and Rust/Go WASM",
   "license": "MIT",
   "homepage": "https://capnstruct.teamchong.net",
   "repository": {

@@ -23,6 +23,7 @@ import {
   i32,
   i64,
   installDevtoolsFormatter,
+  isUnknownVariant,
   list,
   nullable,
   optStr,
@@ -37,6 +38,7 @@ import {
   structView,
   toGoStruct,
   toRustReprC,
+  typeHash,
   u8,
   u16,
   u32,
@@ -3015,5 +3017,815 @@ export const Item = defineStruct('Item', { id: u32, label: optStr });
     expect(Object.getOwnPropertyNames(rows.at(0))).toEqual(['id', 'target']);
     expect(Object.keys(rows.at(0))).toEqual(['id', 'target']);
   });
+  });
+  describe('v0.5 Safe Rust Reader (#![forbid(unsafe_code)]) & Self-Describing CS01 Schema Evolution', () => {
+
+    function makeV1Schemas() {
+      const Child = defineStruct('EvChild', {
+        id: u32,
+        label: str,
+      });
+      const Status = defineUnion('EvStatus', {
+        Pending: null,
+        Active: u32,
+      });
+      // Inline union with stable size/align (12B / align 4) when adding unit or <=8B/align<=4 variants
+      const Badge = defineUnion('EvBadge', {
+        None: null,
+        Custom: str,
+      });
+      const Doc = defineStruct('EvDoc', {
+        id: u32,
+        name: str,
+        opt: optStr,
+        score: nullable(f64, Number.NaN),
+        flag: bool,
+        badge: Badge,
+        child: ref(Child),
+        items: slice(Child),
+        statuses: slice(Status),
+        parent: ref(Child),
+        fixedTag: fixedStr(8),
+        fixedBin: fixedBytes(4),
+        nums: fixedArray(u16, 3),
+      });
+      return { Child, Status, Badge, Doc };
+    }
+
+    function makeV2Schemas() {
+      const NewHelper = defineStruct('EvHelper', {
+        code: u16,
+        note: str,
+      });
+      const Child = defineStruct('EvChild', {
+        id: u32,
+        label: str,
+        extra: u64,
+        note: optStr,
+        missingOpt: nullable(u32, 0xffffffff),
+      });
+      // Alignment grows 4 -> 8 and payloadOffset grows 4 -> 8!
+      const Status = defineUnion('EvStatus', {
+        Pending: null,
+        Active: u32,
+        Completed: u64,
+        Failed: str,
+      });
+      // Adds unit + u32 variants while preserving size 12 / align 4
+      const Badge = defineUnion('EvBadge', {
+        None: null,
+        Custom: str,
+        Code: u32,
+        Verified: null,
+      });
+      const Doc = defineStruct('EvDoc', {
+        id: u32,
+        name: str,
+        opt: optStr,
+        score: nullable(f64, Number.NaN),
+        flag: bool,
+        badge: Badge,
+        child: ref(Child),
+        items: slice(Child),
+        statuses: slice(Status),
+        parent: ref(Child),
+        fixedTag: fixedStr(8),
+        fixedBin: fixedBytes(4),
+        nums: fixedArray(u16, 3),
+        // Appended v2 fields:
+        addedU32: u32,
+        addedStr: str,
+        addedOptStr: optStr,
+        addedNullable: nullable(u32, 9999),
+        addedBool: bool,
+        addedChild: Child,
+        addedStatus: Status,
+        addedSlice: slice(Child),
+        addedRef: ref(Child),
+        addedArr: fixedArray(u16, 2),
+        helperRef: ref(NewHelper),
+      });
+      return { NewHelper, Child, Status, Badge, Doc };
+    }
+
+    it('compiles reader-only and safe-builder crates under #![no_std] #![forbid(unsafe_code)] on Rust 2021, 2024, and clippy', () => {
+      const v2 = makeV2Schemas();
+      const readerOnlyRs = toRustReprC(v2, { builder: false, unsafeSlice: false });
+      const safeBuilderRs = toRustReprC(v2, { builder: true, wasmExports: false, unsafeSlice: false });
+
+      expect(readerOnlyRs).not.toContain('unsafe');
+      expect(safeBuilderRs).not.toContain('unsafe');
+      expect(readerOnlyRs).toContain('impl core::error::Error for CapnError');
+      expect(readerOnlyRs).toContain('pub fn parse_envelope');
+      expect(safeBuilderRs).toContain('pub fn build_envelope_vec');
+
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-forbid-unsafe-'));
+      try {
+        const readerLib = join(tmp, 'reader_only.rs');
+        const builderLib = join(tmp, 'safe_builder.rs');
+        writeFileSync(
+          readerLib,
+          `#![no_std]\n#![forbid(unsafe_code)]\n#![deny(clippy::all, clippy::pedantic)]\npub mod schema {\n${readerOnlyRs}\n}\n`,
+        );
+        writeFileSync(
+          builderLib,
+          `#![no_std]\n#![forbid(unsafe_code)]\n#![deny(clippy::all, clippy::pedantic)]\npub mod schema {\n${safeBuilderRs}\n}\n`,
+        );
+
+        for (const [name, path] of [
+          ['reader', readerLib],
+          ['builder', builderLib],
+        ] as const) {
+          for (const edition of ['2021', '2024'] as const) {
+            execFileSync(
+              'rustc',
+              ['--edition', edition, '--crate-type=lib', '-D', 'warnings', path, '-o', join(tmp, `${name}_${edition}.rlib`)],
+              { stdio: 'pipe' },
+            );
+          }
+        }
+
+        let hasClippy = false;
+        try {
+          execFileSync('clippy-driver', ['--version'], { stdio: 'pipe' });
+          hasClippy = true;
+        } catch {
+          hasClippy = false;
+        }
+        if (hasClippy) {
+          for (const [name, path] of [
+            ['reader', readerLib],
+            ['builder', builderLib],
+          ] as const) {
+            execFileSync(
+              'clippy-driver',
+              ['--edition=2024', '--crate-type=lib', '-D', 'warnings', path, '-o', join(tmp, `${name}_clippy.rlib`)],
+              { stdio: 'pipe' },
+            );
+          }
+        }
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('supports --no-unsafe-slice CLI flag', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-cli-nounsafe-'));
+      try {
+        const schemaPath = join(tmp, 'schema.mjs');
+        const distIndex = join(process.cwd(), 'dist/index.js');
+        const cliPath = join(process.cwd(), 'dist/cli.js');
+        writeFileSync(
+          schemaPath,
+          `import { defineStruct, u32, str } from ${JSON.stringify(distIndex)};\nexport const Item = defineStruct('Item', { id: u32, name: str });\n`,
+        );
+        const out = execFileSync(
+          process.execPath,
+          [cliPath, schemaPath, '--builder', '--no-wasm-exports', '--no-unsafe-slice'],
+          { encoding: 'utf8' },
+        );
+        expect(out).not.toContain('unsafe');
+        expect(out).not.toContain('pub fn as_slice');
+        expect(out).toContain('pub fn parse_envelope');
+        expect(out).toContain('pub fn build_envelope_vec');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('supports 3-way v1 <-> v2 forward and backward schema evolution across JS and #![forbid(unsafe_code)] Rust', () => {
+      const v1 = makeV1Schemas();
+      const v2 = makeV2Schemas();
+
+      // Verify typeHash stability & alignment growth assumptions
+      expect(typeHash('EvDoc')).toBe(typeHash('EvDoc'));
+      expect(v1.Status.align).toBe(4);
+      expect(v2.Status.align).toBe(8);
+      expect(v2.Status.size).toBeGreaterThan(v1.Status.size);
+      expect(v2.Child.size).toBeGreaterThan(v1.Child.size);
+      expect(v1.Badge.size).toBe(v2.Badge.size);
+      expect(v1.Badge.align).toBe(v2.Badge.align);
+
+      // 1. JS packs v1 envelope
+      const jsV1Env = v1.Doc.packEnvelope({
+        id: 101,
+        name: 'v1-doc',
+        opt: 'present-opt',
+        score: 42.5,
+        flag: true,
+        badge: { tag: 'Custom', value: 'gold' },
+        child: { id: 7, label: 'c7' },
+        items: [
+          { id: 1, label: 'first' },
+          { id: 2, label: 'second' },
+        ],
+        statuses: [{ tag: 'Pending' }, { tag: 'Active', value: 55 }],
+        parent: { id: 9, label: 'p9' },
+        fixedTag: 'TAG1',
+        fixedBin: [10, 20, 30, 40],
+        nums: [11, 22, 33],
+      });
+
+      // 2. JS packs v2 envelope (with higher-alignment union variants & appended fields + brand-new EvHelper type)
+      const jsV2Env = v2.Doc.packEnvelope({
+        id: 202,
+        name: 'v2-doc',
+        opt: null,
+        score: null,
+        flag: false,
+        badge: { tag: 'Code', value: 777 },
+        child: { id: 17, label: 'c17', extra: 0x1122334455667788n, note: 'child-note', missingOpt: 123 },
+        items: [
+          { id: 10, label: 'v2-first', extra: 100n, note: 'n1', missingOpt: null },
+          { id: 20, label: 'v2-second', extra: 200n, note: null, missingOpt: 456 },
+        ],
+        statuses: [
+          { tag: 'Pending' },
+          { tag: 'Active', value: 99 },
+          { tag: 'Completed', value: 0xdeadbeefcafebaben },
+          { tag: 'Failed', value: 'boom-err' },
+        ],
+        parent: { id: 90, label: 'p90', extra: 999n, note: 'p-note', missingOpt: 7 },
+        fixedTag: 'V2TAG',
+        fixedBin: [1, 2, 3, 4],
+        nums: [100, 200, 300],
+        addedU32: 987654,
+        addedStr: 'hello-v2',
+        addedOptStr: 'opt-v2',
+        addedNullable: 42,
+        addedBool: true,
+        addedChild: { id: 33, label: 'ac33', extra: 333n, note: 'ac-note', missingOpt: 11 },
+        addedStatus: { tag: 'Failed', value: 'inner-fail' },
+        addedSlice: [{ id: 44, label: 'as44', extra: 444n, note: null, missingOpt: null }],
+        addedRef: { id: 55, label: 'ar55', extra: 555n, note: 'ar-note', missingOpt: 22 },
+        addedArr: [7, 8],
+        helperRef: { code: 500, note: 'helper-ok' },
+      });
+
+      // JS v2 reading JS v1 (backward compat: missing fields get defaults)
+      const jsV2FromV1 = v2.Doc.viewEnvelope(jsV1Env);
+      expect(jsV2FromV1.id).toBe(101);
+      expect(jsV2FromV1.name).toBe('v1-doc');
+      expect(jsV2FromV1.opt).toBe('present-opt');
+      expect(jsV2FromV1.score).toBe(42.5);
+      expect(jsV2FromV1.flag).toBe(true);
+      expect(jsV2FromV1.badge).toEqual({ tag: 'Custom', value: 'gold' });
+      expect(jsV2FromV1.child?.id).toBe(7);
+      expect(jsV2FromV1.child?.label).toBe('c7');
+      expect(jsV2FromV1.child?.extra).toBe(0n);
+      expect(jsV2FromV1.child?.note).toBeNull();
+      expect(jsV2FromV1.child?.missingOpt).toBeNull();
+      expect(jsV2FromV1.items.length).toBe(2);
+      expect(jsV2FromV1.items.at(1).label).toBe('second');
+      expect(jsV2FromV1.items.at(1).extra).toBe(0n);
+      expect(jsV2FromV1.items.at(1).missingOpt).toBeNull();
+      expect(jsV2FromV1.statuses.length).toBe(2);
+      expect(jsV2FromV1.statuses.at(0)).toEqual({ tag: 'Pending' });
+      expect(jsV2FromV1.statuses.at(1)).toEqual({ tag: 'Active', value: 55 });
+      expect(jsV2FromV1.parent?.label).toBe('p9');
+      expect(jsV2FromV1.parent?.extra).toBe(0n);
+      expect(jsV2FromV1.fixedTag).toBe('TAG1');
+      expect(Array.from(jsV2FromV1.fixedBin)).toEqual([10, 20, 30, 40]);
+      expect(Array.from(jsV2FromV1.nums)).toEqual([11, 22, 33]);
+      // Appended v2 fields default cleanly:
+      expect(jsV2FromV1.addedU32).toBe(0);
+      expect(jsV2FromV1.addedStr).toBe('');
+      expect(jsV2FromV1.addedOptStr).toBeNull();
+      expect(jsV2FromV1.addedNullable).toBeNull();
+      expect(jsV2FromV1.addedBool).toBe(false);
+      expect(jsV2FromV1.addedChild.id).toBe(0);
+      expect(jsV2FromV1.addedChild.missingOpt).toBeNull();
+      expect(isUnknownVariant(jsV2FromV1.addedStatus)).toBe(true);
+      expect(jsV2FromV1.addedSlice.length).toBe(0);
+      expect(jsV2FromV1.addedRef).toBeNull();
+      expect(Array.from(jsV2FromV1.addedArr)).toEqual([0, 0]);
+      expect(jsV2FromV1.helperRef).toBeNull();
+      // Plain materialization (toObject) also succeeds
+      const plainV2FromV1 = jsV2FromV1.toObject();
+      expect(plainV2FromV1.addedNullable).toBeNull();
+      expect(plainV2FromV1.child?.missingOpt).toBeNull();
+
+      // JS v1 reading JS v2 (forward compat: ignores extra fields, honors wire payloadOffset & wire stride, surfaces unknown union variants)
+      const jsV1FromV2 = v1.Doc.viewEnvelope(jsV2Env);
+      expect(jsV1FromV2.id).toBe(202);
+      expect(jsV1FromV2.name).toBe('v2-doc');
+      expect(jsV1FromV2.opt).toBeNull();
+      expect(jsV1FromV2.score).toBeNull();
+      expect(jsV1FromV2.flag).toBe(false);
+      expect(jsV1FromV2.badge).toEqual({ tag: '$unknown', rawTag: 2 });
+      expect(isUnknownVariant(jsV1FromV2.badge)).toBe(true);
+      expect(jsV1FromV2.child?.id).toBe(17);
+      expect(jsV1FromV2.child?.label).toBe('c17');
+      expect(jsV1FromV2.items.length).toBe(2);
+      expect(jsV1FromV2.items.at(0).label).toBe('v2-first');
+      expect(jsV1FromV2.items.at(1).id).toBe(20);
+      expect(jsV1FromV2.items.at(1).label).toBe('v2-second');
+      expect(jsV1FromV2.statuses.length).toBe(4);
+      expect(jsV1FromV2.statuses.at(0)).toEqual({ tag: 'Pending' });
+      // Active u32 sits at wire payloadOffset=8 in v2 (vs 4 in v1)!
+      expect(jsV1FromV2.statuses.at(1)).toEqual({ tag: 'Active', value: 99 });
+      expect(jsV1FromV2.statuses.at(2)).toEqual({ tag: '$unknown', rawTag: 2 });
+      expect(isUnknownVariant(jsV1FromV2.statuses.at(2))).toBe(true);
+      expect(jsV1FromV2.statuses.at(3)).toEqual({ tag: '$unknown', rawTag: 3 });
+      expect(jsV1FromV2.statuses.tagAt(2)).toBe('$unknown');
+      expect(jsV1FromV2.parent?.id).toBe(90);
+      expect(jsV1FromV2.parent?.label).toBe('p90');
+      expect(jsV1FromV2.fixedTag).toBe('V2TAG');
+      expect(Array.from(jsV1FromV2.fixedBin)).toEqual([1, 2, 3, 4]);
+      expect(Array.from(jsV1FromV2.nums)).toEqual([100, 200, 300]);
+      // 3. Cross-language JS <-> #![forbid(unsafe_code)] Rust binary test!
+      const v1Rs = toRustReprC(v1, { builder: true, wasmExports: false, unsafeSlice: false });
+      const v2Rs = toRustReprC(v2, { builder: true, wasmExports: false, unsafeSlice: false });
+
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-evolve-rs-'));
+      try {
+        const jsV1Path = join(tmp, 'js_v1.bin');
+        const jsV2Path = join(tmp, 'js_v2.bin');
+        const rsV1Path = join(tmp, 'rs_v1.bin');
+        const rsV2Path = join(tmp, 'rs_v2.bin');
+        writeFileSync(jsV1Path, jsV1Env);
+        writeFileSync(jsV2Path, jsV2Env);
+
+        const mainRs = join(tmp, 'main.rs');
+        const binPath = join(tmp, 'evolve_test');
+        writeFileSync(
+          mainRs,
+          `#![forbid(unsafe_code)]
+mod v1 {
+${v1Rs}
+}
+mod v2 {
+${v2Rs}
+}
+
+fn check_v1_from_v1(buf: &[u8]) {
+    let tbl = v1::EvDoc::parse_envelope(buf).expect("parse v1->v1");
+    let doc = v1::EvDoc::reader(buf, &tbl).expect("reader v1->v1");
+    assert_eq!(doc.id(), 101);
+    assert_eq!(doc.name().unwrap(), "v1-doc");
+    assert_eq!(doc.opt().unwrap(), Some("present-opt"));
+    assert_eq!(doc.score(), Some(42.5));
+    assert!(doc.flag().unwrap());
+    assert!(matches!(doc.badge().unwrap(), v1::EvBadgeReader::Custom("gold")));
+    let ch = doc.child().unwrap().unwrap();
+    assert_eq!(ch.id(), 7);
+    assert_eq!(ch.label().unwrap(), "c7");
+    let items = doc.items().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items.get(0).unwrap().unwrap().label().unwrap(), "first");
+    assert_eq!(items.get(1).unwrap().unwrap().label().unwrap(), "second");
+    // Reverse iterator check
+    let rev_ids: Vec<u32> = items.iter().rev().map(|r| r.unwrap().id()).collect();
+    assert_eq!(rev_ids, vec![2, 1]);
+    let statuses = doc.statuses().unwrap();
+    assert_eq!(statuses.len(), 2);
+    assert!(matches!(statuses.get(0).unwrap().unwrap(), v1::EvStatusReader::Pending));
+    assert!(matches!(statuses.get(1).unwrap().unwrap(), v1::EvStatusReader::Active(55)));
+    assert_eq!(doc.parent().unwrap().unwrap().label().unwrap(), "p9");
+    assert_eq!(doc.fixedTag().unwrap(), "TAG1");
+    assert_eq!(doc.fixedBin(), &[10, 20, 30, 40]);
+    let nums: Vec<u16> = doc.nums().unwrap().iter().map(|x| x.unwrap()).collect();
+    assert_eq!(nums, vec![11, 22, 33]);
+}
+fn check_v2_from_v1(buf: &[u8]) {
+    let tbl = v2::EvDoc::parse_envelope(buf).expect("parse v1->v2");
+    let doc = v2::EvDoc::reader(buf, &tbl).expect("reader v1->v2");
+    assert_eq!(doc.id(), 101);
+    assert_eq!(doc.name().unwrap(), "v1-doc");
+    assert_eq!(doc.opt().unwrap(), Some("present-opt"));
+    assert_eq!(doc.score(), Some(42.5));
+    assert!(doc.flag().unwrap());
+    assert!(matches!(doc.badge().unwrap(), v2::EvBadgeReader::Custom("gold")));
+    let ch = doc.child().unwrap().unwrap();
+    assert_eq!(ch.id(), 7);
+    assert_eq!(ch.label().unwrap(), "c7");
+    assert_eq!(ch.extra(), 0);
+    assert_eq!(ch.note().unwrap(), None);
+    assert_eq!(ch.missingOpt(), None);
+    let items = doc.items().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items.get(1).unwrap().unwrap().label().unwrap(), "second");
+    assert_eq!(items.get(1).unwrap().unwrap().extra(), 0);
+    assert_eq!(items.get(1).unwrap().unwrap().missingOpt(), None);
+    let statuses = doc.statuses().unwrap();
+    assert_eq!(statuses.len(), 2);
+    assert!(matches!(statuses.get(1).unwrap().unwrap(), v2::EvStatusReader::Active(55)));
+    // Appended v2 fields default cleanly
+    assert_eq!(doc.addedU32(), 0);
+    assert_eq!(doc.addedStr().unwrap(), "");
+    assert_eq!(doc.addedOptStr().unwrap(), None);
+    assert_eq!(doc.addedNullable(), None);
+    assert!(!doc.addedBool().unwrap());
+    assert_eq!(doc.addedChild().unwrap().id(), 0);
+    assert_eq!(doc.addedChild().unwrap().missingOpt(), None);
+    assert!(matches!(doc.addedStatus().unwrap(), v2::EvStatusReader::Unknown(0)));
+    assert!(doc.addedSlice().unwrap().is_empty());
+    assert!(doc.addedRef().unwrap().is_none());
+    assert!(doc.addedArr().unwrap().is_empty());
+    assert!(doc.helperRef().unwrap().is_none());
+}
+fn check_v1_from_v2(buf: &[u8]) {
+    let tbl = v1::EvDoc::parse_envelope(buf).expect("parse v2->v1");
+    let doc = v1::EvDoc::reader(buf, &tbl).expect("reader v2->v1");
+    assert_eq!(doc.id(), 202);
+    assert_eq!(doc.name().unwrap(), "v2-doc");
+    assert_eq!(doc.opt().unwrap(), None);
+    assert_eq!(doc.score(), None);
+    assert!(!doc.flag().unwrap());
+    assert!(matches!(doc.badge().unwrap(), v1::EvBadgeReader::Unknown(2)));
+    let ch = doc.child().unwrap().unwrap();
+    assert_eq!(ch.id(), 17);
+    assert_eq!(ch.label().unwrap(), "c17");
+    let items = doc.items().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items.get(0).unwrap().unwrap().label().unwrap(), "v2-first");
+    assert_eq!(items.get(1).unwrap().unwrap().id(), 20);
+    assert_eq!(items.get(1).unwrap().unwrap().label().unwrap(), "v2-second");
+    let statuses = doc.statuses().unwrap();
+    assert_eq!(statuses.len(), 4);
+    assert!(matches!(statuses.get(0).unwrap().unwrap(), v1::EvStatusReader::Pending));
+    assert!(matches!(statuses.get(1).unwrap().unwrap(), v1::EvStatusReader::Active(99)));
+    assert!(matches!(statuses.get(2).unwrap().unwrap(), v1::EvStatusReader::Unknown(2)));
+    assert!(matches!(statuses.get(3).unwrap().unwrap(), v1::EvStatusReader::Unknown(3)));
+    assert_eq!(doc.parent().unwrap().unwrap().label().unwrap(), "p90");
+    assert_eq!(doc.fixedTag().unwrap(), "V2TAG");
+    assert_eq!(doc.fixedBin(), &[1, 2, 3, 4]);
+    let nums: Vec<u16> = doc.nums().unwrap().iter().map(|x| x.unwrap()).collect();
+    assert_eq!(nums, vec![100, 200, 300]);
+}
+fn check_v2_from_v2(buf: &[u8]) {
+    let tbl = v2::EvDoc::parse_envelope(buf).expect("parse v2->v2");
+    let doc = v2::EvDoc::reader(buf, &tbl).expect("reader v2->v2");
+    assert_eq!(doc.id(), 202);
+    assert!(matches!(doc.badge().unwrap(), v2::EvBadgeReader::Code(777)));
+    assert_eq!(doc.child().unwrap().unwrap().extra(), 0x1122334455667788);
+    assert_eq!(doc.addedU32(), 987654);
+    assert_eq!(doc.addedStr().unwrap(), "hello-v2");
+    assert_eq!(doc.addedOptStr().unwrap(), Some("opt-v2"));
+    assert_eq!(doc.addedNullable(), Some(42));
+    assert!(doc.addedBool().unwrap());
+    assert_eq!(doc.addedChild().unwrap().extra(), 333);
+    assert!(matches!(doc.addedStatus().unwrap(), v2::EvStatusReader::Failed("inner-fail")));
+    assert_eq!(doc.addedSlice().unwrap().get(0).unwrap().unwrap().id(), 44);
+    assert_eq!(doc.addedRef().unwrap().unwrap().missingOpt(), Some(22));
+    let arr: Vec<u16> = doc.addedArr().unwrap().iter().map(|x| x.unwrap()).collect();
+    assert_eq!(arr, vec![7, 8]);
+    let helper = doc.helperRef().unwrap().unwrap();
+    assert_eq!(helper.code(), 500);
+    assert_eq!(helper.note().unwrap(), "helper-ok");
+    let statuses = doc.statuses().unwrap();
+    assert!(matches!(statuses.get(2).unwrap().unwrap(), v2::EvStatusReader::Completed(0xdeadbeefcafebabe)));
+    assert!(matches!(statuses.get(3).unwrap().unwrap(), v2::EvStatusReader::Failed("boom-err")));
+}
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let js_v1 = std::fs::read(&args[1]).unwrap();
+    let js_v2 = std::fs::read(&args[2]).unwrap();
+    // Test both aligned AND unaligned (+1 byte offset) reads!
+    let mut unaligned_v1 = vec![0xAAu8];
+    unaligned_v1.extend_from_slice(&js_v1);
+    let mut unaligned_v2 = vec![0xBBu8];
+    unaligned_v2.extend_from_slice(&js_v2);
+    check_v1_from_v1(&js_v1);
+    check_v1_from_v1(&unaligned_v1[1..]);
+    check_v2_from_v1(&js_v1);
+    check_v2_from_v1(&unaligned_v1[1..]);
+    check_v1_from_v2(&js_v2);
+    check_v1_from_v2(&unaligned_v2[1..]);
+    check_v2_from_v2(&js_v2);
+    check_v2_from_v2(&unaligned_v2[1..]);
+    // Build v1 envelope in Rust (zero unsafe!)
+    let mut b1 = v1::CapnBuilder::new();
+    let rs_v1 = b1.build_envelope_vec(|b| {
+        let name = b.str("v1-doc");
+        let opt = b.opt_str(Some("present-opt"));
+        let badge_s = b.str("gold");
+        let child = b.build_ref(|b| {
+            let l = b.str("c7");
+            v1::EvChild { id: 7, label: l }
+        });
+        let items = b.build_slice(2, |i, b| {
+            let l = b.str(if i == 0 { "first" } else { "second" });
+            v1::EvChild { id: (i as u32) + 1, label: l }
+        });
+        let statuses = b.pack_slice(&[v1::EvStatus::Pending, v1::EvStatus::Active(55)]);
+        let parent = b.build_ref(|b| {
+            let l = b.str("p9");
+            v1::EvChild { id: 9, label: l }
+        });
+        v1::EvDoc {
+            id: 101,
+            name,
+            opt,
+            _pad0: [0; 4],
+            score: 42.5,
+            flag: true,
+            _pad1: [0; 3],
+            badge: v1::EvBadge::Custom(badge_s),
+            child,
+            items,
+            statuses,
+            parent,
+            fixedTag: *b"TAG1\0\0\0\0",
+            fixedBin: [10, 20, 30, 40],
+            nums: [11, 22, 33],
+            _pad2: [0; 6],
+        }
+    });
+    check_v1_from_v1(&rs_v1);
+    check_v2_from_v1(&rs_v1);
+    std::fs::write(&args[3], &rs_v1).unwrap();
+    // Build v2 envelope in Rust (zero unsafe!)
+    let mut b2 = v2::CapnBuilder::new();
+    let rs_v2 = b2.build_envelope_vec(|b| {
+        let name = b.str("v2-doc");
+        let opt = b.opt_str(None);
+        let child = b.build_ref(|b| {
+            let l = b.str("c17");
+            let note = b.opt_str(Some("child-note"));
+            v2::EvChild { id: 17, label: l, _pad0: [0; 4], extra: 0x1122334455667788, note, missingOpt: 123, _pad1: [0; 4] }
+        });
+        let items = b.build_slice(2, |i, b| {
+            let l = b.str(if i == 0 { "v2-first" } else { "v2-second" });
+            let n = b.opt_str(if i == 0 { Some("n1") } else { None });
+            v2::EvChild {
+                id: if i == 0 { 10 } else { 20 },
+                label: l,
+                _pad0: [0; 4],
+                extra: if i == 0 { 100 } else { 200 },
+                note: n,
+                missingOpt: if i == 0 { v2::EvChild::MISSING_OPT_NULL } else { 456 },
+                _pad1: [0; 4],
+            }
+        });
+        let fail_s = b.str("boom-err");
+        let statuses = b.pack_slice(&[
+            v2::EvStatus::Pending,
+            v2::EvStatus::Active(99),
+            v2::EvStatus::Completed(0xdeadbeefcafebabe),
+            v2::EvStatus::Failed(fail_s),
+        ]);
+        let parent = b.build_ref(|b| {
+            let l = b.str("p90");
+            let n = b.opt_str(Some("p-note"));
+            v2::EvChild { id: 90, label: l, _pad0: [0; 4], extra: 999, note: n, missingOpt: 7, _pad1: [0; 4] }
+        });
+        let added_str = b.str("hello-v2");
+        let added_opt = b.opt_str(Some("opt-v2"));
+        let ac_lbl = b.str("ac33");
+        let ac_note = b.opt_str(Some("ac-note"));
+        let inner_fail = b.str("inner-fail");
+        let added_slice = b.build_slice(1, |_, b| {
+            let l = b.str("as44");
+            v2::EvChild { id: 44, label: l, _pad0: [0; 4], extra: 444, note: b.opt_str(None), missingOpt: v2::EvChild::MISSING_OPT_NULL, _pad1: [0; 4] }
+        });
+        let added_ref = b.build_ref(|b| {
+            let l = b.str("ar55");
+            let n = b.opt_str(Some("ar-note"));
+            v2::EvChild { id: 55, label: l, _pad0: [0; 4], extra: 555, note: n, missingOpt: 22, _pad1: [0; 4] }
+        });
+        let helper_ref = b.build_ref(|b| {
+            let n = b.str("helper-ok");
+            v2::EvHelper { code: 500, _pad0: [0; 2], note: n }
+        });
+        v2::EvDoc {
+            id: 202,
+            name,
+            opt,
+            _pad0: [0; 4],
+            score: v2::EvDoc::SCORE_NULL,
+            flag: false,
+            _pad1: [0; 3],
+            badge: v2::EvBadge::Code(777),
+            child,
+            items,
+            statuses,
+            parent,
+            fixedTag: *b"V2TAG\0\0\0",
+            fixedBin: [1, 2, 3, 4],
+            nums: [100, 200, 300],
+            _pad2: [0; 2],
+            addedU32: 987654,
+            addedStr: added_str,
+            addedOptStr: added_opt,
+            addedNullable: 42,
+            addedBool: true,
+            _pad3: [0; 3],
+            addedChild: v2::EvChild { id: 33, label: ac_lbl, _pad0: [0; 4], extra: 333, note: ac_note, missingOpt: 11, _pad1: [0; 4] },
+            addedStatus: v2::EvStatus::Failed(inner_fail),
+            addedSlice: added_slice,
+            addedRef: added_ref,
+            addedArr: [7, 8],
+            helperRef: helper_ref,
+            _pad4: [0; 4],
+        }
+    });
+    check_v1_from_v2(&rs_v2);
+    check_v2_from_v2(&rs_v2);
+    std::fs::write(&args[4], &rs_v2).unwrap();
+    // Native (raw non-envelope) safe read & read_slice on unaligned buffer!
+    let mut b_raw = v1::CapnBuilder::new();
+    let raw = b_raw.build_vec(|b| {
+        let l = b.str("native-child");
+        v1::EvChild { id: 42, label: l }
+    });
+    let mut unaligned_raw = vec![0xCCu8];
+    unaligned_raw.extend_from_slice(&raw);
+    let r = v1::EvChild::read(&unaligned_raw[1..]).unwrap();
+    assert_eq!(r.id(), 42);
+    assert_eq!(r.label().unwrap(), "native-child");
+    let rs = v1::EvChild::read_slice(&unaligned_raw[1..], 1).unwrap();
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs.get(0).unwrap().unwrap().label().unwrap(), "native-child");
+}
+`,
+          );
+        execFileSync('rustc', ['--edition=2021', mainRs, '-o', binPath], { stdio: 'pipe' });
+        execFileSync(binPath, [jsV1Path, jsV2Path, rsV1Path, rsV2Path], { stdio: 'pipe' });
+
+        // Now read Rust-built v1 & v2 envelopes back in JS (both same-version and cross-version)!
+        const rsV1Env = new Uint8Array(readFileSync(rsV1Path));
+        const rsV2Env = new Uint8Array(readFileSync(rsV2Path));
+
+        const jsV2FromRsV1 = v2.Doc.viewEnvelope(rsV1Env);
+        expect(jsV2FromRsV1.id).toBe(101);
+        expect(jsV2FromRsV1.name).toBe('v1-doc');
+        expect(jsV2FromRsV1.opt).toBe('present-opt');
+        expect(jsV2FromRsV1.score).toBe(42.5);
+        expect(jsV2FromRsV1.badge).toEqual({ tag: 'Custom', value: 'gold' });
+        expect(jsV2FromRsV1.child?.extra).toBe(0n);
+        expect(jsV2FromRsV1.child?.missingOpt).toBeNull();
+        expect(jsV2FromRsV1.addedNullable).toBeNull();
+        expect(jsV2FromRsV1.helperRef).toBeNull();
+
+        const jsV1FromRsV2 = v1.Doc.viewEnvelope(rsV2Env);
+        expect(jsV1FromRsV2.id).toBe(202);
+        expect(jsV1FromRsV2.name).toBe('v2-doc');
+        expect(jsV1FromRsV2.badge).toEqual({ tag: '$unknown', rawTag: 2 });
+        expect(jsV1FromRsV2.items.at(1).label).toBe('v2-second');
+        expect(jsV1FromRsV2.statuses.at(1)).toEqual({ tag: 'Active', value: 99 });
+        expect(jsV1FromRsV2.statuses.at(2)).toEqual({ tag: '$unknown', rawTag: 2 });
+        expect(jsV1FromRsV2.statuses.at(3)).toEqual({ tag: '$unknown', rawTag: 3 });
+
+        const jsV2FromRsV2 = v2.Doc.viewEnvelope(rsV2Env);
+        expect(jsV2FromRsV2.addedU32).toBe(987654);
+        expect(jsV2FromRsV2.addedStr).toBe('hello-v2');
+        expect(jsV2FromRsV2.addedStatus).toEqual({ tag: 'Failed', value: 'inner-fail' });
+        expect(jsV2FromRsV2.statuses.at(2)).toEqual({ tag: 'Completed', value: 0xdeadbeefcafebaben });
+        expect(jsV2FromRsV2.helperRef?.code).toBe(500);
+        expect(jsV2FromRsV2.helperRef?.note).toBe('helper-ok');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects corrupt buffers deterministically in both JS and Rust without panicking or UB', () => {
+      const Choice = defineUnion('CorruptChoice', { A: null, B: u32 });
+      const Other = defineStruct('OtherRoot', { x: u32 });
+      const Rec = defineStruct('CorruptRec', {
+        flag: bool,
+        name: str,
+        opt: optStr,
+        tag: fixedStr(4),
+        choice: Choice,
+        nums: slice(u32),
+        next: ref(Other),
+      });
+
+      const validEnv = Rec.packEnvelope({
+        flag: true,
+        name: 'ok',
+        opt: 'yes',
+        tag: 'abcd',
+        choice: { tag: 'B', value: 7 },
+        nums: [1, 2],
+        next: { x: 9 },
+      });
+
+      // JS rejections
+      // 1. Truncated header
+      expect(() => Rec.viewEnvelope(validEnv.subarray(0, 8))).toThrow(RangeError);
+      // 2. Bad magic
+      const badMagic = validEnv.slice();
+      badMagic[0] = 0x00;
+      expect(() => Rec.viewEnvelope(badMagic)).toThrow(RangeError);
+      // 3. Unsupported version
+      const badVer = validEnv.slice();
+      badVer[4] = 2;
+      expect(() => Rec.viewEnvelope(badVer)).toThrow(RangeError);
+      // 4. Root hash mismatch
+      expect(() => Other.viewEnvelope(validEnv)).toThrow(RangeError);
+      // 5. Corrupt union tag (>= wire variant_count)
+      const po = new DataView(validEnv.buffer, validEnv.byteOffset).getUint32(12, true);
+      const choiceOff = po + Rec.offsetOf('choice');
+      const badTag = validEnv.slice();
+      badTag[choiceOff] = 99;
+      expect(() => Rec.viewEnvelope(badTag).choice).toThrow(RangeError);
+      // 6. Out-of-bounds slice length/offset
+      const numsOff = po + Rec.offsetOf('nums');
+      const badSlice = validEnv.slice();
+      new DataView(badSlice.buffer).setUint32(numsOff, 0xffff_ff00, true);
+      expect(() => Rec.viewEnvelope(badSlice).nums).toThrow(RangeError);
+      // 7. Out-of-bounds ref
+      const nextOff = po + Rec.offsetOf('next');
+      const badRef = validEnv.slice();
+      new DataView(badRef.buffer).setUint32(nextOff, 0x00ff_ffff, true);
+      expect(() => Rec.viewEnvelope(badRef).next).toThrow(RangeError);
+
+      // Rust rejections for every CapnError variant!
+      const rsCode = toRustReprC({ Choice, Other, Rec }, { builder: false, unsafeSlice: false });
+      const tmp = mkdtempSync(join(tmpdir(), 'capnstruct-corrupt-rs-'));
+      try {
+        const envPath = join(tmp, 'valid.bin');
+        writeFileSync(envPath, validEnv);
+        const mainRs = join(tmp, 'main.rs');
+        const binPath = join(tmp, 'corrupt_test');
+        writeFileSync(
+          mainRs,
+          `#![forbid(unsafe_code)]
+mod s {
+${rsCode}
+}
+use s::{CapnError, CorruptRec, OtherRoot};
+
+fn main() {
+    let valid = std::fs::read(std::env::args().nth(1).unwrap()).unwrap();
+    let po = u32::from_le_bytes(valid[12..16].try_into().unwrap()) as usize;
+
+    // 1. Truncated header
+    assert_eq!(CorruptRec::parse_envelope(&valid[..8]).unwrap_err(), CapnError::Truncated);
+    // 2. Bad magic
+    let mut bad_magic = valid.clone();
+    bad_magic[0] = 0;
+    assert_eq!(CorruptRec::parse_envelope(&bad_magic).unwrap_err(), CapnError::BadMagic);
+    // 3. Unsupported version
+    let mut bad_ver = valid.clone();
+    bad_ver[4] = 2;
+    assert_eq!(CorruptRec::parse_envelope(&bad_ver).unwrap_err(), CapnError::UnsupportedVersion(2));
+    // 4. Root hash mismatch
+    assert!(matches!(OtherRoot::parse_envelope(&valid), Err(CapnError::RootHashMismatch { .. })));
+    // 5. Truncated payload
+    assert_eq!(CorruptRec::parse_envelope(&valid[..po + 2]).unwrap_err(), CapnError::Truncated);
+    // 6. Missing non-root wire type (zero out OtherRoot's type_hash in header)
+    let mut missing_type = valid.clone();
+    let tc = u16::from_le_bytes(missing_type[6..8].try_into().unwrap()) as usize;
+    for i in 0..tc {
+        let o = 16 + i * 8;
+        let h = u32::from_le_bytes(missing_type[o..o+4].try_into().unwrap());
+        if h == OtherRoot::TYPE_HASH {
+            missing_type[o..o+4].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        }
+    }
+    let tbl_mt = CorruptRec::parse_envelope(&missing_type).unwrap();
+    let doc_mt = CorruptRec::reader(&missing_type, &tbl_mt).unwrap();
+    assert_eq!(doc_mt.next().unwrap_err(), CapnError::MissingType(OtherRoot::TYPE_HASH));
+    // 7. Invalid bool byte (0xff)
+    let mut bad_bool = valid.clone();
+    bad_bool[po + ${Rec.offsetOf('flag')}] = 0xff;
+    let tbl = CorruptRec::parse_envelope(&bad_bool).unwrap();
+    let doc = CorruptRec::reader(&bad_bool, &tbl).unwrap();
+    assert_eq!(doc.flag().unwrap_err(), CapnError::InvalidBool(0xff));
+    // 8. Invalid UTF-8 in str, optStr, fixedStr
+    let mut bad_utf8 = valid.clone();
+    let name_off = u32::from_le_bytes(bad_utf8[po + ${Rec.offsetOf('name')}..po + ${Rec.offsetOf('name')} + 4].try_into().unwrap()) as usize;
+    bad_utf8[po + name_off] = 0xff;
+    bad_utf8[po + ${Rec.offsetOf('tag')}] = 0xff;
+    let tbl = CorruptRec::parse_envelope(&bad_utf8).unwrap();
+    let doc = CorruptRec::reader(&bad_utf8, &tbl).unwrap();
+    assert!(matches!(doc.name(), Err(CapnError::InvalidUtf8(_))));
+    assert!(matches!(doc.tag(), Err(CapnError::InvalidUtf8(_))));
+    // 9. Corrupt union tag (>= wire variant_count)
+    let mut bad_tag = valid.clone();
+    bad_tag[po + ${Rec.offsetOf('choice')}] = 99;
+    let tbl = CorruptRec::parse_envelope(&bad_tag).unwrap();
+    let doc = CorruptRec::reader(&bad_tag, &tbl).unwrap();
+    assert_eq!(doc.choice().unwrap_err(), CapnError::InvalidTag(99));
+    // 10. Out-of-bounds slice & overflow
+    let mut bad_slice = valid.clone();
+    let nums_pos = po + ${Rec.offsetOf('nums')};
+    bad_slice[nums_pos..nums_pos+4].copy_from_slice(&0xffff_ff00u32.to_le_bytes());
+    let tbl = CorruptRec::parse_envelope(&bad_slice).unwrap();
+    let doc = CorruptRec::reader(&bad_slice, &tbl).unwrap();
+    assert_eq!(doc.nums().unwrap_err(), CapnError::OutOfBounds);
+    // 11. Out-of-bounds ref
+    let mut bad_ref = valid.clone();
+    let ref_pos = po + ${Rec.offsetOf('next')};
+    bad_ref[ref_pos..ref_pos+4].copy_from_slice(&0x00ff_ffffu32.to_le_bytes());
+    let tbl = CorruptRec::parse_envelope(&bad_ref).unwrap();
+    let doc = CorruptRec::reader(&bad_ref, &tbl).unwrap();
+    assert_eq!(doc.next().unwrap_err(), CapnError::OutOfBounds);
+    // 12. Display & core::error::Error smoke check
+    let err: &dyn core::error::Error = &CapnError::BadMagic;
+    assert!(format!("{err}").contains("magic"));
+}
+`,
+        );
+
+        execFileSync('rustc', ['--edition=2021', mainRs, '-o', binPath], { stdio: 'pipe' });
+        execFileSync(binPath, [envPath], { stdio: 'pipe' });
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 });

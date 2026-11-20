@@ -168,6 +168,8 @@ export interface UnionDefLike<V extends UnionVariantRecord = UnionVariantRecord>
   readonly _fv: number;
   /** @internal */
   readonly _fvs: number;
+  /** @internal */
+  readonly _h: number;
 }
 
 export interface StructDefLike<F extends FieldRecord = FieldRecord> {
@@ -191,6 +193,15 @@ export interface StructDefLike<F extends FieldRecord = FieldRecord> {
   readonly _K: readonly string[];
   /** @internal */
   readonly _G: readonly PropertyDescriptor[];
+  /** @internal */
+  readonly _h: number;
+}
+export interface UnknownVariant {
+  readonly tag: '$unknown';
+  readonly rawTag: number;
+}
+export function isUnknownVariant(v: unknown): v is UnknownVariant {
+  return typeof v === 'object' && v !== null && (v as { tag?: unknown }).tag === '$unknown';
 }
 
 export type FieldDesc =
@@ -555,6 +566,25 @@ function utf8Enc(s: string): Uint8Array {
   return out.subarray(0, n);
 }
 function oob(): never { throw new RangeError('Out of bounds'); }
+const ENV_MAGIC = 0x31305343;
+/** Computes the deterministic 32-bit FNV-1a hash used to identify schema types in `CS01` envelopes. */
+export function typeHash(name: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193);
+  return h >>> 0;
+}
+interface WireTypeDesc {
+  readonly sz: number;
+  readonly po: number;
+  readonly vc: number;
+}
+type WireEnv = Map<number, WireTypeDesc>;
+function wireSz(e: WireEnv | null | undefined, d: FieldDesc): number {
+  if (!e) return d.size;
+  if (d.kind === 'struct' || d.kind === 'union') return e.get(d._h)?.sz ?? d.size;
+  if (d.kind === 'array') return wireSz(e, d.element as FieldDesc) * d.length;
+  return d.size;
+}
 const al = (x: number, a: number): number => (x + a - 1) & ~(a - 1);
 const u8s = (d: ArrayBufferView, o = 0, l = d.byteLength - o): Uint8Array =>
   new Uint8Array(d.buffer, d.byteOffset + o, l);
@@ -781,6 +811,7 @@ interface InternalStructView {
   _dirty?: boolean;
   _m: (WasmMemoryLike & { offset?: number }) | WasmArena | null;
   _a?: InternalStructView;
+  _e?: WireEnv | null;
   _k(): DataView;
   compact(): Uint8Array;
   readonly byteLength: number;
@@ -810,8 +841,11 @@ function resolveSource(s: BufferSourceInput, o = 0): ResolvedSource {
   };
 }
 function defVal(desc: FieldDesc, plain: boolean): unknown {
+  if ((desc as { _null?: unknown })._null !== undefined) return null;
+  if (desc.kind === 'union') return { tag: '$unknown', rawTag: 0 };
   const d = new DataView(new ArrayBuffer(desc.size));
-  return readVal({ def: desc as StructDefLike, _d: d, _b: 0, _o: 0, byteLength: desc.size, _ws: desc.size, _m: null, _k: () => d } as unknown as InternalStructView, desc, 0, plain);
+  const ws = desc.kind === 'struct' ? 0 : desc.size;
+  return readVal({ def: desc as StructDefLike, _d: d, _b: 0, _o: 0, byteLength: desc.size, _ws: ws, _m: null, _e: null, _k: () => d } as unknown as InternalStructView, desc, 0, plain);
 }
 
 const rootOf = (v: InternalStructView): InternalStructView => {
@@ -903,69 +937,79 @@ function readVal(v: InternalStructView, desc: FieldDesc, off: number, plain: boo
   }
   if (k === 'union') {
     const tag = d.getUint8(off),
+      wt = v._e?.get(desc._h),
       vr = desc.variantList[tag];
-    if (!vr) oob();
-    return vr.desc === null ? { tag: vr.name } : { tag: vr.name, value: readVal(v, vr.desc, off + vr.payloadOffset, plain) };
+    if (!vr) {
+      if (wt && tag < wt.vc) return { tag: '$unknown', rawTag: tag };
+      oob();
+    }
+    const po = vr.desc === null ? 0 : wt ? wt.po : vr.payloadOffset;
+    if (vr.desc === null) return { tag: vr.name };
+    if (wt && po + wireSz(v._e, vr.desc) > wt.sz) oob();
+    return { tag: vr.name, value: readVal(v, vr.desc, off + po, plain) };
   }
   if (k !== 'struct') {
     const el = (desc as { element?: FieldDesc }).element,
-      sz = el ? el.size : 1,
+      sz = el ? wireSz(v._e, el) : 1,
       n = k === 'array' ? desc.length : d.getUint32(off + 4, true);
     if (k !== 'array') {
-    if (!n && (k === 'str' || k === 'optStr' || k === 'ref')) return k === 'str' ? '' : k === 'optStr' ? (d.getUint32(off, true) ? '' : null) : null;
-    const p = n ? v._b + d.getUint32(off, true) : v._b,
-      root = rootOf(v),
-      ts = root._o,
-      te = ts + root.byteLength,
-      rst = (root as InternalStructView & { stride?: number }).stride ?? (root._ws || root.def.size),
-      rsz = k === 'ref' && el === root.def ? rst : sz,
-      bl = (k === 'ref' ? 1 : n) * rsz,
-      ovTbl = p < te && p + bl > ts,
-      okTbl = k === 'ref' && el === root.def && p >= ts && p + bl <= te && (p - ts) % rst === 0;
-    if (n && ((p < v._b || p + bl > d.byteLength) || (ovTbl && !okTbl) || (k !== 'ref' && p < off + 8 && p + bl > off))) oob();
-    if (k === 'ref') return readVal(v, el!, p, plain);
-    off = p;
-  }
-  if (k === 'str' || k === 'optStr') return plain && (_budget -= n) < 0 ? oob() : utf8At(d, off, n);
-  const tot = d.byteOffset + off,
-    elPrim = el as PrimitiveDesc;
-  if (!plain && elPrim._C && elPrim.type !== 'bool' && tot % sz === 0) return new elPrim._C(d.buffer, tot, n);
-  if (!plain && el!.kind === 'struct') {
-    const sav = new StructArrayView(el as StructDefLike, d, off, n, v._b);
-    sav._m = v._m;
-    sav._a = v;
-    return sav;
-  }
-  if (!plain && el!.kind === 'union') {
-    const uav = new UnionArrayView(el as UnionDefLike, d, off, n, v._b, v._m);
-    uav._a = v;
-    return uav;
-  }
-  if (plain && (_budget -= n * sz) < 0) oob();
+      if (!n && (k === 'str' || k === 'optStr' || k === 'ref')) return k === 'str' ? '' : k === 'optStr' ? (d.getUint32(off, true) ? '' : null) : null;
+      const p = n ? v._b + d.getUint32(off, true) : v._b,
+        root = rootOf(v),
+        ts = root._o,
+        te = ts + root.byteLength,
+        rst = (root as InternalStructView & { stride?: number }).stride ?? (root._ws || root.def.size),
+        rsz = k === 'ref' && el === root.def ? rst : sz,
+        bl = (k === 'ref' ? 1 : n) * rsz,
+        ovTbl = p < te && p + bl > ts,
+        okTbl = k === 'ref' && el === root.def && p >= ts && p + bl <= te && (p - ts) % rst === 0;
+      if (n && ((p < v._b || p + bl > d.byteLength) || (ovTbl && !okTbl) || (k !== 'ref' && p < off + 8 && p + bl > off))) oob();
+      if (k === 'ref') return readVal(v, el!, p, plain);
+      off = p;
+    }
+    if (k === 'str' || k === 'optStr') return plain && (_budget -= n) < 0 ? oob() : utf8At(d, off, n);
+    const tot = d.byteOffset + off,
+      elPrim = el as PrimitiveDesc;
+    if (!plain && elPrim._C && elPrim.type !== 'bool' && tot % sz === 0) return new elPrim._C(d.buffer, tot, n);
+    if (!plain && el!.kind === 'struct') {
+      const sav = new StructArrayView(el as StructDefLike, d, off, n, v._b, sz);
+      sav._m = v._m;
+      sav._a = v;
+      sav._e = v._e ?? null;
+      return sav;
+    }
+    if (!plain && el!.kind === 'union') {
+      const uav = new UnionArrayView(el as UnionDefLike, d, off, n, v._b, v._m, sz);
+      uav._a = v;
+      uav._e = v._e ?? null;
+      return uav;
+    }
+    if (plain && (_budget -= n * sz) < 0) oob();
     return Array.from({ length: n }, (_, i) => readVal(v, el!, off + i * sz, plain));
   }
-  if (!plain) {
-    const nv = new StructViewBase(desc, d, v._b, off, v._m);
-    nv._ws = desc === v.def ? v._ws : desc.size;
-    nv._a = v;
-    return nv;
-  }
-  let sm = _rSeen?.get(desc);
-  const prev = sm?.get(off);
-  if (prev) return prev;
-  const ws = desc === v.def ? v._ws ?? desc.size : desc.size;
-  if ((_budget -= ws) < 0) oob();
-  const out: Record<string, unknown> = {};
-  if (_rSeen) {
-    if (!sm) _rSeen.set(desc, (sm = new Map()));
-    sm.set(off, out);
-  }
-  const isHdr = Boolean((v as InternalStructView & { _hdr?: number })._hdr);
-  for (const f of desc.fieldList) {
-    if (isHdr && ((f.desc as { _fv?: number })._fv ?? -1) >= 0) continue;
-    out[f.name] = f.offset + f.size > ws ? defVal(f.desc, true) : readVal(v, f.desc, off + f.offset, true);
-  }
-  return out;
+      const ws = v._e?.get(desc._h)?.sz ?? (desc === v.def ? v._ws : desc.size);
+      if (!plain) {
+        const nv = new StructViewBase(desc, d, v._b, off, v._m, ws);
+        nv._a = v;
+        nv._e = v._e ?? null;
+        return nv;
+      }
+      let sm = ws > 0 ? _rSeen?.get(desc) : undefined;
+      const prev = sm?.get(off);
+      if (prev) return prev;
+      if ((_budget -= ws) < 0) oob();
+      const out: Record<string, unknown> = {};
+      if (ws > 0 && _rSeen) {
+        if (!sm) _rSeen.set(desc, (sm = new Map()));
+        sm.set(off, out);
+      }
+      const isHdr = Boolean((v as InternalStructView & { _hdr?: number })._hdr);
+      for (const f of desc.fieldList) {
+        if (isHdr && ((f.desc as { _fv?: number })._fv ?? -1) >= 0) continue;
+        const fEnd = f.offset + wireSz(v._e, f.desc);
+        out[f.name] = fEnd > ws ? defVal(f.desc, true) : readVal(v, f.desc, off + f.offset, true);
+      }
+      return out;
 }
 function readPlain(v: InternalStructView & { length?: number; stride?: number }, o?: number): unknown {
   _budget = Math.max(v._k().byteLength * 8, 65536);
@@ -1102,6 +1146,7 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
   #dead: number | undefined;
   #dirty: boolean | undefined;
   #a: InternalStructView | undefined;
+  #e: WireEnv | null = null;
   #m!: WasmMemoryLike | WasmArena | null;
   get def(): D { return this.#def; }
   get byteLength(): number { return this.#bl; }
@@ -1121,6 +1166,8 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
   /** @internal */ set _dirty(v: boolean | undefined) { this.#dirty = v; }
   /** @internal */ get _a(): InternalStructView | undefined { return this.#a; }
   /** @internal */ set _a(v: InternalStructView | undefined) { this.#a = v; }
+  /** @internal */ get _e(): WireEnv | null { return this.#e; }
+  /** @internal */ set _e(v: WireEnv | null) { this.#e = v; }
   /** @internal */ get _m(): WasmMemoryLike | WasmArena | null { return this.#m; }
   /** @internal */ set _m(v: WasmMemoryLike | WasmArena | null) { this.#m = v; }
   /** @internal */
@@ -1254,14 +1301,14 @@ export class StructViewBase<
     base: number,
     off: number,
     mem: WasmMemoryLike | WasmArena | null = null,
+    wireSize = def.size,
   ) {
     super();
-    this._init(def, def.size, def.size, dv, base, off, mem);
+    this._init(def, wireSize, wireSize, dv, base, off, mem);
     const ks = def._K,
       gs = def._G;
     for (let i = 0; i < ks.length; i++) Object.defineProperty(this, ks[i], gs[i]);
   }
-
   /** Re-positions this flyweight cursor to row `index` (supports negative indices from the end). */
   seek(index: number): this {
     if (this._a instanceof StructArrayView) return this._a.at(index, this as unknown as StructView<F>) as unknown as this;
@@ -1318,8 +1365,7 @@ export function structView<F extends FieldRecord>(
   const n = normOpts(byteOffset, undefined, baseOffset, wireStride);
   const r = resolveSource(source, n.o), ws = n.s ?? (r.max < def.size ? r.max : def.size);
   if (r.o < 0 || r.max < ws) oob();
-  const v = new StructViewBase(def, r.d, n.b ?? r.o, r.o, r.m) as StructView<F>;
-  v._ws = ws;
+  const v = new StructViewBase(def, r.d, n.b ?? r.o, r.o, r.m, ws) as StructView<F>;
   v._tl = r.o + Math.max(ws, r.max);
   return v;
 }
@@ -1383,9 +1429,10 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
   _mv(index: number, v?: StructView<F> | null): StructView<F> {
     const d = this._k(),
       o = this._o + index * this.stride,
-      nv = (v ? v._set(d, this._b, o, this._m) : new StructViewBase(this.def, d, this._b, o, this._m)) as StructView<F>;
-    nv._ws = this._ws;
+      nv = (v ? v._set(d, this._b, o, this._m) : new StructViewBase(this.def, d, this._b, o, this._m, this._ws)) as StructView<F>;
+    if (v) nv._ws = this._ws;
     nv._a = this;
+    nv._e = this._e;
     return nv;
   }
   /** Returns a reusable flyweight cursor positioned at `index`. */
@@ -1460,6 +1507,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
       sub = new StructArrayView(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._ws);
     sub._m = this._m;
     sub._a = this;
+    sub._e = this._e;
     sub._dirty = (this.def._fv >= 0 && (s > 0 || e < len)) || Boolean(this._dirty || this._dead);
     return sub;
   }
@@ -1595,10 +1643,11 @@ export class UnionArrayView<
     length: number,
     base: number,
     mem: WasmMemoryLike | WasmArena | null = null,
+    wireStride = def.size,
   ) {
     super();
-    this._init(def, length * def.size, def.size, dv, base, off, mem);
-    Object.assign(this, { stride: def.size, length });
+    this._init(def, length * wireStride, wireStride, dv, base, off, mem);
+    Object.assign(this, { stride: wireStride, length });
   }
   /** @internal */
   _i(index: number): number {
@@ -1612,9 +1661,12 @@ export class UnionArrayView<
   }
   /** Reads only the 1-byte discriminant tag name at `index` in O(1) without allocating a union object. */
   tagAt(index: number): keyof V & string {
-    const vr = this.def.variantList[this._k().getUint8(this._i(index))];
-    if (!vr) oob();
-    return vr.name as keyof V & string;
+    const tag = this._k().getUint8(this._i(index)),
+      vr = this.def.variantList[tag];
+    if (vr) return vr.name as keyof V & string;
+    const wt = this._e?.get(this.def._h);
+    if (wt && tag < wt.vc) return '$unknown' as keyof V & string;
+    oob();
   }
   /** Updates the tagged union element at `index` in-place (supports negative indices). */
   set(index: number, value: UnionInput<V, SelfF>): this {
@@ -1627,8 +1679,9 @@ export class UnionArrayView<
       cl = (i: number) => Math.max(0, Math.min(len, i < 0 ? len + i : i)),
       s = cl(begin),
       e = cl(end),
-      sub = new UnionArrayView<V, SelfF>(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._m);
+      sub = new UnionArrayView<V, SelfF>(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._m, this.stride);
     sub._a = this._a;
+    sub._e = this._e;
     return sub;
   }
   /** Alias for `subarray(begin, end)`. */
@@ -1890,6 +1943,8 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   declare readonly _K: readonly string[];
   /** @internal */
   declare readonly _G: readonly PropertyDescriptor[];
+  /** @internal */
+  declare readonly _h: number;
   constructor(name: string, schemaOrBuilder: F | ((self: SelfRef) => F)) {
     if (name) _reg[name] = this;
     const schema = typeof schemaOrBuilder === 'function' ? schemaOrBuilder((() => this) as unknown as SelfRef) : schemaOrBuilder;
@@ -1917,12 +1972,22 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       if (dm._fvs !== undefined && dm._fvs >= 0 && firstVs < 0) firstVs = fo + dm._fvs;
       const end = fo + d.size;
       ks.push(k);
+      const isComp = dk === 'struct' || dk === 'union' || dk === 'array';
       gs.push({
         enumerable: true,
         configurable: true,
-        get(this: StructViewBase<F>) {
-          return end > this._ws ? defVal(d, false) : dk === 'primitive' ? d._g(this._k(), this._o + fo) : readVal(this, d, this._o + fo, false);
-        },
+        get: dk === 'primitive'
+          ? function (this: StructViewBase<F>) {
+              return end > this._ws ? defVal(d, false) : d._g(this._k(), this._o + fo);
+            }
+          : isComp
+            ? function (this: StructViewBase<F>) {
+                const fEnd = fo + wireSz(this._e, d);
+                return fEnd > this._ws ? defVal(d, false) : readVal(this, d, this._o + fo, false);
+              }
+            : function (this: StructViewBase<F>) {
+                return end > this._ws ? defVal(d, false) : readVal(this, d, this._o + fo, false);
+              },
         set(this: StructViewBase<F>, v: unknown) {
           if (end > this._ws) upgradeView(this);
           writeVal(this, d, v, this._b, this._o + fo);
@@ -1930,10 +1995,11 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       });
     }
     const sz = al(off, maxA);
+    const rustType = name || 'AnonStruct';
     Object.assign(this, {
       kind: 'struct',
       name,
-      rustType: name || 'AnonStruct',
+      rustType,
       size: sz,
       byteSize: sz,
       stride: sz,
@@ -1945,6 +2011,7 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       _fvr: fvr,
       _K: ks,
       _G: gs,
+      _h: typeHash(rustType),
     });
   }
   offsetOf<K extends keyof F>(field: K): number {
@@ -1969,6 +2036,68 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     wireStride?: number,
   ): StructView<F> {
     return structView(this, source, byteOffset, baseOffset, wireStride);
+  }
+  /** Packs a single root struct with a self-describing `CS01` schema-evolution envelope header. */
+  packEnvelope(row: Partial<StructInput<F>> | readonly unknown[]): Uint8Array {
+    const seen = new Set<object>(),
+      defs: (StructDefLike | UnionDefLike)[] = [];
+    const visit = (d: FieldDesc | null): void => {
+      if (!d || seen.has(d)) return;
+      if (d.kind === 'struct') {
+        seen.add(d);
+        for (const fl of d.fieldList) visit(fl.desc);
+        defs.push(d);
+      } else if (d.kind === 'union') {
+        seen.add(d);
+        for (const vr of d.variantList) visit(vr.desc);
+        defs.push(d);
+      } else if (d.kind === 'array' || d.kind === 'slice' || d.kind === 'ref') visit(d.element as FieldDesc);
+    };
+    visit(this as unknown as StructDefLike);
+    const hashes = new Set<number>();
+    for (const d of defs) {
+      if (hashes.has(d._h)) throw new Error(`capnstruct envelope type hash collision for ${d.rustType}`);
+      hashes.add(d._h);
+    }
+    const payload = this.pack([row]),
+      hdrLen = 16 + defs.length * 8,
+      out = new Uint8Array(hdrLen + payload.byteLength),
+      dv = new DataView(out.buffer);
+    dv.setUint32(0, ENV_MAGIC, true);
+    dv.setUint16(4, 1, true);
+    dv.setUint16(6, defs.length, true);
+    dv.setUint32(8, this._h, true);
+    dv.setUint32(12, hdrLen, true);
+    for (let i = 0; i < defs.length; i++) {
+      const d = defs[i],
+        o = 16 + i * 8;
+      dv.setUint32(o, d._h, true);
+      dv.setUint16(o + 4, d.size, true);
+      dv.setUint8(o + 6, d.kind === 'union' ? (d.unitOnly ? 0 : al(1, d.align)) : d.align);
+      dv.setUint8(o + 7, d.kind === 'union' ? d.variantList.length : 0);
+    }
+    out.set(payload, hdrLen);
+    return out;
+  }
+  /** Validates a `CS01` schema-evolution envelope and returns a forward/backward-compatible zero-copy `StructView<F>`. */
+  viewEnvelope(source: BufferSourceInput): StructView<F> {
+    const r = resolveSource(source, 0),
+      d = r.d;
+    if (r.max < 16 || d.getUint32(0, true) !== ENV_MAGIC || d.getUint16(4, true) !== 1) oob();
+    const tc = d.getUint16(6, true),
+      rh = d.getUint32(8, true),
+      po = d.getUint32(12, true);
+    if (rh !== this._h || po !== 16 + tc * 8 || po > r.max) oob();
+    const env: WireEnv = new Map();
+    for (let i = 0; i < tc; i++) {
+      const o = 16 + i * 8;
+      env.set(d.getUint32(o, true), { sz: d.getUint16(o + 4, true), po: d.getUint8(o + 6), vc: d.getUint8(o + 7) });
+    }
+    const rootWt = env.get(this._h);
+    if (!rootWt || r.max - po < rootWt.sz) oob();
+    const v = this.view(source, { byteOffset: po, baseOffset: po, stride: rootWt.sz });
+    v._e = env;
+    return v;
   }
   /**
    * Wraps a partial binary buffer containing at least `this.byteSize` bytes (e.g. `file.slice(0, Schema.byteSize)`)
@@ -2155,6 +2284,8 @@ export class UnionDef<V extends UnionVariantRecord = UnionVariantRecord> impleme
   declare readonly _fv: number;
   /** @internal */
   declare readonly _fvs: number;
+  /** @internal */
+  declare readonly _h: number;
   constructor(name: string, variantsOrBuilder: V | ((self: SelfRef) => V)) {
     if (name) _reg[name] = this;
     const variants = typeof variantsOrBuilder === 'function' ? variantsOrBuilder((() => this) as unknown as SelfRef) : variantsOrBuilder;
@@ -2186,10 +2317,11 @@ export class UnionDef<V extends UnionVariantRecord = UnionVariantRecord> impleme
       list.push(vl);
       byName[vn] = vl;
     }
+    const rustType = name || 'AnonUnion';
     Object.assign(this, {
       kind: 'union',
       name,
-      rustType: name || 'AnonUnion',
+      rustType,
       size: sz,
       byteSize: sz,
       stride: sz,
@@ -2200,6 +2332,7 @@ export class UnionDef<V extends UnionVariantRecord = UnionVariantRecord> impleme
       byName,
       _fv: hasVar ? 0 : -1,
       _fvs: -1,
+      _h: typeHash(rustType),
     });
   }
   /** Returns the numeric `u8` discriminant tag for variant `name`. */

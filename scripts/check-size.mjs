@@ -4,17 +4,17 @@ import { buildSync } from 'esbuild';
 const entries = [
   {
     name: 'Declarative Schema API (Core Runtime)',
-    maxGzipBytes: 9000, // 8.79 KiB
-    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, optStr, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, defineUnion, union, pack, concatBytes, structView, StructArrayView, UnionArrayView } from "./dist/index.js";`,
+    maxGzipBytes: 10000, // 9.77 KiB
+    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, optStr, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, defineUnion, union, pack, concatBytes, structView, StructArrayView, UnionArrayView, typeHash, isUnknownVariant } from "./dist/index.js";`,
   },
   {
     name: 'Full Runtime (+ WasmArena)',
-    maxGzipBytes: 9500, // 9.28 KiB
-    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, optStr, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, defineUnion, union, pack, concatBytes, structView, StructArrayView, UnionArrayView, WasmArena, Arena } from "./dist/index.js";`,
+    maxGzipBytes: 10500, // 10.25 KiB
+    code: `export { u8, i8, u16, i16, u32, i32, u64, i64, f16, f32, f64, bool, str, optStr, fixedStr, fixedBytes, sentinel, nullable, scaled, fixedArray, array, slice, list, ref, defineStruct, struct, defineUnion, union, pack, concatBytes, structView, StructArrayView, UnionArrayView, WasmArena, Arena, typeHash, isUnknownVariant } from "./dist/index.js";`,
   },
   {
     name: 'Rust #[repr(C)] & Go/TinyGo WASM Codegen (capnstruct/codegen)',
-    maxGzipBytes: 5500, // 5.37 KiB
+    maxGzipBytes: 19000, // 18.55 KiB
     code: `export { toRustReprC, generateRust, toGoStruct, generateGo } from "./dist/codegen.js";`,
   },
 ];

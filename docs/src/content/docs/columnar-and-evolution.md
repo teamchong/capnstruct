@@ -86,3 +86,21 @@ v2View.at(0).z = 99.5;
 v2View.at(0).label = 'upgraded-in-place';
 console.log(v2View.stride); // 40 (PointV2.size)
 ```
+
+---
+
+## 3. Self-Describing `CS01` Envelope Schema Evolution (JS & Rust)
+
+For cross-process, persisted, or host/guest WASM payloads where reader and writer versions can drift independently, wrap the root struct in a self-describing `CS01` envelope:
+
+- **Wire Header (16 + `typeCount * 8` bytes)**: `magic = "CS01"`, `version = 1`, `typeCount`, `rootHash` (32-bit FNV-1a hash of the root type name), `payloadOffset`, followed by an 8-byte wire descriptor `[typeHash: u32, wireSize: u16, payloadOffset: u8, variantCount: u8]` for every reachable struct and union type.
+- **Backward Compatibility (v2 reader, v1 bytes)**: Appended struct fields beyond the sender's `wireSize` return typed defaults (`0`, `""`, `None`/`null`, empty slice, `Unknown(0)`).
+- **Forward Compatibility (v1 reader, v2 bytes)**: Extra trailing fields are skipped via each type's recorded `wireSize`; union payloads are located via each union's recorded `payloadOffset` (even when a newer variant raises alignment from 4 to 8); newer union variant tags (`known_variants <= tag < wire_variant_count`) surface as `{ tag: '$unknown', rawTag }` in JS (check with `isUnknownVariant(v)`) and `MyUnionReader::Unknown(raw_tag)` in Rust.
+- **Zero-Unsafe Rust Decoding**: `MyRoot::parse_envelope(&bytes)` validates the header and builds a `CapnTable`, and `MyRoot::reader(&bytes, &table)` returns a zero-copy `MyRootReader<'a>` that works on arbitrary unaligned `&[u8]` slices under `#![forbid(unsafe_code)]`.
+
+```ts
+import { isUnknownVariant } from 'capnstruct';
+
+const envelope = PointV2.packEnvelope({ x: 1.5, y: 2.5, z: 3.5, label: 'v2', flags: [1, 2] });
+const v1View = PointV1.viewEnvelope(envelope); // reads x=1.5, y=2.5 safely from v2 envelope
+```

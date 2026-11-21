@@ -1,13 +1,47 @@
 ---
-title: Live Mutation & Growable Views
-description: Mutate strings and slices in-place on binary views, push and pop rows, and compact dead tail-arena bytes.
+title: Immutable Updates, Live Mutation & Growable Views
+description: Safe Immer-style produce() updates over read-only views, explicit in-place mutView/mutArray mutation, push/pop rows, and compacting dead tail-arena bytes.
 ---
 
-Unlike Apache Arrow, FlatBuffers, or Cap'n Proto (where binary buffers are strictly read-only or cannot shrink/grow variable-length fields), `capnstruct` separates the **developer-facing JS interface** from the **underlying binary arena mechanics**.
+## 1. Read-Only by Default + `produce()`
 
-## 1. Mutating Strings (`str`) & Slices (`slice`) on Any View
+Starting in v0.6.0, binary read APIs (`Schema.view()`, `Schema.array()`, `Schema.viewEnvelope()`, `Schema.viewHeader()`) return **read-only** views (`view.readonly === true`). Mutating a read-only view fails both at compile time in TypeScript and at runtime (`TypeError`).
 
-Every `StructView` and `StructArrayView` supports direct property assignment for both fixed-size primitives and variable-length `str` / `slice(T)` fields:
+For safe, immutable updates without mutating the original buffer, use `produce(view, (draft) => ...)`:
+
+```ts
+import { defineStruct, produce, u32, str, slice } from 'capnstruct';
+
+const User = defineStruct('User', {
+  id: u32,
+  name: str,
+  scores: slice(u32),
+});
+
+const base = User.array(User.pack([
+  { id: 1, name: 'Alexander', scores: [10, 20, 30, 40] },
+  { id: 2, name: 'Bob', scores: [5] },
+]));
+
+// Immer-style immutable update — base is never mutated!
+const next = produce(base, (draft) => {
+  draft[0].name = 'Alex';
+  draft[0].scores.push(50);
+  draft.push({ id: 3, name: 'Cara', scores: [100] });
+});
+
+console.log(base.at(0).name); // 'Alexander' (untouched)
+console.log(next.at(0).name); // 'Alex'
+console.log(next.readonly);   // true
+```
+
+- **No-op identity (`O(1)`)**: If the recipe makes no changes on a read-only view, `produce()` returns `base` directly without copying.
+- **Inline fixed-size fast path (`O(dirty fields)`)**: If only fixed-size fields change (primitives, `fixedStr`, `fixedBytes`, inline nested structs, `fixedArray`), `produce()` clones the buffer once and patches only dirty fields in place without repacking strings or slices.
+- **Full variable-length & graph preservation**: Edits to `str`, `slice`, `ref`, `union`, or `push`/`pop`/`splice` automatically repack into a compact buffer while preserving cyclic and diamond `ref` graphs, `CS01` envelopes, and schema-evolved views.
+
+## 2. Explicit In-Place Mutation (`mutView` / `mutArray`)
+
+Unlike Apache Arrow, FlatBuffers, or Cap'n Proto (where binary buffers are strictly read-only and cannot shrink/grow variable-length strings or slices in place), `capnstruct` also supports **explicit zero-copy in-place mutation** via `mutView()`, `mutArray()`, `create()`, `alloc()`, `shared()`, `inWasm()`, and `from()` (`view.readonly === false`):
 
 ```ts
 import { defineStruct, u32, str, slice, pack } from 'capnstruct';
@@ -18,26 +52,23 @@ const User = defineStruct('User', {
   scores: slice(u32),
 });
 
-const users = User.array(
-  pack(User, [
-    { id: 1, name: 'Alexander', scores: [10, 20, 30, 40] },
-    { id: 2, name: 'Bob', scores: [50, 60] },
-  ]),
-);
+const users = User.mutArray(pack(User, [
+  { id: 1, name: 'Alexander', scores: [10, 20, 30, 40] },
+  { id: 2, name: 'Bob', scores: [5] },
+]));
 
 // Case A: Shorter or equal-length UTF-8 string / slice
 // -> Overwrites existing tail bytes in-place in O(1) with 0 allocations
 users.at(0).name = 'Alex';
-users.at(0).set({ scores: [100, 200] });
+users.at(0).scores = [100, 200];
 
 // Case B: Longer UTF-8 string / slice
-// -> Automatically bump-allocates at the end of the tail arena (growing the
-//    backing ArrayBuffer or WasmArena if needed) and updates [off, len] in place
-users.at(1).name = 'Bartholomew-Christopherson';
-users.at(1).set({ scores: [1, 2, 3, 4, 5, 6, 7, 8] });
+// -> Bump-allocates at the tail arena end (auto-growing the backing ArrayBuffer if needed)
+users.at(1).name = 'Bartholomew-Christopherson 🚀';
+users.at(1).set('scores', [1, 2, 3, 4, 5, 6, 7, 8]);
 ```
 
-### How It Works Under the Hood
+### How In-Place Mutation Works Under the Hood
 
 Each `str` or `slice(T)` field stores an 8-byte descriptor `[u32 relOffsetFromStructBase, u32 elementCount]` in the fixed struct body:
 
@@ -47,7 +78,7 @@ Each `str` or `slice(T)` field stores an 8-byte descriptor `[u32 relOffsetFromSt
 
 ---
 
-## 2. Fragmentation Tracking & `.compact()`
+## 3. Fragmentation Tracking & `.compact()`
 
 When variable-length fields are repeatedly overwritten with shorter or longer values, dead bytes accumulate in the tail arena. You can inspect the fragmentation ratio at any time via `view.compactionRatio` (`0` = 0% dead bytes, `0.25` = 25% dead bytes) and strip dead tail bytes via `view.compact()`:
 
@@ -64,9 +95,9 @@ Both `StructView` and `StructArrayView` inherit `.compactionRatio` and `.compact
 
 ---
 
-## 3. Growable `StructArrayView` (`.push()`, `.pop()`, `.alloc()`)
+## 4. Growable `MutStructArrayView` (`.push()`, `.pop()`, `.alloc()`)
 
-You don't need to build a giant JS array before calling `pack()`. Start with `StructDef.alloc(0)` (or any existing `StructArrayView`) and `.push()` / `.pop()` rows directly on the binary view:
+You don't need to build a giant JS array before calling `pack()`. Start with `StructDef.alloc(0)` (or any `MutStructArrayView` from `mutArray`, `shared`, `from`, or `inWasm`) and `.push()` / `.pop()` rows directly on the binary view:
 
 ```ts
 import { defineStruct, u32, f64, str } from 'capnstruct';

@@ -410,9 +410,224 @@ export type StructInput<F extends FieldRecord> = {
   [K in keyof F]: FieldInput<F[K], F>;
 };
 
-export type StructValues<F extends FieldRecord> = {
-  [K in keyof F]: FieldValue<F[K], F>;
+export type StructValues<F extends FieldRecord = FieldRecord> = {
+  readonly [K in keyof F]: FieldValue<F[K], F>;
 };
+
+export type MutUnionPayloadValue<
+  D extends FieldDesc,
+  V extends UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> = D extends RefDesc<SelfRef>
+  ? MutUnionValue<V, SelfF> | null
+  : D extends SliceDesc<SelfRef>
+    ? MutUnionArrayView<V, SelfF>
+    : MutFieldValue<D, SelfF>;
+
+/** Mutable tagged-union value returned by `MutStructView` and `MutUnionArrayView.at(i)`. */
+export type MutUnionValue<
+  V extends UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> = {
+  [K in keyof V & string]: V[K] extends null
+    ? { readonly tag: K }
+    : V[K] extends SelfRef
+      ? { readonly tag: K; readonly value: MutUnionValue<V, SelfF> }
+      : V[K] extends FieldDesc
+        ? { readonly tag: K; readonly value: MutUnionPayloadValue<V[K], V, SelfF> }
+        : never;
+}[keyof V & string];
+
+export type MutFieldValue<
+  D extends FieldDesc = FieldDesc,
+  SelfF extends FieldRecord = FieldRecord,
+> = D extends NullablePrimitiveDesc<infer P>
+  ? PrimitiveTsType<P> | null
+  : D extends PrimitiveDesc<infer P>
+    ? PrimitiveTsType<P>
+    : D extends StrDesc | FixedStrDesc
+      ? string
+      : D extends OptStrDesc
+        ? string | null
+        : D extends FixedBytesDesc<number>
+          ? Uint8Array
+          : D extends ArrayDesc<infer E, number>
+            ? E extends PrimitiveDesc<infer P>
+              ? TypedArrayFor<P>
+              : E extends StructDefLike<infer SF>
+                ? MutStructArrayView<SF>
+                : E extends SelfRef
+                  ? MutStructArrayView<SelfF>
+                  : E extends UnionDefLike<infer UV>
+                    ? MutUnionArrayView<UV, SelfF>
+                    : E extends FieldDesc
+                      ? MutFieldValue<E, SelfF>[]
+                      : never
+            : D extends SliceDesc<infer E>
+              ? E extends PrimitiveDesc<infer P>
+                ? TypedArrayFor<P>
+                : E extends StructDefLike<infer SF>
+                  ? MutStructArrayView<SF>
+                  : E extends SelfRef
+                    ? MutStructArrayView<SelfF>
+                    : E extends UnionDefLike<infer UV>
+                      ? MutUnionArrayView<UV, SelfF>
+                      : E extends FieldDesc
+                        ? MutFieldValue<E, SelfF>[]
+                        : never
+              : D extends StructDefLike<infer SF>
+                ? MutStructView<SF>
+                : D extends SelfRef
+                  ? MutStructView<SelfF>
+                  : D extends RefDesc<infer S>
+                    ? S extends SelfRef
+                      ? MutStructView<SelfF> | null
+                      : S extends StructDefLike<infer F>
+                        ? MutStructView<F> | null
+                        : S extends UnionDefLike<infer UV>
+                          ? MutUnionValue<UV, SelfF> | null
+                          : never
+                    : D extends UnionDefLike<infer UV>
+                      ? MutUnionValue<UV, SelfF>
+                      : never;
+
+export type MutStructValues<F extends FieldRecord = FieldRecord> = {
+  [K in keyof F]: MutFieldValue<F[K], F>;
+};
+
+declare const $draft: unique symbol;
+
+export type UnionDraftPayload<
+  D extends FieldDesc,
+  V extends UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> = D extends RefDesc<SelfRef>
+  ? UnionDraft<V, SelfF> | null
+  : D extends SliceDesc<SelfRef>
+    ? UnionArrayDraft<V, SelfF>
+    : FieldDraft<D, SelfF>;
+
+/** Mutable tagged-union draft inside `produce(base, draft => ...)`. */
+export type UnionDraft<
+  V extends UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> = {
+  [K in keyof V & string]: V[K] extends null
+    ? { tag: K }
+    : V[K] extends SelfRef
+      ? { tag: K; value: UnionDraft<V, SelfF> }
+      : V[K] extends FieldDesc
+        ? { tag: K; value: UnionDraftPayload<V[K], V, SelfF> }
+        : never;
+}[keyof V & string];
+
+export type UnionDraftInput<
+  V extends UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> = UnionInput<V, SelfF> | UnionDraft<V, SelfF>;
+
+/** Mutable array draft for `slice(Union)` and `fixedArray(Union, N)` inside `produce()`. */
+export interface UnionArrayDraft<
+  V extends UnionVariantRecord = UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> extends Array<UnionDraft<V, SelfF>> {
+  push(...items: UnionDraftInput<V, SelfF>[]): number;
+  unshift(...items: UnionDraftInput<V, SelfF>[]): number;
+  splice(start: number, deleteCount?: number): UnionDraft<V, SelfF>[];
+  splice(start: number, deleteCount: number, ...items: UnionDraftInput<V, SelfF>[]): UnionDraft<V, SelfF>[];
+}
+
+export type StructDraftItemInput<F extends FieldRecord = FieldRecord> =
+  | Partial<StructInput<F>>
+  | StructView<F>
+  | StructDraft<F>
+  | readonly unknown[];
+
+/** Mutable array draft for `StructArrayView<F>` and nested `slice(Struct)` inside `produce()`. */
+export interface StructArrayDraft<F extends FieldRecord = FieldRecord> extends Array<StructDraft<F>> {
+  readonly [$draft]?: F[];
+  push(...items: StructDraftItemInput<F>[]): number;
+  unshift(...items: StructDraftItemInput<F>[]): number;
+  splice(start: number, deleteCount?: number): StructDraft<F>[];
+  splice(start: number, deleteCount: number, ...items: StructDraftItemInput<F>[]): StructDraft<F>[];
+}
+
+/** Mutable field draft type exposed on `StructDraft<F>` inside `produce(base, draft => ...)`. */
+export type FieldDraft<
+  D extends FieldDesc = FieldDesc,
+  SelfF extends FieldRecord = FieldRecord,
+> = D extends NullablePrimitiveDesc<infer P>
+  ? PrimitiveTsType<P> | null
+  : D extends PrimitiveDesc<infer P>
+    ? PrimitiveTsType<P>
+    : D extends StrDesc | FixedStrDesc
+      ? string
+      : D extends OptStrDesc
+        ? string | null
+        : D extends FixedBytesDesc<number>
+          ? Uint8Array
+          : D extends ArrayDesc<infer E, number>
+            ? E extends PrimitiveDesc<infer P>
+              ? TypedArrayFor<P>
+              : E extends StructDefLike<infer SF>
+                ? StructArrayDraft<SF>
+                : E extends SelfRef
+                  ? StructArrayDraft<SelfF>
+                  : E extends UnionDefLike<infer UV>
+                    ? UnionArrayDraft<UV, SelfF>
+                    : E extends FieldDesc
+                      ? FieldDraft<E, SelfF>[]
+                      : never
+            : D extends SliceDesc<infer E>
+              ? E extends PrimitiveDesc<infer P>
+                ? PrimitiveTsType<P>[]
+                : E extends StructDefLike<infer SF>
+                  ? StructArrayDraft<SF>
+                  : E extends SelfRef
+                    ? StructArrayDraft<SelfF>
+                    : E extends UnionDefLike<infer UV>
+                      ? UnionArrayDraft<UV, SelfF>
+                      : E extends FieldDesc
+                        ? FieldDraft<E, SelfF>[]
+                        : never
+              : D extends StructDefLike<infer SF>
+                ? StructDraft<SF>
+                : D extends SelfRef
+                  ? StructDraft<SelfF>
+                  : D extends RefDesc<infer S>
+                    ? S extends SelfRef
+                      ? StructDraft<SelfF> | null
+                      : S extends StructDefLike<infer F>
+                        ? StructDraft<F> | null
+                        : S extends UnionDefLike<infer UV>
+                          ? UnionDraft<UV, SelfF> | null
+                          : never
+                    : D extends UnionDefLike<infer UV>
+                      ? UnionDraft<UV, SelfF>
+                      : never;
+
+/** Mutable Immer-style draft over a struct schema `F` passed to `produce(base, draft => ...)`. */
+export type StructDraft<F extends FieldRecord = FieldRecord> = {
+  [K in keyof F]: FieldDraft<F[K], F>;
+} & { readonly [$draft]?: F };
+
+type DraftOf<V> = V extends StructArrayView<infer F>
+  ? StructArrayDraft<F>
+  : V extends StructViewBase<infer F>
+    ? StructDraft<F>
+    : never;
+
+type ImmutableViewOf<V> = V extends StructArrayView<infer F>
+  ? StructArrayView<F>
+  : V extends StructViewBase<infer F>
+    ? StructView<F>
+    : never;
+
+type ViewOfDraft<D> = D extends StructArrayDraft<infer F>
+  ? StructArrayView<F>
+  : D extends { readonly [$draft]?: infer F extends FieldRecord }
+    ? StructView<F>
+    : never;
 
 export type PlainFieldValue<D extends FieldDesc = FieldDesc, SelfF extends FieldRecord = FieldRecord> =
   D extends NullablePrimitiveDesc<infer P>
@@ -449,15 +664,26 @@ export type PlainFieldValue<D extends FieldDesc = FieldDesc, SelfF extends Field
 /** Plain JavaScript object representation of a struct schema `F`. */
 export type PlainStructValues<F extends FieldRecord> = { [K in keyof F]: PlainFieldValue<F[K], F> };
 /** True when field descriptor `D` is stored inline in the fixed-size struct header (`0` tail arena bytes). */
-export type IsInlineField<D extends FieldDesc = FieldDesc> = D extends PrimitiveDesc<any> | NullablePrimitiveDesc<any> | FixedStrDesc<any> | FixedBytesDesc<any>
-  ? true
-  : D extends ArrayDesc<infer E, any>
-    ? IsInlineField<E>
-    : D extends UnionDefLike<infer UV>
-      ? ({ [K in keyof UV]: UV[K] extends null ? true : UV[K] extends FieldDesc ? IsInlineField<UV[K]> : false }[keyof UV] extends true ? true : false)
-      : D extends StructDefLike<infer SF>
-        ? ({ [K in keyof SF]: IsInlineField<SF[K]> }[keyof SF] extends true ? true : false)
-        : false;
+export type IsInlineField<D extends FieldDesc = FieldDesc> =
+  FieldDesc extends D
+    ? boolean
+    : D extends PrimitiveDesc<any> | NullablePrimitiveDesc<any> | FixedStrDesc<any> | FixedBytesDesc<any>
+      ? true
+      : D extends ArrayDesc<infer E, any>
+        ? IsInlineField<E>
+        : D extends UnionDefLike<infer UV>
+          ? UnionVariantRecord extends UV
+            ? boolean
+            : { [K in keyof UV]: UV[K] extends null ? true : UV[K] extends FieldDesc ? IsInlineField<UV[K]> : false }[keyof UV] extends true
+              ? true
+              : false
+          : D extends StructDefLike<infer SF>
+            ? FieldRecord extends SF
+              ? boolean
+              : { [K in keyof SF]: IsInlineField<SF[K]> }[keyof SF] extends true
+                ? true
+                : false
+            : false;
 export type HeaderFieldRecord<F extends FieldRecord> = {
   [K in keyof F as IsInlineField<F[K]> extends true ? K : never]: F[K];
 };
@@ -465,8 +691,15 @@ export type HeaderFieldRecord<F extends FieldRecord> = {
 export type StructHeaderView<F extends FieldRecord = FieldRecord> =
   StructViewBase<HeaderFieldRecord<F>> & StructValues<HeaderFieldRecord<F>>;
 /** Infers the zero-copy `StructView` type from a `StructDef`. */
+/** Infers the read-only zero-copy `StructView` type from a `StructDef`. */
 export type InferView<S extends StructDefLike<any>> =
   S extends StructDefLike<infer F> ? StructView<F> : never;
+/** Infers the mutable in-place `MutStructView` type from a `StructDef`. */
+export type InferMutView<S extends StructDefLike<any>> =
+  S extends StructDefLike<infer F> ? MutStructView<F> : never;
+/** Infers the `produce()` draft `StructDraft` type from a `StructDef`. */
+export type InferDraft<S extends StructDefLike<any>> =
+  S extends StructDefLike<infer F> ? StructDraft<F> : never;
 /** Infers the plain JavaScript object type (`toObject()`) from a `StructDef`. */
 export type InferPlain<S extends StructDefLike<any>> =
   S extends StructDefLike<infer F> ? PlainStructValues<F> : never;
@@ -530,8 +763,35 @@ function utf8Dec(b: Uint8Array): string {
   }
   return s;
 }
-function utf8AtU(u: Uint8Array, o: number, n: number): string {
-  if (n < 48) {
+interface _BufLike {
+  utf8Slice?(start: number, end: number): string;
+  toString(encoding: string, start: number, end: number): string;
+}
+const _LE = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+const _BufCtor: { from(buf: ArrayBufferLike, byteOffset: number, byteLength: number): _BufLike; prototype?: _BufLike } | undefined =
+  typeof (globalThis as any).Buffer?.from === 'function' ? (globalThis as any).Buffer : undefined;
+const _hasUtf8Slice = Boolean(_BufCtor?.prototype?.utf8Slice);
+function _mkU32(d: DataView): Uint32Array | null {
+  return _LE && (d.byteOffset & 3) === 0 ? new Uint32Array(d.buffer, d.byteOffset, d.byteLength >>> 2) : null;
+}
+function _mkNb(d: DataView): _BufLike | null {
+  return _BufCtor ? _BufCtor.from(d.buffer, d.byteOffset, d.byteLength) : null;
+}
+function utf8AtU(u: Uint8Array, nb: _BufLike | null, o: number, n: number): string {
+  if (nb) {
+    if (n < 8) {
+      let s = '',
+        i = 0;
+      for (; i < n; i++) {
+        const c = u[o + i]!;
+        if (c > 127) break;
+        s += String.fromCharCode(c);
+      }
+      if (i === n) return s;
+    }
+    return _hasUtf8Slice ? nb.utf8Slice!(o, o + n) : nb.toString('utf8', o, o + n);
+  }
+  if (n < 24) {
     let s = '',
       i = 0;
     for (; i < n; i++) {
@@ -544,7 +804,7 @@ function utf8AtU(u: Uint8Array, o: number, n: number): string {
   return utf8Dec(u.subarray(o, o + n));
 }
 function utf8At(d: DataView, o: number, n: number): string {
-  return utf8AtU(u8s(d, o, n), 0, n);
+  return utf8AtU(u8s(d, o, n), _BufCtor ? _BufCtor.from(d.buffer, d.byteOffset + o, n) : null, 0, n);
 }
 function utf8Enc(s: string): Uint8Array {
   if (_te) return _te.encode(s);
@@ -569,6 +829,11 @@ function utf8Enc(s: string): Uint8Array {
   return out.subarray(0, n);
 }
 function oob(): never { throw new RangeError('Out of bounds'); }
+function roErr(): never {
+  throw new TypeError(
+    'Cannot mutate a read-only capnstruct view; use produce(view, draft => ...) or Schema.mutView()/mutArray()',
+  );
+}
 const ENV_MAGIC = 0x31305343;
 /** Computes the deterministic 32-bit FNV-1a hash used to identify schema types in `CS01` envelopes. */
 export function typeHash(name: string): number {
@@ -703,6 +968,7 @@ export function sentinel<P extends PrimitiveDesc<any>>(
   return {
     ...primDesc,
     _null: nullValue,
+    _sp: primDesc,
     _C: undefined,
     _g: (d: DataView, o: number) => { const v = primDesc._g(d, o); return Object.is(v, nullValue) ? null : (v as PrimitiveTsType<P['type']>); },
     _s: (d: DataView, o: number, v: any) => primDesc._s(d, o, (v ?? nullValue) as number | bigint | boolean),
@@ -732,6 +998,7 @@ export function scaled<P extends PrimitiveDesc<any>>(
   const nv = typeof nullOpt === 'number' ? nullOpt : nullOpt?.null;
   return {
     ...sentinel(primDesc, nv as any),
+    _sp: undefined,
     type: 'f64',
     _g: (d: DataView, o: number) => {
       const r = primDesc._g(d, o) as number;
@@ -739,7 +1006,7 @@ export function scaled<P extends PrimitiveDesc<any>>(
     },
     _s: (d: DataView, o: number, v: any) =>
       primDesc._s(d, o, v == null ? (nv ?? 0) : Math.round(+v * factor)),
-  };
+  } as any;
 }
 
 /** Variable-length UTF-8 string stored in the tail arena via an 8-byte `[u32 off, u32 len]` descriptor. */
@@ -815,11 +1082,15 @@ interface InternalStructView {
   _tl?: number;
   _dead?: number;
   _dirty?: boolean;
+  _ro?: boolean;
+  _env?: boolean;
   _m: (WasmMemoryLike & { offset?: number }) | WasmArena | null;
   _a?: InternalStructView;
   _e?: WireEnv | null;
   _k(): DataView;
-  compact(): Uint8Array;
+  _chkMut(): void;
+  _packBytes(): Uint8Array;
+  _compact(): Uint8Array;
   readonly byteLength: number;
   readonly bytes: Uint8Array;
 }
@@ -927,8 +1198,8 @@ function mutVar(
   return st;
 }
 function upgradeView(v: InternalStructView): void {
-  if (v._ws < v.def.size) rootOf(v).compact();
-  }
+  if (v._ws < v.def.size) rootOf(v)._compact();
+}
 let _budget = 0;
 let _rSeen: Map<unknown, Map<number, Record<string, unknown>>> | null = null;
 let _wSeen: Map<object, number> | null = null;
@@ -982,12 +1253,14 @@ function readVal(v: InternalStructView, desc: FieldDesc, off: number, plain: boo
       sav._m = v._m;
       sav._a = v;
       sav._e = v._e ?? null;
+      sav._ro = v._ro ?? true;
       return sav;
     }
     if (!plain && el!.kind === 'union') {
       const uav = new UnionArrayView(el as UnionDefLike, d, off, n, v._b, v._m, sz);
       uav._a = v;
       uav._e = v._e ?? null;
+      uav._ro = v._ro ?? true;
       return uav;
     }
     if (plain && (_budget -= n * sz) < 0) oob();
@@ -998,6 +1271,7 @@ function readVal(v: InternalStructView, desc: FieldDesc, off: number, plain: boo
         const nv = new StructViewBase(desc, d, v._b, off, v._m, ws);
         nv._a = v;
         nv._e = v._e ?? null;
+        nv._ro = v._ro ?? true;
         return nv;
       }
       let sm = ws > 0 ? _rSeen?.get(desc) : undefined;
@@ -1050,9 +1324,18 @@ function writeVal(v: InternalStructView | null, desc: FieldDesc, val: unknown, b
     const k = desc.kind;
     if (k === 'primitive') (desc as PrimitiveDesc)._s(dv(), off, val as number | bigint | boolean);
     else if (k === 'union') {
-      const obj = typeof val === 'object' && val !== null ? (val as { tag?: string; value?: unknown }) : null,
+      const obj = typeof val === 'object' && val !== null ? (val as { tag?: string; value?: unknown; rawTag?: number }) : null,
         vr = obj?.tag !== undefined ? desc.byName[obj.tag] : undefined;
-      if (!vr) oob();
+      if (!vr) {
+        if (obj?.tag === '$unknown' && typeof obj.rawTag === 'number' && obj.rawTag >= 0 && obj.rawTag < 256) {
+          const d = dv();
+          u8s(d, off, desc.size).fill(0);
+          d.setUint8(off, obj.rawTag);
+          if (v && desc._fv >= 0) rootOf(v)._dirty = true;
+          return;
+        }
+        oob();
+      }
       const d = dv();
       if (!v || d.getUint8(off) !== vr.tag) {
         u8s(d, off, desc.size).fill(0);
@@ -1146,21 +1429,27 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
   #bl!: number;
   #d!: DataView;
   #u!: Uint8Array;
+  #u32: Uint32Array | null = null;
+  #nb: _BufLike | null = null;
   #b!: number;
   #o!: number;
   #ws!: number;
   #tl: number | undefined;
   #dead: number | undefined;
   #dirty: boolean | undefined;
+  #ro = true;
+  #env = false;
   #a: InternalStructView | undefined;
   #r: MemView<any, any> | undefined;
   #e: WireEnv | null = null;
   #m!: WasmMemoryLike | WasmArena | null;
   get def(): D { return this.#def; }
   get byteLength(): number { return this.#bl; }
+  /** True when this view is read-only (`view()`, `viewEnvelope()`, `array()`, `produce()`). */
+  get readonly(): boolean { return this.#ro; }
   /** @internal */ set _bl(v: number) { this.#bl = v; }
   /** @internal */ get _d(): DataView { return this.#d; }
-  /** @internal */ set _d(v: DataView) { this.#d = v; this.#u = u8s(v); }
+  /** @internal */ set _d(v: DataView) { this.#d = v; this.#u = u8s(v); this.#u32 = _mkU32(v); this.#nb = _mkNb(v); }
   /** @internal */ get _b(): number { return this.#b; }
   /** @internal */ get _o(): number { return this.#o; }
   /** @internal */ set _o(v: number) { this.#o = v; }
@@ -1172,6 +1461,11 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
   /** @internal */ set _dead(v: number | undefined) { this.#dead = v; }
   /** @internal */ get _dirty(): boolean | undefined { return this.#dirty; }
   /** @internal */ set _dirty(v: boolean | undefined) { this.#dirty = v; }
+  /** @internal */ get _ro(): boolean { return this.#ro; }
+  /** @internal */ set _ro(v: boolean) { this.#ro = v; }
+  /** @internal */ get _env(): boolean { return this.#env; }
+  /** @internal */ set _env(v: boolean) { this.#env = v; }
+  /** @internal */ _chkMut(): void { if (this.#ro) roErr(); }
   /** @internal */ get _a(): InternalStructView | undefined { return this.#a; }
   /** @internal */ set _a(v: InternalStructView | undefined) {
     this.#a = v;
@@ -1198,18 +1492,23 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     this.#ws = ws;
     this.#d = d;
     this.#u = u;
+    this.#u32 = root.#u32;
+    this.#nb = root.#nb;
     this.#b = b;
     this.#o = o;
     this.#m = parent.#m;
     this.#a = parent as unknown as InternalStructView;
     this.#r = root;
     this.#e = env;
+    this.#ro = root.#ro;
     this.#dirty = false;
   }
   /** @internal */
   _set(d: DataView, b: number, o: number, m: WasmMemoryLike | WasmArena | null): this {
     this.#d = d;
     this.#u = u8s(d);
+    this.#u32 = _mkU32(d);
+    this.#nb = _mkNb(d);
     this.#b = b;
     this.#o = o;
     this.#m = m;
@@ -1220,6 +1519,8 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     const r = p.#r ?? p;
     this.#d = r.#m ? r._k() : r.#d;
     this.#u = r.#u;
+    this.#u32 = r.#u32;
+    this.#nb = r.#nb;
     this.#b = p.#b;
     this.#o = o;
     this.#ws = p.#ws;
@@ -1227,6 +1528,7 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     this.#a = p as unknown as InternalStructView;
     this.#r = r;
     this.#e = p.#e;
+    this.#ro = r.#ro;
     return this;
   }
   /** @internal */
@@ -1238,8 +1540,11 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     if (this.#a) {
       const d = this.#a._k();
       if (d !== this.#d) {
+        const r = this.#r ?? this;
         this.#d = d;
-        this.#u = (this.#r ?? this).#u;
+        this.#u = r.#u;
+        this.#u32 = r.#u32;
+        this.#nb = r.#nb;
       }
       return d;
     }
@@ -1247,6 +1552,8 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     if (m && m.buffer !== this.#d.buffer) {
       this.#d = m._d ?? new DataView(m.buffer);
       this.#u = u8s(this.#d);
+      this.#u32 = _mkU32(this.#d);
+      this.#nb = _mkNb(this.#d);
     }
     return this.#d;
   }
@@ -1257,15 +1564,72 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     return d._g(r.#m ? r._k() : r.#d, this.#o + fo);
   }
   /** @internal */
+  _rU32(fo: number, end: number): number {
+    if (end > this.#ws) return 0;
+    const r = this.#r ?? this;
+    const dv = r.#m ? r._k() : r.#d;
+    const pos = this.#o + fo;
+    const u32 = r.#u32;
+    return u32 && (pos & 3) === 0 ? u32[pos >>> 2]! : dv.getUint32(pos, true);
+  }
+  /** @internal */
+  _rI32(fo: number, end: number): number {
+    if (end > this.#ws) return 0;
+    const r = this.#r ?? this;
+    const dv = r.#m ? r._k() : r.#d;
+    const pos = this.#o + fo;
+    const u32 = r.#u32;
+    return u32 && (pos & 3) === 0 ? (u32[pos >>> 2]! | 0) : dv.getInt32(pos, true);
+  }
+  /** @internal */
+  _rU8(fo: number, end: number): number {
+    if (end > this.#ws) return 0;
+    const r = this.#r ?? this;
+    if (r.#m) r._k();
+    return r.#u[this.#o + fo]!;
+  }
+  /** @internal */
+  _rBool(fo: number, end: number): boolean {
+    if (end > this.#ws) return false;
+    const r = this.#r ?? this;
+    if (r.#m) r._k();
+    return r.#u[this.#o + fo]! !== 0;
+  }
+  /** @internal */
+  _rF64(fo: number, end: number): number {
+    if (end > this.#ws) return 0;
+    const r = this.#r ?? this;
+    return (r.#m ? r._k() : r.#d).getFloat64(this.#o + fo, true);
+  }
+  /** @internal */
+  _rSentU32(fo: number, end: number, nv: number): number | null {
+    if (end > this.#ws) return null;
+    const r = this.#r ?? this;
+    const dv = r.#m ? r._k() : r.#d;
+    const pos = this.#o + fo;
+    const u32 = r.#u32;
+    const x = u32 && (pos & 3) === 0 ? u32[pos >>> 2]! : dv.getUint32(pos, true);
+    return x === nv ? null : x;
+  }
+  /** @internal */
   _rStrAt(pos: number, opt: boolean): string | null {
     const r = this.#r ?? this;
     const dv = r.#m ? r._k() : r.#d;
-    const n = dv.getUint32(pos + 4, true);
-    if (!n) return opt ? (dv.getUint32(pos, true) ? '' : null) : '';
-    const p = this.#b + dv.getUint32(pos, true);
+    const u32 = r.#u32;
+    let off: number, n: number;
+    if (u32 && (pos & 3) === 0) {
+      const idx = pos >>> 2;
+      off = u32[idx]!;
+      n = u32[idx + 1]!;
+    } else {
+      off = dv.getUint32(pos, true);
+      n = dv.getUint32(pos + 4, true);
+    }
+    if (!n) return opt ? (off ? '' : null) : '';
+    const p = this.#b + off;
     const ts = r.#o, te = ts + r.#bl;
     if (p < this.#b || p + n > dv.byteLength || (p < te && p + n > ts) || (p < pos + 8 && p + n > pos)) oob();
-    return utf8AtU(r.#u, p, n);
+    return utf8AtU(r.#u, r.#nb, p, n);
   }
   /** @internal */
   _rStr(fo: number, end: number, opt: boolean): string | null {
@@ -1279,8 +1643,17 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     const el = desc.element as FieldDesc;
     const e = this.#e;
     const sz = e ? wireSz(e, el) : el.size;
-    const n = dv.getUint32(pos + 4, true);
-    const p = n ? this.#b + dv.getUint32(pos, true) : this.#b;
+    const u32 = r.#u32;
+    let off: number, n: number;
+    if (u32 && (pos & 3) === 0) {
+      const idx = pos >>> 2;
+      off = u32[idx]!;
+      n = u32[idx + 1]!;
+    } else {
+      off = dv.getUint32(pos, true);
+      n = dv.getUint32(pos + 4, true);
+    }
+    const p = n ? this.#b + off : this.#b;
     const bl = n * sz;
     const ts = r.#o, te = ts + r.#bl;
     if (n && (p < this.#b || p + bl > dv.byteLength || (p < te && p + bl > ts) || (p < pos + 8 && p + bl > pos))) oob();
@@ -1316,11 +1689,21 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     const r = this.#r ?? this;
     const dv = r.#m ? r._k() : r.#d;
     const pos = this.#o + fo;
-    if (!dv.getUint32(pos + 4, true)) return null;
+    const u32 = r.#u32;
+    let off: number, pres: number;
+    if (u32 && (pos & 3) === 0) {
+      const idx = pos >>> 2;
+      off = u32[idx]!;
+      pres = u32[idx + 1]!;
+    } else {
+      off = dv.getUint32(pos, true);
+      pres = dv.getUint32(pos + 4, true);
+    }
+    if (!pres) return null;
     const el = desc.element as FieldDesc;
     const e = this.#e;
     const sz = e ? wireSz(e, el) : el.size;
-    const p = this.#b + dv.getUint32(pos, true);
+    const p = this.#b + off;
     const ts = r.#o, te = ts + r.#bl;
     const rst = (r as any).stride ?? (r.#ws || (r.#def as StructDefLike<any>).size);
     const rsz = el === r.#def ? rst : sz;
@@ -1402,12 +1785,23 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
       data: a.toJSON(),
     };
   }
-  /** Re-packs only live fields and tail data into a tight `Uint8Array` and rebinds this view in-place. */
-  compact(): Uint8Array {
+  /** @internal */
+  _packBytes(): Uint8Array {
+    if ((this.#def as any).kind === 'union') return u8s(this._k(), this.#o, this.#bl);
+    const a = this as any,
+      isArr = 'length' in a;
+    return pack(
+      this.#def as any,
+      (isArr ? a.toJSON() : [a.toJSON()]) as readonly Partial<StructInput<F>>[],
+    );
+  }
+  /** @internal */
+  _compact(): Uint8Array {
+    this._chkMut();
     if ((this.#def as any).kind === 'union') return u8s(this._k(), this.#o, this.#bl);
     const a = this as any,
       isArr = 'length' in a,
-      p = pack(this.#def as StructDef<F>, (isArr ? a.toJSON() : [a.toJSON()]) as readonly Partial<StructInput<F>>[]),
+      p = this._packBytes(),
       o0 = this.#o,
       oldSt = isArr ? a.stride : 0,
       sz = (this.#def as any).size;
@@ -1416,13 +1810,15 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     this.#ws = sz;
     this.#dead = 0;
     this.#dirty = false;
+    this.#env = false;
     this.#a = undefined;
     this.#r = undefined;
     this._set(new DataView(p.buffer, p.byteOffset, p.byteLength), 0, 0, null);
     if (isArr) {
       a.stride = sz;
       a._cap = a.length;
-      for (const pv of [a._c, ...(a._p ?? [])]) if (pv) pv._set(this.#d, 0, oldSt ? Math.floor((pv._o - o0) / oldSt) * sz : 0, a), (pv._ws = sz);
+      for (const pv of [a._c, ...(a._p ?? [])])
+        if (pv) pv._set(this.#d, 0, oldSt ? Math.floor((pv._o - o0) / oldSt) * sz : 0, a), (pv._ws = sz);
     }
     return p;
   }
@@ -1430,9 +1826,14 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
   get bytes(): Uint8Array {
     const def = this.#def as any;
     if (def.kind === 'union') return u8s(this._k(), this.#o, this.#bl);
-    if (this.#dirty || this.#dead || (def._fv >= 0 && this.#b !== this.#o)) return this.compact();
-    const d = this._k(),
-      rawEnd = Math.max(this.#bl, (this.#tl ?? 0) - this.#o),
+    if (this.#dirty || this.#dead || (def._fv >= 0 && (this.#b !== this.#o || this.#a)))
+      return this.#ro || this.#a ? this._packBytes() : this._compact();
+    const d = this._k();
+    if (this.#env) {
+      const envEnd = Math.max(this.#o + this.#bl, this.#tl ?? 0);
+      return u8s(d, 0, Math.min(d.byteLength, al(envEnd, 8)));
+    }
+    const rawEnd = Math.max(this.#bl, (this.#tl ?? 0) - this.#o),
       end = !this.#m && this.#tl !== undefined ? Math.min(d.byteLength - this.#o, al(rawEnd, 8)) : rawEnd;
     if (this.#bl && def._fv >= 0) {
       const ts = al(this.#bl, 8),
@@ -1440,13 +1841,27 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
       if (fvs >= 0) {
         const f = this.#b + fvs,
           p0 = d.getUint32(f, true);
-        if (this.#tl !== undefined && p0 > ts) return this.compact();
-        if (p0 < ts && end >= ts && !d.getUint32(f + 4, true)) d.setUint32(f, ts, true);
+        if (this.#tl !== undefined && p0 > ts) return this.#ro ? this._packBytes() : this._compact();
+        if (p0 < ts && end >= ts && !d.getUint32(f + 4, true)) {
+          if (this.#ro) {
+            const out = u8s(d, this.#o, end).slice();
+            new DataView(out.buffer).setUint32(f - this.#o, ts, true);
+            return out;
+          }
+          d.setUint32(f, ts, true);
+        }
       } else if (def._fvr) {
         const f = this.#b + def._fv,
           p0 = d.getUint32(f, true);
-        if (this.#tl !== undefined && p0 > ts) return this.compact();
-        if (p0 < ts && end >= ts) fixFv(d, f, ts);
+        if (this.#tl !== undefined && p0 > ts) return this.#ro ? this._packBytes() : this._compact();
+        if (p0 < ts && end >= ts) {
+          if (this.#ro) {
+            const out = u8s(d, this.#o, end).slice();
+            fixFv(new DataView(out.buffer), f - this.#o, ts);
+            return out;
+          }
+          fixFv(d, f, ts);
+        }
       }
     }
     return u8s(d, this.#o, end);
@@ -1455,6 +1870,7 @@ class MemView<F extends FieldRecord = FieldRecord, D = StructDefLike<F>> {
     return readPlain(this as any);
   }
 }
+(MemView.prototype as any).compact = MemView.prototype._compact;
 
 export class StructViewBase<
   F extends FieldRecord = FieldRecord,
@@ -1492,28 +1908,39 @@ export class StructViewBase<
   /** Alias for `seek(index)` on a flyweight cursor. */
   declare at: (index: number) => this;
 
-  /** Updates a single field in-place (accepts plain JS arrays/objects for `slice`, `fixedArray`, and nested structs). */
-  set<K extends keyof F>(field: K, value: FieldInput<F[K]>): this;
-  /** Updates multiple fields in-place from a partial object or positional tuple. */
-  set(values: Partial<StructInput<F>> | readonly unknown[]): this;
-  set(fieldOrValues: unknown, value?: unknown): this {
+  /** @internal */
+  _setF(fieldOrValues: unknown, value?: unknown): this {
+    this._chkMut();
     if (typeof fieldOrValues === 'string') (this as any)[fieldOrValues] = value;
-    else writeVal(this as any, this.def, fieldOrValues, this._b, this._o);
+    else {
+      if (this._ws < this.def.size) upgradeView(this as any);
+      writeVal(this as any, this.def, fieldOrValues, this._b, this._o);
+    }
     return this;
   }
-  /** Updates multiple fields in-place from a partial object or positional tuple. */
-  declare setAll: (values: Partial<StructInput<F>> | readonly unknown[]) => this;
   declare toObject: () => PlainStructValues<F>;
   /** Serializes this struct view to a plain object for `JSON.stringify()`. */
   declare toJSON: () => PlainStructValues<F>;
 }
 const kInspect = /* @__PURE__ */ Symbol.for('nodejs.util.inspect.custom');
 StructViewBase.prototype.at = StructViewBase.prototype.seek;
-StructViewBase.prototype.setAll = StructViewBase.prototype.set;
+(StructViewBase.prototype as any).set = StructViewBase.prototype._setF;
 (MemView.prototype as any)[kInspect] = StructViewBase.prototype.toObject = MemView.prototype.toJSON as any;
-/** Zero-copy view over a single binary struct with direct getter/setter properties for every field in `F`. */
+/** Methods available exclusively on mutable `MutStructView<F>` instances. */
+export interface MutStructMethods<F extends FieldRecord = FieldRecord> {
+  /** Updates a single field in-place (accepts plain JS arrays/objects for `slice`, `fixedArray`, and nested structs). */
+  set<K extends keyof F>(field: K, value: FieldInput<F[K], F>): this;
+  /** Updates multiple fields in-place from a partial object or positional tuple. */
+  set(values: Partial<StructInput<F>> | readonly unknown[]): this;
+  /** Re-packs only live fields and tail data into a tight `Uint8Array` and rebinds this view in-place. */
+  compact(): Uint8Array;
+}
+/** Read-only zero-copy view over a single binary struct (`Schema.view()`, `Schema.viewEnvelope()`, `produce()`). */
 export type StructView<F extends FieldRecord = FieldRecord> =
   StructViewBase<F> & StructValues<F>;
+/** Mutable zero-copy view over a single binary struct (`Schema.create()`, `Schema.mutView()`, `WasmArena`). */
+export type MutStructView<F extends FieldRecord = FieldRecord> =
+  StructViewBase<F> & MutStructValues<F> & MutStructMethods<F>;
 function normOpts(
   b: number | ViewOptions | StructDefLike<any> = 0,
   c?: number,
@@ -1526,7 +1953,7 @@ function normOpts(
 }
 
 export function structView<F extends FieldRecord>(
-  def: StructDef<F>,
+  def: StructDefLike<F>,
   source: BufferSourceInput,
   byteOffset: number | ViewOptions | StructDefLike<any> = 0,
   baseOffset?: number,
@@ -1541,16 +1968,28 @@ export function structView<F extends FieldRecord>(
   v._tl = r.o + Math.max(ws, r.max);
   return v;
 }
-export class StructArrayView<F extends FieldRecord = FieldRecord>
-  extends MemView<F>
-  implements Iterable<StructView<F>>
-{
+/** Wraps a binary buffer in a mutable `MutStructView<F>` for in-place zero-copy writes. */
+export function mutStructView<F extends FieldRecord>(
+  def: StructDefLike<F>,
+  source: BufferSourceInput,
+  byteOffset: number | ViewOptions | StructDefLike<any> = 0,
+  baseOffset?: number,
+  wireStride?: number,
+): MutStructView<F> {
+  const v = structView(def, source, byteOffset, baseOffset, wireStride);
+  v._ro = false;
+  return v as unknown as MutStructView<F>;
+}
+export class StructArrayView<
+  F extends FieldRecord = FieldRecord,
+  V extends StructViewBase<F> = StructView<F>,
+> extends MemView<F> implements Iterable<V> {
   declare stride: number;
   declare length: number;
   /** @internal */
-  declare _p: Array<StructView<F> | undefined> | null;
+  declare _p: Array<V | undefined> | null;
   /** @internal */
-  declare _c: StructView<F> | null;
+  declare _c: V | null;
   /** @internal */
   declare _cap: number;
 
@@ -1610,116 +2049,65 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     sav._cap = len;
     return sav;
   }
-  /** @internal */
-  _mv(index: number, v?: StructView<F> | null): StructView<F> {
+  _mv(index: number, v?: StructViewBase<F> | null): V {
     const o = this._o + index * this.stride;
-    if (v) return v._rebind(this, o) as StructView<F>;
+    if (v) return v._rebind(this, o) as V;
     const r = this._root(),
       d = this._k();
-    return (this.def as unknown as StructDef<F>)._mk(d, r._u(), this._b, o, this._ws, this, r, this._e);
+    return (this.def as unknown as StructDef<F>)._mk(d, r._u(), this._b, o, this._ws, this, r, this._e) as unknown as V;
   }
   /** Returns a reusable flyweight cursor positioned at `index`. */
-  cursor(index = 0): StructView<F> {
-    return (this._c = this._mv(index, this._c));
+  cursor(index = 0): V {
+    return (this._c = this._mv(index, this._c)) as V;
   }
-
-  /** Returns a `StructView<F>` at `index` (supports negative indices from the end, e.g. `rows.at(-1)`). */
-  at(index: number, out?: StructView<F>): StructView<F> {
+  /** Returns a view at `index` (supports negative indices from the end, e.g. `rows.at(-1)`). */
+  at(index: number, out?: StructViewBase<F>): V {
     if (index < 0) index += this.length;
     if (index < 0 || index >= this.length) oob();
-    return out ? this._mv(index, out) : ((this._p ??= [])[index] = this._mv(index, this._p[index]));
+    return out ? this._mv(index, out) : (((this._p ??= [])[index] = this._mv(index, this._p[index]) as any) as V);
   }
-
-  /** Writes `value` into the struct at `index` (supports negative indices from the end). */
-  set(index: number, value: Partial<StructInput<F>> | StructView<F> | readonly unknown[]): this {
-    this.at(index).set(value as any);
-    return this;
-  }
-
-  /** Appends one or more rows to the binary array, automatically growing capacity if needed. */
-  push(...items: (Partial<StructInput<F>> | StructView<F> | readonly unknown[])[]): number {
-    const def = this.def, st = this.stride, need = this.length + items.length, hasVar = def._fv >= 0;
-    if (need > this._cap) {
-      const curEnd = this._tl ?? this._o + this.byteLength,
-        tableEnd = this._o + this._cap * st;
-      if ((!hasVar || !this.length) && tableEnd === curEnd) {
-        allocTail(this, (need - this._cap) * st, def.align);
-        this._cap = need;
-      } else {
-        const newCap = Math.max(need, (this._cap || 2) * 2),
-          newO = allocTail(this, al(newCap * st, 8), def.align),
-          d = this._k(),
-          dO = newO - this._o;
-        if (this.byteLength > 0) {
-          u8s(d, newO, this.byteLength).set(u8s(d, this._o, this.byteLength));
-          this._dead = (this._dead ?? 0) + this.byteLength;
-        }
-        this._o = newO;
-        this._cap = newCap;
-        for (const pv of [this._c, ...(this._p ?? [])]) if (pv) pv._o += dO;
-      }
-    }
-    initNulls(def, this._k(), this._o + this.length * st, items.length, st);
-    for (const item of items) {
-      const idx = this.length++;
-      this._bl = this.length * st;
-      writeVal(this as unknown as InternalStructView, def, item, this._b, this._o + idx * st);
-      if (hasVar) this._dirty = true;
-    }
-    return this.length;
-  }
-
-  pop(): PlainStructValues<F> | undefined {
-    if (!this.length) return undefined;
-    const lastIdx = --this.length,
-      val = readPlain(this, this._o + lastIdx * this.stride);
-    this._bl = this.length * this.stride;
-    if (this.def._fv >= 0) this._dead = (this._dead ?? 0) + this.stride;
-    else if (this._tl === this._o + (lastIdx + 1) * this.stride) {
-      this._tl -= this.stride;
-      this._cap = this.length;
-    }
-    return val as PlainStructValues<F>;
-  }
-  /** Returns a zero-copy `StructArrayView` over `[begin, end)` without copying bytes. */
-  subarray(begin = 0, end = this.length): StructArrayView<F> {
+  /** Returns a zero-copy `StructArrayView` slice over `[begin, end)` without copying bytes. */
+  subarray(begin = 0, end = this.length): StructArrayView<F, V> {
     const len = this.length,
       cl = (i: number) => Math.max(0, Math.min(len, i < 0 ? len + i : i)),
       s = cl(begin),
       e = cl(end),
-      sub = new StructArrayView(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._ws);
+      sub = new StructArrayView<F, V>(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._ws);
     sub._m = this._m;
     sub._a = this;
     sub._e = this._e;
+    sub._ro = this._ro;
     sub._dirty = (this.def._fv >= 0 && (s > 0 || e < len)) || Boolean(this._dirty || this._dead);
     return sub;
   }
   /** Alias for `subarray(begin, end)` returning a zero-copy `StructArrayView` slice over `[begin, end)`. */
-  declare slice: (begin?: number, end?: number) => StructArrayView<F>;
+  declare slice: (begin?: number, end?: number) => StructArrayView<F, V>;
   /** Calls `callbackfn` for each row using a flyweight cursor (`0` allocations). */
-  forEach(fn: (row: StructView<F>, index: number, array: this) => void): void {
+  forEach(fn: (row: V, index: number, array: this) => void): void {
     this.map(fn);
   }
-  /** Projects each row in this view into a new JavaScript array (`row` is a distinct `StructView` per element). */
-  map<U = StructView<F>>(fn: (row: StructView<F>, index: number, array: this) => U = (r) => r as any): U[] {
+  /** Projects each row in this view into a new JavaScript array (`row` is a distinct view per element). */
+  map<U = V>(fn: (row: V, index: number, array: this) => U = (r) => r as any): U[] {
     return Array.from({ length: this.length }, (_, i) => fn(this._mv(i), i, this));
   }
   /** Returns the first row matching `predicate` (or `undefined`). */
-  find(fn: (row: StructView<F>, index: number, array: this) => unknown): StructView<F> | undefined {
+  find(fn: (row: V, index: number, array: this) => unknown): V | undefined {
     return this.map().find(fn as any);
   }
   /** Returns `true` if any row matches `predicate`. */
-  some(fn: (row: StructView<F>, index: number, array: this) => unknown): boolean {
+  some(fn: (row: V, index: number, array: this) => unknown): boolean {
     return this.map().some(fn as any);
   }
   /** Returns `true` if every row matches `predicate`. */
-  every(fn: (row: StructView<F>, index: number, array: this) => unknown): boolean {
+  every(fn: (row: V, index: number, array: this) => unknown): boolean {
     return this.map().every(fn as any);
   }
-  /** Filters rows with a reusable flyweight cursor and returns a new `StructArrayView<F>` containing matching rows. */
-  filter(fn: (row: StructView<F>, index: number) => unknown): StructArrayView<F> {
-    const b = this.filterBytes(fn as any);
-    return new StructArrayView(this.def, b, 0, b.byteLength ? undefined : 0);
+  /** Filters rows with a reusable flyweight cursor and returns a new `StructArrayView` containing matching rows. */
+  filter(fn: (row: V, index: number) => unknown): StructArrayView<F, V> {
+    const b = this.filterBytes(fn as any),
+      out = new StructArrayView<F, V>(this.def, b, 0, b.byteLength ? undefined : 0);
+    out._ro = this._ro;
+    return out;
   }
   /** Binary search: first row index `i` in `[0..length]` where `row[i][field] >= value` ($O(\log N)$, 0 allocations). */
   lowerBound<K extends PrimitiveFieldKeys<F>>(field: K, value: number | bigint): number {
@@ -1734,11 +2122,11 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     field: K,
     min: number | bigint,
     max: number | bigint,
-  ): StructArrayView<F> {
+  ): StructArrayView<F, V> {
     return this.subarray(this.lowerBound(field, min), this.upperBound(field, max));
   }
-  /** Filters rows with a reusable flyweight cursor (0 per-row JS objects) and copies matching binary rows into a `Uint8Array`. */
-  filterBytes(predicate: (row: StructView<F>, index: number) => boolean): Uint8Array {
+  /** Filters rows with a reusable flyweight cursor (`0` per-row JS objects) and copies matching binary rows into a `Uint8Array`. */
+  filterBytes(predicate: (row: V, index: number) => boolean): Uint8Array {
     const len = this.length,
       c = this.cursor(0),
       def = this.def,
@@ -1751,7 +2139,7 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
         def._fv < 0 && st === def.size && this._ws === st
           ? (sU8.set(u8s(this._k(), this._o + i * st, st), outOff), (outOff += st))
           : rows.push(c.toObject());
-    return rows.length ? pack(def as StructDef<F>, rows) : sU8.slice(0, outOff);
+    return rows.length ? pack(def as any, rows) : sU8.slice(0, outOff);
   }
 
   /** Extracts a `TypedArray` column for primitive `field` (zero-copy when `stride === field.size`). */
@@ -1774,23 +2162,6 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
     return out;
   }
 
-  /** Bulk-writes a primitive column from `values` into `field` across all rows. */
-  setColumn<K extends PrimitiveFieldKeys<F>>(
-    field: K,
-    values: ArrayLike<number | bigint | boolean>,
-  ): this {
-    const lay = colDesc(this, field);
-    if (lay.offset + lay.size > this._ws) this.compact();
-    const desc = lay.desc,
-      d = this._k(),
-      st = this.stride,
-      n = Math.min(this.length, values.length);
-    for (let i = 0, off = this._o + lay.offset; i < n; i++, off += st) {
-      desc._s(d, off, values[i] as number | bigint | boolean);
-    }
-    return this;
-  }
-
   /** Materializes all rows into an array of plain JavaScript objects. */
   declare toObjects: () => PlainStructValues<F>[];
   /** Serializes this array of rows to an array of plain objects for `JSON.stringify()`. */
@@ -1799,11 +2170,11 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
    * Iterates rows in this view. By default (`flyweight: true`), reuses a single flyweight cursor (`0` allocations).
    * Pass `{ flyweight: false }` when collecting `StructView` instances into an array/Set.
    */
-  values(options?: { flyweight?: boolean }): IterableIterator<StructView<F>> {
+  values(options?: { flyweight?: boolean }): IterableIterator<V> {
     return (options?.flyweight === false ? this.map() : this)[Symbol.iterator]();
   }
   /** Zero-allocation flyweight iterator (`for (const row of view)`). Use `view.map(...)` or `view.toObjects()` when collecting rows. */
-  *[Symbol.iterator](): IterableIterator<StructView<F>> {
+  *[Symbol.iterator](): IterableIterator<V> {
     for (let i = 0, c = this.cursor(0), b = this._o, st = this.stride, n = this.length; i < n; i++) {
       c._o = b + i * st;
       yield c;
@@ -1812,11 +2183,99 @@ export class StructArrayView<F extends FieldRecord = FieldRecord>
 }
 StructArrayView.prototype.slice = StructArrayView.prototype.subarray;
 StructArrayView.prototype.toObjects = MemView.prototype.toJSON as any;
+const _savP = StructArrayView.prototype as any;
+_savP.set = function (this: StructArrayView<any>, index: number, value: unknown) {
+  this._chkMut();
+  (this.at(index) as any).set(value);
+  return this;
+};
+_savP.push = function (this: StructArrayView<any>, ...items: unknown[]): number {
+  this._chkMut();
+  const def = this.def,
+    st = this.stride,
+    need = this.length + items.length,
+    hasVar = def._fv >= 0;
+  if (need > this._cap) {
+    const curEnd = this._tl ?? this._o + this.byteLength,
+      tableEnd = this._o + this._cap * st;
+    if ((!hasVar || !this.length) && tableEnd === curEnd) {
+      allocTail(this as any, (need - this._cap) * st, def.align);
+      this._cap = need;
+    } else {
+      const newCap = Math.max(need, (this._cap || 2) * 2),
+        newO = allocTail(this as any, al(newCap * st, 8), def.align),
+        d = this._k(),
+        dO = newO - this._o;
+      if (this.byteLength > 0) {
+        u8s(d, newO, this.byteLength).set(u8s(d, this._o, this.byteLength));
+        this._dead = (this._dead ?? 0) + this.byteLength;
+      }
+      this._o = newO;
+      this._cap = newCap;
+      for (const pv of [this._c, ...(this._p ?? [])]) if (pv) pv._o += dO;
+    }
+  }
+  initNulls(def, this._k(), this._o + this.length * st, items.length, st);
+  for (const item of items) {
+    const idx = this.length++;
+    this._bl = this.length * st;
+    writeVal(this as unknown as InternalStructView, def, item, this._b, this._o + idx * st);
+    if (hasVar) this._dirty = true;
+  }
+  return this.length;
+};
+_savP.pop = function (this: StructArrayView<any>) {
+  this._chkMut();
+  if (!this.length) return undefined;
+  const lastIdx = --this.length,
+    val = readPlain(this as any, this._o + lastIdx * this.stride);
+  this._bl = this.length * this.stride;
+  if (this.def._fv >= 0) this._dead = (this._dead ?? 0) + this.stride;
+  else if (this._tl === this._o + (lastIdx + 1) * this.stride) {
+    this._tl -= this.stride;
+    this._cap = this.length;
+  }
+  return val;
+};
+_savP.setColumn = function (this: StructArrayView<any>, field: string, values: ArrayLike<number | bigint | boolean>) {
+  this._chkMut();
+  const lay = colDesc(this, field);
+  if (lay.offset + lay.size > this._ws) this._compact();
+  const desc = lay.desc,
+    d = this._k(),
+    st = this.stride,
+    n = Math.min(this.length, values.length);
+  for (let i = 0, off = this._o + lay.offset; i < n; i++, off += st) {
+    desc._s(d, off, values[i] as number | bigint | boolean);
+  }
+  return this;
+};
+/** Mutable zero-copy array view (`Schema.mutArray()`, `Schema.alloc()`, `Schema.shared()`, `Schema.inWasm()`, `Schema.from(rows)`). */
+export interface MutStructArrayView<F extends FieldRecord = FieldRecord>
+  extends StructArrayView<F, MutStructView<F>> {
+  /** Writes `value` into the struct at `index` (supports negative indices from the end). */
+  set(index: number, value: Partial<StructInput<F>> | StructViewBase<F> | readonly unknown[]): this;
+  /** Appends one or more rows to the binary array, automatically growing capacity if needed. */
+  push(...items: (Partial<StructInput<F>> | StructViewBase<F> | readonly unknown[])[]): number;
+  /** Removes and returns the last row as a plain object (or `undefined` when empty). */
+  pop(): PlainStructValues<F> | undefined;
+  /** Re-packs only live rows and tail data into a tight `Uint8Array` and rebinds this view in-place. */
+  compact(): Uint8Array;
+  /** Bulk-writes a primitive column from `values` into `field` across all rows. */
+  setColumn<K extends PrimitiveFieldKeys<F>>(field: K, values: ArrayLike<number | bigint | boolean>): this;
+  /** Returns a zero-copy mutable `MutStructArrayView` slice over `[begin, end)` without copying bytes. */
+  subarray(begin?: number, end?: number): MutStructArrayView<F>;
+  /** Alias for `subarray(begin, end)` returning a zero-copy mutable `MutStructArrayView` slice. */
+  slice(begin?: number, end?: number): MutStructArrayView<F>;
+  filter(fn: (row: MutStructView<F>, index: number) => unknown): MutStructArrayView<F>;
+  rangeBy<K extends PrimitiveFieldKeys<F>>(field: K, min: number | bigint, max: number | bigint): MutStructArrayView<F>;
+}
 /** Lazy zero-copy view over a `slice(Union)` or `fixedArray(Union, N)` without eager JS array materialization. */
 export class UnionArrayView<
   V extends UnionVariantRecord = UnionVariantRecord,
   SelfF extends FieldRecord = FieldRecord,
-> extends MemView<any, UnionDefLike<V>> implements Iterable<UnionValue<V, SelfF>> {
+  U = UnionValue<V, SelfF>,
+> extends MemView<any, UnionDefLike<V>> implements Iterable<U> {
   declare readonly stride: number;
   declare readonly length: number;
   constructor(
@@ -1852,10 +2311,10 @@ export class UnionArrayView<
     return this._o + i * this.stride;
   }
   /** Reads the single tagged union element at `index` in O(1) (supports negative indices). */
-  at(index: number): UnionValue<V, SelfF> {
+  at(index: number): U {
     const off = this._i(index);
-    if (!this._e) return this._rU(off, this.def) as UnionValue<V, SelfF>;
-    return readVal(this as unknown as InternalStructView, this.def, off, false) as UnionValue<V, SelfF>;
+    if (!this._e) return this._rU(off, this.def) as U;
+    return readVal(this as unknown as InternalStructView, this.def, off, false) as U;
   }
   /** Reads only the 1-byte discriminant tag name at `index` in O(1) without allocating a union object. */
   tagAt(index: number): keyof V & string {
@@ -1866,41 +2325,37 @@ export class UnionArrayView<
     if (wt && tag < wt.vc) return '$unknown' as keyof V & string;
     oob();
   }
-  /** Updates the tagged union element at `index` in-place (supports negative indices). */
-  set(index: number, value: UnionInput<V, SelfF>): this {
-    writeVal(this as unknown as InternalStructView, this.def, value, this._b, this._i(index));
-    return this;
-  }
   /** Returns a zero-copy `UnionArrayView` slice over `[begin, end)` without copying bytes. */
-  subarray(begin = 0, end = this.length): UnionArrayView<V, SelfF> {
+  subarray(begin = 0, end = this.length): UnionArrayView<V, SelfF, U> {
     const len = this.length,
       cl = (i: number) => Math.max(0, Math.min(len, i < 0 ? len + i : i)),
       s = cl(begin),
       e = cl(end),
-      sub = new UnionArrayView<V, SelfF>(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._m, this.stride);
+      sub = new UnionArrayView<V, SelfF, U>(this.def, this._k(), this._o + s * this.stride, Math.max(0, e - s), this._b, this._m, this.stride);
     sub._a = this._a;
     sub._e = this._e;
+    sub._ro = this._ro;
     return sub;
   }
   /** Alias for `subarray(begin, end)`. */
-  declare slice: (begin?: number, end?: number) => UnionArrayView<V, SelfF>;
-  forEach(fn: (item: UnionValue<V, SelfF>, index: number, array: this) => void): void {
+  declare slice: (begin?: number, end?: number) => UnionArrayView<V, SelfF, U>;
+  forEach(fn: (item: U, index: number, array: this) => void): void {
     for (let i = 0; i < this.length; i++) fn(this.at(i), i, this);
   }
-  map<U>(fn: (item: UnionValue<V, SelfF>, index: number, array: this) => U): U[] {
+  map<R>(fn: (item: U, index: number, array: this) => R): R[] {
     return Array.from({ length: this.length }, (_, i) => fn(this.at(i), i, this));
   }
-  find(fn: (item: UnionValue<V, SelfF>, index: number, array: this) => unknown): UnionValue<V, SelfF> | undefined {
+  find(fn: (item: U, index: number, array: this) => unknown): U | undefined {
     for (let i = 0; i < this.length; i++) {
       const v = this.at(i);
       if (fn(v, i, this)) return v;
     }
   }
-  some(fn: (item: UnionValue<V, SelfF>, index: number, array: this) => unknown): boolean {
+  some(fn: (item: U, index: number, array: this) => unknown): boolean {
     for (let i = 0; i < this.length; i++) if (fn(this.at(i), i, this)) return true;
     return false;
   }
-  every(fn: (item: UnionValue<V, SelfF>, index: number, array: this) => unknown): boolean {
+  every(fn: (item: U, index: number, array: this) => unknown): boolean {
     for (let i = 0; i < this.length; i++) if (!fn(this.at(i), i, this)) return false;
     return true;
   }
@@ -1908,18 +2363,33 @@ export class UnionArrayView<
   declare toObjects: () => PlainUnionValue<V, SelfF>[];
   /** Serializes this union array view to a plain array for `JSON.stringify()`. */
   declare toJSON: () => PlainUnionValue<V, SelfF>[];
-  *[Symbol.iterator](): IterableIterator<UnionValue<V, SelfF>> {
+  *[Symbol.iterator](): IterableIterator<U> {
     for (let i = 0; i < this.length; i++) yield this.at(i);
   }
 }
 UnionArrayView.prototype.slice = UnionArrayView.prototype.subarray;
 UnionArrayView.prototype.toObjects = MemView.prototype.toJSON as any;
-function colDesc(a: StructArrayView<any>, k: PropertyKey): FieldLayout<PrimitiveDesc<any>> {
+(UnionArrayView.prototype as any).set = function (this: UnionArrayView<any, any>, index: number, value: unknown) {
+  this._chkMut();
+  writeVal(this as unknown as InternalStructView, this.def, value, this._b, this._i(index));
+  return this;
+};
+/** Mutable zero-copy tagged-union array view returned on `MutStructView` fields. */
+export interface MutUnionArrayView<
+  V extends UnionVariantRecord = UnionVariantRecord,
+  SelfF extends FieldRecord = FieldRecord,
+> extends UnionArrayView<V, SelfF, MutUnionValue<V, SelfF>> {
+  /** Updates the tagged union element at `index` in-place (supports negative indices). */
+  set(index: number, value: UnionInput<V, SelfF>): this;
+  subarray(begin?: number, end?: number): MutUnionArrayView<V, SelfF>;
+  slice(begin?: number, end?: number): MutUnionArrayView<V, SelfF>;
+}
+function colDesc(a: StructArrayView<any, any>, k: PropertyKey): FieldLayout<PrimitiveDesc<any>> {
   const lay = a.def.fields[k as string];
   if (!lay?.desc._C) oob();
   return lay as FieldLayout<PrimitiveDesc<any>>;
 }
-function bsearch(a: StructArrayView<any>, k: PropertyKey, v: number | bigint, eq: boolean): number {
+function bsearch(a: StructArrayView<any, any>, k: PropertyKey, v: number | bigint, eq: boolean): number {
   const lay = colDesc(a, k),
     g = lay.desc._g,
     d = a._k(),
@@ -1940,9 +2410,8 @@ export interface PlacedBytes extends Uint8Array {
   as<F extends FieldRecord>(
     def: StructDef<F>,
     count?: number,
-  ): StructArrayView<F>;
+  ): MutStructArrayView<F>;
 }
-
 export type WasmTarget =
   | WasmArena
   | WasmMemoryLike
@@ -1953,7 +2422,7 @@ export type WasmTarget =
       readonly alloc?: (byteLength: number) => number;
     };
 export interface WasmSlice<F extends FieldRecord = FieldRecord> {
-  readonly view: StructArrayView<F>;
+  readonly view: MutStructArrayView<F>;
   readonly ptr: number;
   readonly len: number;
   readonly byteLength: number;
@@ -2048,24 +2517,24 @@ export class WasmArena {
     def: StructDef<F>,
     count = 1,
     zero = false,
-  ): StructArrayView<F> {
+  ): MutStructArrayView<F> {
     const p = this._alloc(count * def.size, def.align, zero);
     initNulls(def, this._d, p, count);
     const v = new StructArrayView(def, this, p, count, p);
     v._tl = p + count * def.size;
-    return v;
+    v._ro = false;
+    return v as MutStructArrayView<F>;
   }
-
   allocOne<F extends FieldRecord>(
     def: StructDef<F>,
     init?: Partial<StructInput<F>>,
-  ): StructView<F> {
+  ): MutStructView<F> {
     const p = this._alloc(def.size, def.align, true),
-      v = new StructViewBase(def, this._d, p, p, this) as StructView<F>;
+      v = new StructViewBase(def, this._d, p, p, this) as MutStructView<F>;
+    v._ro = false;
     initNulls(def, this._d, p);
-    return init !== undefined ? v.setAll(init) : v;
+    return init !== undefined ? v.set(init) : v;
   }
-
   placeBytes<F extends FieldRecord = FieldRecord>(
     bytes: Uint8Array | ArrayBufferView,
     alignOrDef: number | StructDefLike<F> = 8,
@@ -2081,11 +2550,11 @@ export class WasmArena {
       as: hid(<SF extends FieldRecord>(def: StructDef<SF>, count = def.array(u).length) => {
         const v = new StructArrayView(def, this, p, count, p);
         v._tl = p + u.byteLength;
-        return v;
+        v._ro = false;
+        return v as MutStructArrayView<SF>;
       }),
     });
   }
-
   view<F extends FieldRecord>(
     def: StructDef<F>,
     byteOffset: number,
@@ -2093,7 +2562,13 @@ export class WasmArena {
   ): StructView<F> {
     return structView(def, this, byteOffset, baseOffset);
   }
-
+  mutView<F extends FieldRecord>(
+    def: StructDef<F>,
+    byteOffset: number,
+    baseOffset = byteOffset,
+  ): MutStructView<F> {
+    return mutStructView(def, this, byteOffset, baseOffset);
+  }
   viewArray<F extends FieldRecord>(
     def: StructDef<F>,
     byteOffset: number,
@@ -2101,6 +2576,16 @@ export class WasmArena {
     baseOffset = byteOffset,
   ): StructArrayView<F> {
     return new StructArrayView(def, this, byteOffset, count, baseOffset);
+  }
+  mutViewArray<F extends FieldRecord>(
+    def: StructDef<F>,
+    byteOffset: number,
+    count: number,
+    baseOffset = byteOffset,
+  ): MutStructArrayView<F> {
+    const v = new StructArrayView(def, this, byteOffset, count, baseOffset);
+    v._ro = false;
+    return v as MutStructArrayView<F>;
   }
   reset(baseOffset = this.baseOffset): this {
     this.offset = baseOffset;
@@ -2123,15 +2608,18 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   declare readonly schema: F;
   declare readonly fields: { readonly [K in keyof F]: FieldLayout<F[K]> };
   declare readonly fieldList: readonly FieldLayout[];
-  /** Phantom type helper: `typeof MySchema.$view` resolves to `StructView<F>`. */
+  /** Phantom type helper: `typeof MySchema.$view` resolves to read-only `StructView<F>`. */
   declare readonly $view: StructView<F>;
+  /** Phantom type helper: `typeof MySchema.$mutView` resolves to mutable `MutStructView<F>`. */
+  declare readonly $mutView: MutStructView<F>;
+  /** Phantom type helper: `typeof MySchema.$draft` resolves to `StructDraft<F>`. */
+  declare readonly $draft: StructDraft<F>;
   /** Phantom type helper: `typeof MySchema.$header` resolves to `StructHeaderView<F>`. */
   declare readonly $header: StructHeaderView<F>;
   /** Phantom type helper: `typeof MySchema.$plain` resolves to `PlainStructValues<F>`. */
   declare readonly $plain: PlainStructValues<F>;
   /** Phantom type helper: `typeof MySchema.$input` resolves to `Partial<StructInput<F>>`. */
   declare readonly $input: Partial<StructInput<F>>;
-  /** @internal */
   declare readonly _fv: number;
   /** @internal */
   declare readonly _fvs: number;
@@ -2174,30 +2662,43 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       if (dm._fvs !== undefined && dm._fvs >= 0 && firstVs < 0) firstVs = fo + dm._fvs;
       const end = fo + d.size;
       ks.push(k);
-      const get =
-        dk === 'primitive'
-          ? function (this: StructViewBase<F>) { return this._rP(fo, end, d as PrimitiveDesc<any>); }
-          : dk === 'str'
-            ? function (this: StructViewBase<F>) { return this._rStr(fo, end, false); }
-            : dk === 'optStr'
-              ? function (this: StructViewBase<F>) { return this._rStr(fo, end, true); }
-              : dk === 'slice'
-                ? function (this: StructViewBase<F>) { return this._rSlice(fo, end, d as SliceDesc<any>); }
-                : dk === 'ref'
-                  ? function (this: StructViewBase<F>) { return this._rRef(fo, end, d as RefDesc<any>); }
-                  : dk === 'union'
-                    ? function (this: StructViewBase<F>) { return this._rUnionF(fo, end, d as UnionDefLike<any>); }
-                    : function (this: StructViewBase<F>) {
-                        const fEnd = fo + wireSz(this._e, d);
-                        return fEnd > this._ws ? defVal(d, false) : readVal(this, d, this._o + fo, false);
-                      };
+      let get: (this: StructViewBase<F>) => unknown;
+      if (dk === 'primitive') {
+        if (d === (u32 as unknown)) get = function (this: StructViewBase<F>) { return this._rU32(fo, end); };
+        else if (d === (i32 as unknown)) get = function (this: StructViewBase<F>) { return this._rI32(fo, end); };
+        else if (d === (u8 as unknown)) get = function (this: StructViewBase<F>) { return this._rU8(fo, end); };
+        else if (d === (bool as unknown)) get = function (this: StructViewBase<F>) { return this._rBool(fo, end); };
+        else if (d === (f64 as unknown)) get = function (this: StructViewBase<F>) { return this._rF64(fo, end); };
+        else if ((d as any)._sp === u32) {
+          const nv = (d as any)._null as number;
+          get = function (this: StructViewBase<F>) { return this._rSentU32(fo, end, nv); };
+        } else {
+          get = function (this: StructViewBase<F>) { return this._rP(fo, end, d as PrimitiveDesc<any>); };
+        }
+      } else if (dk === 'str') {
+        get = function (this: StructViewBase<F>) { return this._rStr(fo, end, false); };
+      } else if (dk === 'optStr') {
+        get = function (this: StructViewBase<F>) { return this._rStr(fo, end, true); };
+      } else if (dk === 'slice') {
+        get = function (this: StructViewBase<F>) { return this._rSlice(fo, end, d as SliceDesc<any>); };
+      } else if (dk === 'ref') {
+        get = function (this: StructViewBase<F>) { return this._rRef(fo, end, d as RefDesc<any>); };
+      } else if (dk === 'union') {
+        get = function (this: StructViewBase<F>) { return this._rUnionF(fo, end, d as UnionDefLike<any>); };
+      } else {
+        get = function (this: StructViewBase<F>) {
+          const fEnd = fo + wireSz(this._e, d);
+          return fEnd > this._ws ? defVal(d, false) : readVal(this, d, this._o + fo, false);
+        };
+      }
       gs.push({
         enumerable: true,
         configurable: true,
         get,
         set(this: StructViewBase<F>, v: unknown) {
-          if (end > this._ws) upgradeView(this);
-          writeVal(this, d, v, this._b, this._o + fo);
+          this._chkMut();
+          if (end > this._ws) upgradeView(this as any);
+          writeVal(this as any, d, v, this._b, this._o + fo);
         },
       });
     }
@@ -2254,17 +2755,17 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     return this.fields[field].offset;
   }
 
-  /** Allocates a single `StructView<F>` backed by a fresh buffer and optionally initializes fields. */
-  create(init?: Partial<StructInput<F>> | readonly unknown[]): StructView<F> {
-    const v = this.view(new ArrayBuffer(this.size));
+  /** Allocates a single mutable `MutStructView<F>` backed by a fresh buffer and optionally initializes fields. */
+  create(init?: Partial<StructInput<F>> | readonly unknown[]): MutStructView<F> {
+    const v = this.mutView(new ArrayBuffer(this.size));
     initNulls(this, v._d, 0);
-    return init !== undefined ? v.setAll(init) : v;
+    return init !== undefined ? v.set(init) : v;
   }
-
   /** Infers `Partial<StructInput<F>>` on a plain JS object literal (for building typed cyclic JS graphs without `any`). */
   item(init: Partial<StructInput<F>>): Partial<StructInput<F>> {
     return init;
   }
+  /** Wraps `source` in a read-only zero-copy `StructView<F>`. */
   view(
     source: BufferSourceInput,
     byteOffset?: number | ViewOptions | StructDefLike<any>,
@@ -2273,8 +2774,17 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   ): StructView<F> {
     return structView(this, source, byteOffset, baseOffset, wireStride);
   }
+  /** Wraps `source` in a mutable zero-copy `MutStructView<F>` for in-place binary edits. */
+  mutView(
+    source: BufferSourceInput,
+    byteOffset?: number | ViewOptions | StructDefLike<any>,
+    baseOffset?: number,
+    wireStride?: number,
+  ): MutStructView<F> {
+    return mutStructView(this, source, byteOffset, baseOffset, wireStride);
+  }
   /** Packs a single root struct with a self-describing `CS01` schema-evolution envelope header. */
-  packEnvelope(row: Partial<StructInput<F>> | readonly unknown[]): Uint8Array {
+  packEnvelope(row: Partial<StructInput<F>> | StructViewBase<F> | readonly unknown[]): Uint8Array {
     const defs = this._allDefs();
     const hashes = new Set<number>();
     for (const d of defs) {
@@ -2331,6 +2841,7 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       }
     }
     if (!exact) v._e = env;
+    v._env = true;
     return v;
   }
   /**
@@ -2345,6 +2856,7 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     Object.defineProperty(v, '_hdr', hid(1));
     return v;
   }
+  /** Wraps `source` in a read-only zero-copy `StructArrayView<F>`. */
   array(
     source: BufferSourceInput,
     byteOffset?: number | ViewOptions | StructDefLike<any>,
@@ -2354,13 +2866,33 @@ export class StructDef<F extends FieldRecord = FieldRecord>
   ): StructArrayView<F> {
     return new StructArrayView(this, source, byteOffset, count, baseOffset, wireStride);
   }
-  /** Allocates a growable `StructArrayView<F>` for `count` rows (pass `0` for an empty growable array). */
-  alloc(count: number, Ctor: typeof ArrayBuffer = ArrayBuffer): StructArrayView<F> {
-    const a = this.array(new Ctor(count * this.size), 0, count);
+  /** Wraps `source` in a mutable zero-copy `MutStructArrayView<F>` for in-place binary edits. */
+  mutArray(
+    source: BufferSourceInput,
+    byteOffset?: number | ViewOptions | StructDefLike<any>,
+    count?: number,
+    baseOffset?: number,
+    wireStride?: number,
+  ): MutStructArrayView<F> {
+    const a = new StructArrayView(this, source, byteOffset, count, baseOffset, wireStride);
+    a._ro = false;
+    return a as MutStructArrayView<F>;
+  }
+  /** Allocates a growable mutable `MutStructArrayView<F>` for `count` rows (pass `0` for an empty growable array). */
+  alloc(count: number, Ctor: typeof ArrayBuffer = ArrayBuffer): MutStructArrayView<F> {
+    const a = this.mutArray(new Ctor(count * this.size), 0, count);
     initNulls(this, a._d, 0, count);
     return a;
   }
-
+  from(count: number): MutStructArrayView<F>;
+  from(view: MutStructArrayView<F>): MutStructArrayView<F>;
+  from(view: StructArrayView<F>): StructArrayView<F>;
+  from(source: BufferSourceInput): StructArrayView<F>;
+  from(
+    rows:
+      | readonly (Partial<StructInput<F>> | readonly unknown[])[]
+      | Iterable<Partial<StructInput<F>> | readonly unknown[]>,
+  ): MutStructArrayView<F>;
   from(
     sourceOrRows:
       | readonly (Partial<StructInput<F>> | readonly unknown[])[]
@@ -2368,20 +2900,19 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       | BufferSourceInput
       | StructArrayView<F>
       | number,
-  ): StructArrayView<F> {
+  ): StructArrayView<F> | MutStructArrayView<F> {
     if (typeof sourceOrRows === 'number') return this.alloc(sourceOrRows);
     if (sourceOrRows instanceof StructArrayView) return sourceOrRows;
     if ('byteLength' in (sourceOrRows as any) || (sourceOrRows as any)?.buffer) {
       return this.array(sourceOrRows as BufferSourceInput);
     }
-    return this.array(this.pack([...(sourceOrRows as any)]));
+    return this.mutArray(this.pack([...(sourceOrRows as any)]));
   }
-
   shared(
     rowsOrCount:
       | readonly (Partial<StructInput<F>> | readonly unknown[])[]
       | number,
-  ): StructArrayView<F> {
+  ): MutStructArrayView<F> {
     const B: typeof ArrayBuffer =
       typeof SharedArrayBuffer !== 'undefined'
         ? (SharedArrayBuffer as any)
@@ -2390,10 +2921,9 @@ export class StructDef<F extends FieldRecord = FieldRecord>
     const p = this.pack(rowsOrCount),
       sb = new B(p.byteLength);
     new Uint8Array(sb).set(p);
-    return this.array(sb);
+    return this.mutArray(sb);
   }
-
-  /** Allocates or packs a `StructArrayView<F>` directly inside `WebAssembly.Memory` (via `WasmArena` or exported `capn_alloc`/`alloc`) and returns `{ view, ptr, len, byteLength }`. */
+  /** Allocates or packs a mutable `MutStructArrayView<F>` directly inside `WebAssembly.Memory` (via `WasmArena` or exported `capn_alloc`/`alloc`) and returns `{ view, ptr, len, byteLength }`. */
   inWasm(
     wasmMemoryOrExports: WasmTarget,
     rowsOrCount:
@@ -2404,9 +2934,9 @@ export class StructDef<F extends FieldRecord = FieldRecord>
       | number,
   ): WasmSlice<F> {
     const exp: any = (wasmMemoryOrExports as any)?.exports ?? wasmMemoryOrExports,
-      src = typeof rowsOrCount === 'number' ? null : this.from(rowsOrCount),
-      u = src?.bytes,
+      src = typeof rowsOrCount === 'number' ? null : (this.from as any)(rowsOrCount) as StructArrayView<F>,
       len = src ? src.length : (rowsOrCount as number),
+      u = src?.bytes,
       byteLength = u ? u.byteLength : len * this.size,
       mem: any = exp._d ? exp : exp.memory ?? exp,
       fn = exp.capn_alloc ?? exp.alloc,
@@ -2417,16 +2947,16 @@ export class StructDef<F extends FieldRecord = FieldRecord>
           : al(mem.offset ?? 64, this.align),
       end = (mem.offset = Math.max(mem.offset ?? 0, ptr + byteLength));
     if (!exp._d) growMem(mem, end);
-    const view = this.array(mem, ptr, len, ptr);
+    const view = this.mutArray(mem, ptr, len, ptr);
     view._tl = end;
     u ? u8s(view._d, ptr, byteLength).set(u) : (u8s(view._d, ptr, byteLength).fill(0), initNulls(this, view._d, ptr, len));
     return { view, ptr, len, byteLength };
   }
-  /** Packs an array of plain JavaScript objects or positional tuples into an 8-byte-aligned `Uint8Array`. */
-  pack(rows: readonly (Partial<StructInput<F>> | readonly unknown[])[]): Uint8Array {
+  /** Packs an array of plain JavaScript objects, struct views, or positional tuples into an 8-byte-aligned `Uint8Array`. */
+  pack(rows: readonly (Partial<StructInput<F>> | StructViewBase<F> | readonly unknown[])[]): Uint8Array {
     return pack(this, rows);
   }
-  concatBytes(chunks: readonly (StructArrayView<F> | Uint8Array)[]): Uint8Array {
+  concatBytes(chunks: readonly (StructArrayView<F, any> | Uint8Array)[]): Uint8Array {
     return concatBytes(this, chunks);
   }
 }
@@ -2434,12 +2964,12 @@ export class StructDef<F extends FieldRecord = FieldRecord>
 
 /** Concatenates multiple `StructArrayView<F>` or `Uint8Array` chunks into a single packed `Uint8Array` via bulk `memcpy` when fixed-size. */
 export function concatBytes<F extends FieldRecord>(
-  def: StructDef<F>,
-  chunks: readonly (StructArrayView<F> | Uint8Array)[],
+  def: StructDefLike<F>,
+  chunks: readonly (StructArrayView<F, any> | Uint8Array)[],
 ): Uint8Array {
-  if (def._fv >= 0) return pack(def, chunks.flatMap((c) => def.from(c as any).toObjects()) as any);
+  if (def._fv >= 0) return pack(def, chunks.flatMap((c) => (def as StructDef<F>).from(c as any).toObjects()) as any);
   const slices = chunks.map((c) =>
-    c instanceof Uint8Array ? (c.byteLength % def.size && oob(), c) : c.stride === def.size ? c.bytes : c.compact(),
+    c instanceof Uint8Array ? (c.byteLength % def.size && oob(), c) : c.stride === def.size ? c.bytes : c._packBytes(),
   );
   const out = new Uint8Array(slices.reduce((s, b) => s + b.byteLength, 0));
   let off = 0;
@@ -2449,8 +2979,8 @@ export function concatBytes<F extends FieldRecord>(
 
 /** Packs an array of plain JavaScript objects into an 8-byte-aligned `Uint8Array`. */
 export function pack<F extends FieldRecord>(
-  def: StructDef<F>,
-  rows: readonly (Partial<StructInput<F>> | readonly unknown[])[],
+  def: StructDefLike<F>,
+  rows: readonly (Partial<StructInput<F>> | StructViewBase<F> | readonly unknown[])[],
 ): Uint8Array {
   const n = rows.length;
   const st = def.size;
@@ -2587,7 +3117,7 @@ export function defineStruct<F extends FieldRecord>(fields: F | ((self: SelfRef)
 /** Compiles a named `#[repr(C)]` struct schema (used by `toRustReprC` codegen). */
 export function defineStruct<F extends FieldRecord>(name: string, fields: F | ((self: SelfRef) => F)): StructDef<F>;
 export function defineStruct<F extends FieldRecord>(nameOrFields: string | F | ((self: SelfRef) => F), maybeFields?: F | ((self: SelfRef) => F)): StructDef<F> {
-  return typeof nameOrFields === 'string' ? new StructDef(nameOrFields, maybeFields!) : new StructDef('', nameOrFields);
+  return typeof nameOrFields === 'string' ? new StructDef<F>(nameOrFields, maybeFields!) : new StructDef<F>('', nameOrFields);
 }
 /** Alias for `defineStruct`. */
 export const struct = defineStruct;
@@ -2620,4 +3150,891 @@ export function installDevtoolsFormatter(): typeof _dtf {
   const list = (g.devtoolsFormatters ??= []);
   if (!list.includes(_dtf)) list.push(_dtf);
   return _dtf;
+}
+
+function _revErr(): never {
+  throw new TypeError('Cannot access a revoked capnstruct draft after produce() has finished');
+}
+const _ARR_MUT: Record<string, true> = {
+    push: true, pop: true, shift: true, unshift: true, splice: true, sort: true, reverse: true, fill: true, copyWithin: true,
+  },
+  _ARR_RESIZE: Record<string, true> = { push: true, pop: true, shift: true, unshift: true },
+  _TA_MUT: Record<string, true> = { set: true, fill: true, copyWithin: true, sort: true, reverse: true };
+
+function _resDesc(t: unknown): FieldDesc {
+  return typeof t === 'function' ? (t as () => FieldDesc)() : (t as FieldDesc);
+}
+function _isVarDesc(desc: FieldDesc): boolean {
+  const k = desc.kind;
+  if (k === 'str' || k === 'optStr' || k === 'slice' || k === 'ref') return true;
+  if (k === 'struct') return desc._fv >= 0 || Boolean(desc._fvr);
+  if (k === 'union') return desc._fv >= 0;
+  if (k === 'array') return _isVarDesc(_resDesc(desc.element));
+  return false;
+}
+function _defDraftPlain(desc: FieldDesc): unknown {
+  if ((desc as { _null?: unknown })._null !== undefined) return null;
+  const k = desc.kind;
+  if (k === 'primitive') {
+    if (desc.type === 'bool') return false;
+    if ('bigint' in desc && desc.bigint) return 0n;
+    if (desc.type === 'fixedStr') return '';
+    if (desc.type === 'fixedBytes') return new Uint8Array(desc.length);
+    return 0;
+  }
+  if (k === 'str') return '';
+  if (k === 'optStr' || k === 'ref') return null;
+  if (k === 'slice') return [];
+  if (k === 'array') {
+    const el = _resDesc(desc.element);
+    if (el.kind === 'primitive' && el._C && el.type !== 'bool') return new el._C(desc.length);
+    return Array.from({ length: desc.length }, () => _defDraftPlain(el));
+  }
+  if (k === 'union') {
+    const v0 = desc.variantList[0];
+    if (!v0) return { tag: '$unknown', rawTag: 0 };
+    return v0.desc === null ? { tag: v0.name } : { tag: v0.name, value: _defDraftPlain(v0.desc) };
+  }
+  if (k === 'struct') {
+    const out: Record<string, unknown> = {};
+    for (const f of desc.fieldList) out[f.name] = _defDraftPlain(f.desc);
+    return out;
+  }
+  return undefined;
+}
+
+interface _DraftCtx {
+  revoked: boolean;
+  dirty: boolean;
+  varDirty: boolean;
+  canPatch: boolean;
+  baseBuf: ArrayBufferLike | null;
+  baseZero: number;
+  revokes: Array<() => void>;
+  byProxy: WeakMap<object, _DraftNode>;
+  byOff: Map<StructDefLike, Map<number, _StructDraftNode>>;
+  dirtyNodes: Set<_StructDraftNode>;
+}
+
+type _DraftNode =
+  | _StructDraftNode
+  | {
+      kind: 'sarr';
+      def: StructDefLike;
+      base: StructArrayView<any> | null;
+      fixed: boolean;
+      readonly mat: _StructDraftNode[] | null;
+      sparse: Map<number, _StructDraftNode>;
+      proxy: any;
+      getNode(i: number): _StructDraftNode;
+      len(): number;
+    }
+  | { kind: 'arr'; items: any[]; proxy: any }
+  | { kind: 'ta'; ta: ArrayBufferView; proxy: any }
+  | { kind: 'union'; target: Record<string, any>; proxy: any };
+
+interface _StructDraftNode {
+  kind: 'struct';
+  def: StructDefLike;
+  base: StructViewBase<any> | null;
+  rawIn: Record<string, unknown> | null;
+  relOff: number;
+  ov: Map<string, unknown>;
+  kids: Map<string, _DraftNode>;
+  dirtyFields: Set<FieldLayout>;
+  proxy: any;
+}
+
+function _wrapTA(ta: any, ctx: _DraftCtx, onMut: () => void, doClone = true): _DraftNode {
+  const clone = doClone ? ta.slice() : ta,
+    { proxy, revoke } = Proxy.revocable(clone, {
+      get(t, p) {
+        if (ctx.revoked) _revErr();
+        const v = Reflect.get(t, p, t);
+        if (typeof v === 'function') {
+          if (typeof p === 'string' && _TA_MUT[p])
+            return (...args: any[]) => {
+              if (ctx.revoked) _revErr();
+              onMut();
+              return v.apply(t, args);
+            };
+          if (p === 'subarray')
+            return (...args: any[]) => {
+              if (ctx.revoked) _revErr();
+              return _wrapTA(t.subarray(...args), ctx, onMut, false).proxy;
+            };
+          return v.bind(t);
+        }
+        return v;
+      },
+      set(t, p, v) {
+        if (ctx.revoked) _revErr();
+        onMut();
+        return Reflect.set(t, p, v, t);
+      },
+    }),
+    node: _DraftNode = { kind: 'ta', ta: clone, proxy };
+  ctx.revokes.push(revoke);
+  ctx.byProxy.set(proxy, node);
+  return node;
+}
+
+function _wrapArr(raw: Iterable<any>, elDesc: FieldDesc, fixed: boolean, ctx: _DraftCtx, onMut: () => void): _DraftNode {
+  const wrapEl = (it: any) => _wrapVal(elDesc, it, -1, ctx, onMut),
+    items = Array.from(raw, wrapEl),
+    { proxy, revoke } = Proxy.revocable(items, {
+      get(t, p, r) {
+        if (ctx.revoked) _revErr();
+        const v = Reflect.get(t, p, r);
+        if (typeof p === 'string' && typeof v === 'function' && _ARR_MUT[p]) {
+          return (...args: any[]) => {
+            if (ctx.revoked) _revErr();
+            if (fixed && (_ARR_RESIZE[p] || (p === 'splice' && args.length > 0))) {
+              throw new TypeError('Cannot resize a fixedArray draft');
+            }
+            let m = args;
+            if (p === 'push' || p === 'unshift') m = args.map(wrapEl);
+            else if (p === 'splice' && args.length > 2) m = [args[0], args[1], ...args.slice(2).map(wrapEl)];
+            else if (p === 'fill' && args.length > 0) m = [wrapEl(args[0]), ...args.slice(1)];
+            onMut();
+            return Array.prototype[p as any].apply(t, m);
+          };
+        }
+        return v;
+      },
+      set(t, p, v, r) {
+        if (ctx.revoked) _revErr();
+        if (fixed && p === 'length' && Number(v) !== t.length)
+          throw new TypeError('Cannot resize a fixedArray draft');
+        if (typeof p === 'string' && p !== 'length') {
+          const idx = Number(p);
+          if (Number.isInteger(idx) && idx >= 0) {
+            if (fixed && idx >= t.length) throw new TypeError('Cannot resize a fixedArray draft');
+            onMut();
+            return Reflect.set(t, p, wrapEl(v), r);
+          }
+        }
+        onMut();
+        return Reflect.set(t, p, v, r);
+      },
+      deleteProperty(t, p) {
+        if (ctx.revoked) _revErr();
+        onMut();
+        return Reflect.deleteProperty(t, p);
+      },
+    }),
+    node: _DraftNode = { kind: 'arr', items, proxy };
+  ctx.revokes.push(revoke);
+  ctx.byProxy.set(proxy, node);
+  return node;
+}
+
+function _wrapUnion(udesc: UnionDefLike, rawVal: any, ctx: _DraftCtx, onMut: () => void): _DraftNode {
+  const ex = rawVal && typeof rawVal === 'object' ? ctx.byProxy.get(rawVal) : undefined;
+  if (ex && ex.kind === 'union') return ex;
+  const vr = rawVal?.tag !== undefined ? udesc.byName[rawVal.tag] : undefined,
+    onU = () => {
+      ctx.dirty = true;
+      if (udesc._fv >= 0) ctx.varDirty = true;
+      ctx.canPatch = false;
+      onMut();
+    },
+    target: Record<string, any> = vr
+      ? vr.desc === null
+        ? { tag: rawVal.tag }
+        : {
+            tag: rawVal.tag,
+            value: _wrapVal(
+              vr.desc,
+              rawVal.value !== undefined ? rawVal.value : _defDraftPlain(vr.desc),
+              -1,
+              ctx,
+              onU,
+            ),
+          }
+      : { tag: rawVal?.tag ?? '$unknown', ...(rawVal?.rawTag !== undefined ? { rawTag: rawVal.rawTag } : {}) },
+    { proxy, revoke } = Proxy.revocable(target, {
+      get(t, p, r) {
+        if (ctx.revoked) _revErr();
+        return Reflect.get(t, p, r);
+      },
+      set(t, p, v, r) {
+        if (ctx.revoked) _revErr();
+        if (p === 'tag' && v !== t.tag)
+          throw new TypeError("Cannot mutate union discriminant 'tag' in-place; assign a full { tag, value } union object");
+        onU();
+        const nextV = p === 'value' && vr && vr.desc !== null ? _wrapVal(vr.desc, v, -1, ctx, onU) : v;
+        return Reflect.set(t, p, nextV, r);
+      },
+    }),
+    node: _DraftNode = { kind: 'union', target, proxy };
+  ctx.revokes.push(revoke);
+  ctx.byProxy.set(proxy, node);
+  return node;
+}
+
+function _wrapVal(desc: FieldDesc, val: any, relOff: number, ctx: _DraftCtx, onMut: () => void): any {
+  if (val == null) return val;
+  if (typeof val === 'object') {
+    const ex = ctx.byProxy.get(val);
+    if (ex) return val;
+  }
+  const k = desc.kind;
+  if (k === 'primitive')
+    return desc.type === 'fixedBytes'
+      ? _wrapTA(val instanceof Uint8Array ? val : new Uint8Array(val), ctx, onMut).proxy
+      : val;
+  if (k === 'str' || k === 'optStr') return String(val);
+  if (k === 'struct')
+    return val instanceof StructViewBase
+      ? _getStructDraft(desc, val, relOff, ctx, onMut).proxy
+      : _plainStructDraft(desc, val, ctx, onMut).proxy;
+  if (k === 'ref') {
+    const el = _resDesc(desc.element);
+    if (el.kind === 'struct')
+      return val instanceof StructViewBase
+        ? _getStructDraft(el, val, -1, ctx, onMut).proxy
+        : _plainStructDraft(el, val, ctx, onMut).proxy;
+    if (el.kind === 'union') return _wrapUnion(el, val, ctx, onMut).proxy;
+    return val;
+  }
+  if (k === 'union') return _wrapUnion(desc, val, ctx, onMut).proxy;
+  if (k === 'array') {
+    const el = _resDesc(desc.element);
+    if (el.kind === 'primitive' && el._C && el.type !== 'bool')
+      return _wrapTA(val instanceof el._C ? val : new (el._C as any)(Array.from(val as Iterable<any>)), ctx, onMut).proxy;
+    if (el.kind === 'struct')
+      return _structArrDraft(
+        el,
+        val instanceof StructArrayView ? val : null,
+        val instanceof StructArrayView ? null : Array.from(val as Iterable<any>),
+        relOff,
+        true,
+        ctx,
+        onMut,
+      ).proxy;
+    return _wrapArr(val instanceof UnionArrayView ? val : (val as Iterable<any>), el, true, ctx, onMut).proxy;
+  }
+  if (k === 'slice') {
+    const el = _resDesc(desc.element);
+    if (el.kind === 'struct') {
+      const sOff =
+        val instanceof StructArrayView && ctx.baseBuf !== null && val._k().buffer === ctx.baseBuf
+          ? val._k().byteOffset + val._o - ctx.baseZero
+          : -1;
+      return _structArrDraft(
+        el,
+        val instanceof StructArrayView ? val : null,
+        val instanceof StructArrayView ? null : Array.from(val as Iterable<any>),
+        sOff,
+        false,
+        ctx,
+        onMut,
+      ).proxy;
+    }
+    return _wrapArr(val instanceof UnionArrayView ? val : (val as Iterable<any>), el, false, ctx, onMut).proxy;
+  }
+  return val;
+}
+
+function _getStructDraft(
+  def: StructDefLike,
+  view: StructViewBase<any>,
+  relOff: number,
+  ctx: _DraftCtx,
+  onMut?: () => void,
+): _StructDraftNode {
+  const d = view._k(),
+    inBase = ctx.baseBuf !== null && d.buffer === ctx.baseBuf,
+    absOff = d.byteOffset + view._o;
+  if (inBase) {
+    let m = ctx.byOff.get(def);
+    if (!m) ctx.byOff.set(def, (m = new Map()));
+    const ex = m.get(absOff);
+    if (ex) return ex;
+    const roff = relOff >= 0 ? relOff : absOff - ctx.baseZero,
+      node = _mkStructNode(def, view, null, roff, ctx, onMut);
+    m.set(absOff, node);
+    return node;
+  }
+  return _mkStructNode(def, view, null, -1, ctx, onMut);
+}
+
+function _plainStructDraft(
+  def: StructDefLike,
+  input: any,
+  ctx: _DraftCtx,
+  onMut?: () => void,
+): _StructDraftNode {
+  const rawIn: Record<string, unknown> = {};
+  if (Array.isArray(input)) {
+    for (let i = 0; i < def.fieldList.length && i < input.length; i++)
+      if (input[i] !== undefined) rawIn[def.fieldList[i]!.name] = input[i];
+  } else if (input && typeof input === 'object') {
+    for (const f of def.fieldList) if (input[f.name] !== undefined) rawIn[f.name] = input[f.name];
+  }
+  return _mkStructNode(def, null, rawIn, -1, ctx, onMut);
+}
+
+function _mkStructNode(
+  def: StructDefLike,
+  base: StructViewBase<any> | null,
+  rawIn: Record<string, unknown> | null,
+  relOff: number,
+  ctx: _DraftCtx,
+  onParentMut?: () => void,
+): _StructDraftNode {
+  const ov = new Map<string, unknown>(),
+    kids = new Map<string, _DraftNode>(),
+    dirtyFields = new Set<FieldLayout>(),
+    mark = (f: FieldLayout, hasVal: boolean, val: unknown, isRep: boolean) => {
+      ctx.dirty = true;
+      const isVar = _isVarDesc(f.desc);
+      if (isVar) ctx.varDirty = true;
+      if (relOff < 0 || !base || f.offset + f.size > base._ws) ctx.canPatch = false;
+      else if (!isVar) {
+        dirtyFields.add(f);
+        ctx.dirtyNodes.add(node);
+      }
+      if (hasVal) ov.set(f.name, val);
+      if (isRep) kids.delete(f.name);
+      onParentMut?.();
+    },
+    target: Record<string, unknown> = {},
+    { proxy, revoke }: { proxy: any; revoke: () => void } = Proxy.revocable(target, {
+      get(t, p, r) {
+        if (ctx.revoked) _revErr();
+        if (p === 'toJSON' || p === 'toObject') return () => _unwrapNode(node, ctx, new Map(), new Map());
+        if (typeof p !== 'string') return Reflect.get(t, p, r);
+        const f = def.fields[p];
+        if (!f) return Reflect.get(t, p, r);
+        const kd = kids.get(p);
+        if (kd) return kd.proxy;
+        if (ov.has(p)) {
+          const cur = ov.get(p),
+            w = _wrapVal(f.desc, cur, -1, ctx, () => mark(f, true, w, false));
+          if (w !== cur && w && typeof w === 'object') {
+            const cn = ctx.byProxy.get(w);
+            if (cn) kids.set(p, cn);
+            ov.set(p, w);
+          }
+          return w;
+        }
+        const raw = base
+            ? (base as any)[p]
+            : rawIn && p in rawIn
+              ? rawIn[p]
+              : _defDraftPlain(f.desc),
+          k = f.desc.kind;
+        if (raw == null || k === 'str' || k === 'optStr' || (k === 'primitive' && f.desc.type !== 'fixedBytes'))
+          return raw;
+        const cOff =
+            base && relOff >= 0 && f.offset + f.size <= base._ws && (k === 'struct' || k === 'array')
+              ? relOff + f.offset
+              : -1,
+          isStructTree =
+            k === 'struct' ||
+            k === 'ref' ||
+            ((k === 'slice' || k === 'array') && _resDesc((f.desc as SliceDesc).element).kind === 'struct'),
+          childProxy = _wrapVal(f.desc, raw, cOff, ctx, () => {
+            if (isStructTree && base) {
+              ctx.dirty = true;
+              onParentMut?.();
+            } else {
+              if (!base) ov.set(p, childProxy);
+              mark(f, !base, childProxy, false);
+            }
+          }),
+          cn = childProxy && typeof childProxy === 'object' ? ctx.byProxy.get(childProxy) : undefined;
+        if (cn) kids.set(p, cn);
+        if (!base) ov.set(p, childProxy);
+        return childProxy;
+      },
+      set(t, p, v, r) {
+        if (ctx.revoked) _revErr();
+        if (typeof p !== 'string') return Reflect.set(t, p, v, r);
+        const f = def.fields[p];
+        if (!f) return Reflect.set(t, p, v, r);
+        const k = f.desc.kind;
+        if (k === 'str' || k === 'optStr' || (k === 'primitive' && f.desc.type !== 'fixedBytes')) {
+          if (!ov.has(p) && !kids.has(p)) {
+            const cur = base ? (base as any)[p] : rawIn && p in rawIn ? rawIn[p] : undefined;
+            if (cur !== undefined && Object.is(cur, v)) return true;
+          }
+          const norm = v == null ? null : k === 'str' || k === 'optStr' ? String(v) : v;
+          mark(f, true, norm, true);
+          return true;
+        }
+        // Composite field replacement: disable inline patch to avoid stale child dirtyNodes ordering
+        ctx.canPatch = false;
+        if (v == null && (k === 'ref' || (f.desc as any)._null !== undefined)) {
+          mark(f, true, null, true);
+          return true;
+        }
+        const w = _wrapVal(f.desc, v, -1, ctx, () => mark(f, true, w, false)),
+          cn = w && typeof w === 'object' ? ctx.byProxy.get(w) : undefined;
+        mark(f, true, w, true);
+        if (cn) kids.set(p, cn);
+        return true;
+      },
+      has(t, p) {
+        if (ctx.revoked) _revErr();
+        return (typeof p === 'string' && p in def.fields) || Reflect.has(t, p);
+      },
+      ownKeys() {
+        if (ctx.revoked) _revErr();
+        return [...def._K];
+      },
+      getOwnPropertyDescriptor(t, p): PropertyDescriptor | undefined {
+        if (ctx.revoked) _revErr();
+        if (typeof p === 'string' && p in def.fields)
+          return { value: (proxy as any)[p], writable: true, enumerable: true, configurable: true };
+        return Reflect.getOwnPropertyDescriptor(t, p);
+      },
+    }),
+    node: _StructDraftNode = { kind: 'struct', def, base, rawIn, relOff, ov, kids, dirtyFields, proxy };
+  ctx.revokes.push(revoke);
+  ctx.byProxy.set(proxy, node);
+  return node;
+}
+
+function _structArrDraft(
+  def: StructDefLike,
+  baseArr: StructArrayView<any> | null,
+  initItems: any[] | null,
+  relOff: number,
+  fixed: boolean,
+  ctx: _DraftCtx,
+  onParentMut?: () => void,
+): Extract<_DraftNode, { kind: 'sarr' }> {
+  const sparse = new Map<number, _StructDraftNode>(),
+    onElemMut = () => {
+      ctx.dirty = true;
+      onParentMut?.();
+    },
+    toNode = (it: any): _StructDraftNode => {
+      if (it && typeof it === 'object') {
+        const ex = ctx.byProxy.get(it);
+        if (ex && ex.kind === 'struct') return ex;
+        if (it instanceof StructViewBase) return _getStructDraft(def, it, -1, ctx, onElemMut);
+      }
+      return _plainStructDraft(def, it, ctx, onElemMut);
+    };
+  let mat: _StructDraftNode[] | null = initItems ? initItems.map(toNode) : null;
+  const curLen = () => (mat ? mat.length : baseArr!.length),
+    target: any[] = [];
+  target.length = curLen();
+  const getNode = (idx: number): _StructDraftNode => {
+      if (mat) return mat[idx]!;
+      let n = sparse.get(idx);
+      if (!n) {
+        const erel = relOff >= 0 && baseArr!.stride === def.size ? relOff + idx * def.size : -1;
+        n = _getStructDraft(def, baseArr!.at(idx), erel, ctx, onElemMut);
+        sparse.set(idx, n);
+      }
+      return n;
+    },
+    materialize = (): _StructDraftNode[] => {
+      if (!mat) {
+        const len = baseArr!.length,
+          arr = new Array<_StructDraftNode>(len);
+        for (let i = 0; i < len; i++) arr[i] = getNode(i);
+        mat = arr;
+        sparse.clear();
+      }
+      return mat;
+    },
+    markStruct = () => {
+      ctx.dirty = true;
+      ctx.varDirty = true;
+      ctx.canPatch = false;
+      target.length = curLen();
+      onParentMut?.();
+    },
+    { proxy, revoke } = Proxy.revocable(target, {
+      get(t, p, r) {
+        if (ctx.revoked) _revErr();
+        if (p === 'length') return curLen();
+        if (p === 'at')
+          return (i: number) => {
+            if (ctx.revoked) _revErr();
+            const len = curLen(),
+              idx = i < 0 ? len + i : i;
+            return idx >= 0 && idx < len ? getNode(idx).proxy : undefined;
+          };
+        if (p === 'toJSON' || p === 'toObjects')
+          return () => _unwrapNode(node, ctx, new Map(), new Map());
+        if (typeof p === 'string') {
+          const idx = Number(p);
+          if (Number.isInteger(idx) && idx >= 0) return idx < curLen() ? getNode(idx).proxy : undefined;
+        }
+        if (typeof p === 'string' && _ARR_MUT[p]) {
+          return (...args: any[]) => {
+            if (ctx.revoked) _revErr();
+            if (fixed && (_ARR_RESIZE[p] || (p === 'splice' && args.length > 0)))
+              throw new TypeError('Cannot resize a fixedArray draft');
+            const m = materialize();
+            if (p === 'push' || p === 'unshift') {
+              const res = Array.prototype[p].apply(m, args.map(toNode));
+              markStruct();
+              return res;
+            }
+            if (p === 'pop' || p === 'shift') {
+              const popped = Array.prototype[p].call(m) as _StructDraftNode | undefined;
+              markStruct();
+              return popped?.proxy;
+            }
+            if (p === 'splice') {
+              const ins = args.slice(2).map(toNode),
+                rem = (
+                  args.length === 0
+                    ? []
+                    : args.length === 1
+                      ? m.splice(args[0])
+                      : m.splice(args[0], args[1], ...ins)
+                ) as _StructDraftNode[];
+              markStruct();
+              return rem.map((x) => x.proxy);
+            }
+            if (p === 'fill') {
+              const len = m.length,
+                s = args[1] === undefined ? 0 : args[1] < 0 ? Math.max(len + args[1], 0) : Math.min(args[1], len),
+                e = args[2] === undefined ? len : args[2] < 0 ? Math.max(len + args[2], 0) : Math.min(args[2], len);
+              for (let i = s; i < e; i++) m[i] = toNode(args[0]);
+              markStruct();
+              return proxy;
+            }
+            if (p === 'reverse') m.reverse();
+            else if (p === 'copyWithin') m.copyWithin(args[0], args[1], args[2]);
+            else if (p === 'sort') {
+              const cmp = args[0];
+              m.sort(cmp ? (a, b) => cmp(a.proxy, b.proxy) : undefined);
+            }
+            markStruct();
+            return proxy;
+          };
+        }
+        if (p === Symbol.iterator || p === 'values')
+          return function* () {
+            for (let i = 0; i < curLen(); i++) {
+              if (ctx.revoked) _revErr();
+              yield getNode(i).proxy;
+            }
+          };
+        const fn = Reflect.get(Array.prototype, p, r);
+        return typeof fn === 'function' ? fn : Reflect.get(t, p, r);
+      },
+      set(t, p, v, r) {
+        if (ctx.revoked) _revErr();
+        if (p === 'length') {
+          const n = Number(v);
+          if (fixed && n !== curLen()) throw new TypeError('Cannot resize a fixedArray draft');
+          const m = materialize(),
+            old = m.length;
+          m.length = n;
+          for (let i = old; i < n; i++) m[i] = _plainStructDraft(def, undefined, ctx, onElemMut);
+          markStruct();
+          return true;
+        }
+        if (typeof p === 'string') {
+          const idx = Number(p);
+          if (Number.isInteger(idx) && idx >= 0) {
+            if (fixed && idx >= curLen()) throw new TypeError('Cannot resize a fixedArray draft');
+            const m = materialize(),
+              old = m.length;
+            for (let i = old; i < idx; i++) m[i] = _plainStructDraft(def, undefined, ctx, onElemMut);
+            m[idx] = toNode(v);
+            markStruct();
+            return true;
+          }
+        }
+        return Reflect.set(t, p, v, r);
+      },
+      has(t, p) {
+        if (ctx.revoked) _revErr();
+        if (typeof p === 'string') {
+          const idx = Number(p);
+          if (Number.isInteger(idx) && idx >= 0) return idx < curLen();
+        }
+        return p === 'length' || p in Array.prototype || Reflect.has(t, p);
+      },
+      ownKeys() {
+        if (ctx.revoked) _revErr();
+        const len = curLen(),
+          ks = new Array<string>(len + 1);
+        for (let i = 0; i < len; i++) ks[i] = String(i);
+        ks[len] = 'length';
+        return ks;
+      },
+      getOwnPropertyDescriptor(t, p) {
+        if (ctx.revoked) _revErr();
+        if (p === 'length') return { value: curLen(), writable: true, enumerable: false, configurable: false };
+        if (typeof p === 'string') {
+          const idx = Number(p);
+          if (Number.isInteger(idx) && idx >= 0 && idx < curLen())
+            return { value: getNode(idx).proxy, writable: true, enumerable: true, configurable: true };
+        }
+        return Reflect.getOwnPropertyDescriptor(t, p);
+      },
+    }),
+    node: Extract<_DraftNode, { kind: 'sarr' }> = {
+      kind: 'sarr',
+      def,
+      base: baseArr,
+      fixed,
+      get mat() { return mat; },
+      sparse,
+      proxy,
+      getNode,
+      len: curLen,
+    };
+  ctx.revokes.push(revoke);
+  ctx.byProxy.set(proxy, node);
+  return node;
+}
+
+function _unwrapVal(
+  val: any,
+  ctx: _DraftCtx,
+  seenN: Map<object, any>,
+  seenO: Map<StructDefLike, Map<number, any>>,
+): any {
+  if (val == null || typeof val !== 'object') return val;
+  const n = ctx.byProxy.get(val);
+  if (n) return _unwrapNode(n, ctx, seenN, seenO);
+  if (val instanceof MemView) return _unwrapMV(val, ctx, seenN, seenO);
+  if (ArrayBuffer.isView(val)) return val;
+  if (Array.isArray(val)) return val.map((x) => _unwrapVal(x, ctx, seenN, seenO));
+  const prev = seenN.get(val);
+  if (prev) return prev;
+  const out: Record<string, any> = {};
+  seenN.set(val, out);
+  for (const [k, v] of Object.entries(val)) out[k] = _unwrapVal(v, ctx, seenN, seenO);
+  return out;
+}
+
+function _unwrapMV(
+  v: MemView<any, any>,
+  ctx: _DraftCtx,
+  seenN: Map<object, any>,
+  seenO: Map<StructDefLike, Map<number, any>>,
+): any {
+  if (v instanceof StructArrayView || v instanceof UnionArrayView) {
+    const len = v.length,
+      out = new Array(len);
+    for (let i = 0; i < len; i++) out[i] = _unwrapVal(v.at(i), ctx, seenN, seenO);
+    return out;
+  }
+  const def = v.def as StructDefLike,
+    d = v._k(),
+    inBase = ctx.baseBuf !== null && d.buffer === ctx.baseBuf,
+    absOff = d.byteOffset + v._o;
+  if (inBase) {
+    const drafted = ctx.byOff.get(def)?.get(absOff);
+    if (drafted) return _unwrapNode(drafted, ctx, seenN, seenO);
+    let m = seenO.get(def);
+    if (!m) seenO.set(def, (m = new Map()));
+    const prev = m.get(absOff);
+    if (prev) return prev;
+    const out: Record<string, any> = {};
+    m.set(absOff, out);
+    for (const f of def.fieldList) out[f.name] = _unwrapVal((v as any)[f.name], ctx, seenN, seenO);
+    return out;
+  }
+  return v.toJSON();
+}
+
+function _unwrapNode(
+  node: _DraftNode,
+  ctx: _DraftCtx,
+  seenN: Map<object, any>,
+  seenO: Map<StructDefLike, Map<number, any>>,
+): any {
+  if (node.kind === 'ta') return node.ta;
+  if (node.kind === 'arr') return node.items.map((x) => _unwrapVal(x, ctx, seenN, seenO));
+  if (node.kind === 'union') {
+    const t = node.target;
+    return 'value' in t
+      ? { tag: t.tag, value: _unwrapVal(t.value, ctx, seenN, seenO) }
+      : t.rawTag !== undefined
+        ? { tag: t.tag, rawTag: t.rawTag }
+        : { tag: t.tag };
+  }
+  if (node.kind === 'sarr') {
+    if (!node.mat && node.base && node.sparse.size === 0)
+      return _unwrapMV(node.base, ctx, seenN, seenO);
+    const len = node.len(),
+      out = new Array(len);
+    for (let i = 0; i < len; i++) out[i] = _unwrapNode(node.getNode(i), ctx, seenN, seenO);
+    return out;
+  }
+  const prev = seenN.get(node);
+  if (prev) return prev;
+  const out: Record<string, any> = {};
+  seenN.set(node, out);
+  if (node.base) {
+    const d = node.base._k();
+    if (ctx.baseBuf !== null && d.buffer === ctx.baseBuf) {
+      let m = seenO.get(node.def);
+      if (!m) seenO.set(node.def, (m = new Map()));
+      m.set(d.byteOffset + node.base._o, out);
+    }
+  }
+  for (const f of node.def.fieldList) {
+    const k = f.name;
+    if (node.ov.has(k)) out[k] = _unwrapVal(node.ov.get(k), ctx, seenN, seenO);
+    else if (node.kids.has(k)) out[k] = _unwrapNode(node.kids.get(k)!, ctx, seenN, seenO);
+    else if (node.base) out[k] = _unwrapVal((node.base as any)[k], ctx, seenN, seenO);
+    else if (node.rawIn && k in node.rawIn) out[k] = _unwrapVal(node.rawIn[k], ctx, seenN, seenO);
+  }
+  return out;
+}
+
+/**
+ * Produces a new read-only `StructView<F>` or `StructArrayView<F>` by applying Immer-style
+ * mutations to a revocable draft, without mutating `base`.
+ *
+ * - No-op recipes return `base` directly in `O(1)` when `base.readonly` is `true`.
+ * - Inline fixed-size field edits clone the buffer once and patch dirty fields in `O(dirty fields)`.
+ * - Variable-length or structural edits re-pack into a compact 0-dead-byte buffer preserving cyclic/shared `ref` graphs.
+ * - `CS01` schema-evolution envelopes (`Schema.viewEnvelope()`) preserve their envelope header automatically.
+ */
+export function produce<F extends FieldRecord>(
+  base: StructArrayView<F, any>,
+  recipe: (
+    draft: StructArrayDraft<F>,
+  ) =>
+    | void
+    | readonly (Partial<StructInput<F>> | StructViewBase<F> | StructDraft<F> | readonly unknown[])[]
+    | StructArrayView<F, any>
+    | StructArrayDraft<F>,
+): StructArrayView<F>;
+export function produce<F extends FieldRecord>(
+  base: StructViewBase<F>,
+  recipe: (
+    draft: StructDraft<F>,
+  ) => void | Partial<StructInput<F>> | StructViewBase<F> | StructDraft<F> | readonly unknown[],
+): StructView<F>;
+export function produce<V extends StructViewBase<any> | StructArrayView<any, any>>(
+  recipe: (draft: DraftOf<V>) => unknown,
+): (base: V) => ImmutableViewOf<V>;
+export function produce<D extends { readonly [$draft]?: any }>(
+  recipe: (draft: D) => unknown,
+): (base: ViewOfDraft<D>) => ViewOfDraft<D>;
+export function produce(baseOrRecipe: any, recipe?: any): any {
+  if (typeof baseOrRecipe === 'function')
+    return (base: any) => produce(base, baseOrRecipe);
+  if (
+    !(baseOrRecipe instanceof StructViewBase || baseOrRecipe instanceof StructArrayView) ||
+    typeof recipe !== 'function'
+  ) {
+    throw new TypeError('produce(base, recipe) requires a StructView or StructArrayView and a recipe function');
+  }
+  const isArr = baseOrRecipe instanceof StructArrayView,
+    def = baseOrRecipe.def as StructDef<any>,
+    d = baseOrRecipe._k(),
+    isEnv = !isArr && baseOrRecipe._env,
+    canFast =
+      !baseOrRecipe._dirty &&
+      !baseOrRecipe._dead &&
+      !baseOrRecipe._e &&
+      !(baseOrRecipe as any)._hdr &&
+      !baseOrRecipe._a &&
+      baseOrRecipe._b === baseOrRecipe._o &&
+      (isArr ? baseOrRecipe.stride === def.size : baseOrRecipe._ws === def.size),
+    ctx: _DraftCtx = {
+      revoked: false,
+      dirty: false,
+      varDirty: false,
+      canPatch: canFast,
+      baseBuf: d.buffer,
+      baseZero: d.byteOffset + baseOrRecipe._o,
+      revokes: [],
+      byProxy: new WeakMap(),
+      byOff: new Map(),
+      dirtyNodes: new Set(),
+    },
+    rootNode: _DraftNode = isArr
+      ? _structArrDraft(def, baseOrRecipe, null, canFast ? 0 : -1, false, ctx)
+      : _getStructDraft(def, baseOrRecipe, canFast ? 0 : -1, ctx);
+  let ret: any;
+  try {
+    ret = recipe(rootNode.proxy);
+    const hasRep = ret !== undefined && ret !== rootNode.proxy;
+    if (!hasRep && !ctx.dirty) {
+      if (baseOrRecipe.readonly) return baseOrRecipe;
+      const snap =
+        baseOrRecipe._dirty ||
+        baseOrRecipe._dead ||
+        (def._fv >= 0 && (baseOrRecipe._b !== baseOrRecipe._o || baseOrRecipe._a))
+          ? baseOrRecipe._packBytes()
+          : baseOrRecipe.bytes.slice();
+      return isArr
+        ? def.array(snap, 0, baseOrRecipe.length)
+        : isEnv
+          ? def.viewEnvelope(snap)
+          : def.view(snap);
+    }
+    if (!hasRep && ctx.canPatch && !ctx.varDirty) {
+      const cloned = baseOrRecipe.bytes.slice(),
+        cdv = new DataView(cloned.buffer, cloned.byteOffset, cloned.byteLength),
+        pBase = isEnv ? baseOrRecipe._o : 0,
+        pv = {
+          def,
+          _d: cdv,
+          _b: pBase,
+          _o: pBase,
+          byteLength: cloned.byteLength,
+          _ws: def.size,
+          _m: null,
+          _e: null,
+          _k: () => cdv,
+        } as unknown as InternalStructView,
+        seenN = new Map(),
+        seenO = new Map();
+      for (const sn of ctx.dirtyNodes) {
+        for (const f of sn.dirtyFields) {
+          const toff = pBase + sn.relOff + f.offset,
+            raw = sn.ov.has(f.name)
+              ? _unwrapVal(sn.ov.get(f.name), ctx, seenN, seenO)
+              : sn.kids.has(f.name)
+                ? _unwrapNode(sn.kids.get(f.name)!, ctx, seenN, seenO)
+                : undefined;
+          if (f.desc.kind === 'struct' || f.desc.kind === 'array' || f.desc.kind === 'union') {
+            cloned.fill(0, toff, toff + f.size);
+            if (f.desc.kind === 'struct') initNulls(f.desc, cdv, toff);
+          }
+          writeVal(pv, f.desc, raw, pBase, toff);
+        }
+      }
+      if (isArr) return def.array(cloned, 0, baseOrRecipe.length);
+      if (isEnv) {
+        const v = def.view(cloned, { byteOffset: pBase, baseOffset: pBase, stride: def.size });
+        v._env = true;
+        return v;
+      }
+      return def.view(cloned);
+    }
+    const seenN = new Map(),
+      seenO = new Map();
+    if (isArr) {
+      if (hasRep && (ret == null || typeof ret !== 'object' || !(Symbol.iterator in ret || 'length' in ret)))
+        throw new TypeError('produce(arrayView, recipe) replacement return must be an array or iterable');
+      const rows = hasRep
+          ? Array.from(ret as Iterable<any>, (el) => _unwrapVal(el, ctx, seenN, seenO))
+          : (_unwrapNode(rootNode, ctx, seenN, seenO) as any[]),
+        packed = def.pack(rows);
+      return def.array(packed, 0, rows.length);
+    }
+    if (hasRep && (ret == null || typeof ret !== 'object'))
+      throw new TypeError('produce(structView, recipe) replacement return must be a struct object, tuple, or draft');
+    const plain = hasRep
+      ? _unwrapVal(ret, ctx, seenN, seenO)
+      : _unwrapNode(rootNode, ctx, seenN, seenO);
+    if (isEnv) return def.viewEnvelope(def.packEnvelope(plain));
+    return def.view(def.pack([plain]));
+  } finally {
+    ctx.revoked = true;
+    for (let i = 0; i < ctx.revokes.length; i++) ctx.revokes[i]!();
+  }
 }

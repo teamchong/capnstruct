@@ -75,13 +75,13 @@ const v1Bytes = pack(PointV1, [
   { x: 3.5, y: 4.5 },
 ]);
 
-// Read V1 bytes using PointV2 schema by passing PointV1 (or { stride: PointV1.size })
-const v2View = PointV2.array(v1Bytes, PointV1);
+// Read V1 bytes using PointV2 schema (use mutArray for in-place upgrade, or produce() for immutable)
+const v2View = PointV2.mutArray(v1Bytes, PointV1);
 
 console.log(v2View.at(0).toObject());
 // { x: 1.5, y: 2.5, z: 0, label: '', flags: [] }
 
-// Mutating a newly added V2 field upgrades the view to full V2 stride:
+// Mutating a newly added V2 field upgrades the mutable view to full V2 stride:
 v2View.at(0).z = 99.5;
 v2View.at(0).label = 'upgraded-in-place';
 console.log(v2View.stride); // 40 (PointV2.size)

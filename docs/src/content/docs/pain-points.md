@@ -45,7 +45,7 @@ console.log(rows.at(0).callsign);
 import { Telemetry } from './schema.js';
 
 self.onmessage = ({ data: { buffer, count } }) => {
-  const rows = Telemetry.array(buffer, { byteOffset: 0, count });
+  const rows = Telemetry.mutArray(buffer, { byteOffset: 0, count });
   const c = rows.cursor();
   for (let i = 0; i < rows.length; i += 250) {
     const r = c.seek(i);
@@ -180,7 +180,7 @@ root.children = [childA, childB];
 const bytes: Uint8Array = SceneNode.pack([root, childA, childB]);
 
 // 2. Zero-allocation O(1) cyclic traversal directly over the binary buffer
-const nodes = SceneNode.array(bytes);
+const nodes = SceneNode.mutArray(bytes);
 const vRoot = nodes.at(0);
 console.log(vRoot.children.at(0).nextSibling?.parent?.name); // 'root'
 

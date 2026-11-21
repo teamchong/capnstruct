@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/capnstruct?color=cb3837&style=flat-square)](https://www.npmjs.com/package/capnstruct)
 [![Live Playground & Docs](https://img.shields.io/badge/Live_Playground-capnstruct.teamchong.net-3b82f6?style=flat-square)](https://capnstruct.teamchong.net)
-[![Core Bundle](https://img.shields.io/badge/Core_Gzip-7.99_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
+[![Core Bundle](https://img.shields.io/badge/Core_Gzip-11.7_KiB-10b981?style=flat-square)](https://capnstruct.teamchong.net/why-capnstruct/)
 [![Targets](https://img.shields.io/badge/Targets-TS_%7C_Rust_%23%5Brepr(C)%5D_%7C_Go_%26_TinyGo_WASM-f59e0b?style=flat-square)](https://capnstruct.teamchong.net/wasm-and-rust/)
 
 **[Live Interactive Playground &rarr; capnstruct.teamchong.net](https://capnstruct.teamchong.net)** &middot; **[MP4 Video (`docs/public/demo.mp4`)](docs/public/demo.mp4)**
@@ -106,7 +106,7 @@ worker.postMessage({ buffer: fleet.buffer, count: fleet.length }); // 0 ms refer
 
 // worker.ts — wrap the SharedArrayBuffer in O(1) and mutate in place at 120 FPS
 self.onmessage = ({ data: { buffer, count } }) => {
-  const rows = Flight.array(buffer, { byteOffset: 0, count });
+  const rows = Flight.mutArray(buffer, { byteOffset: 0, count });
   rows.at(0).callsign = 'UAL418-HEAVY';                   // overwrites or bump-allocates in tail arena (0 GC)
   rows.at(0).waypoints = [{ lat: 37.62, lon: -122.38 }];  // updates slice(Waypoint) in place
   rows.at(0).nextRelay = rows.at(1);                      // rewires cyclic ref('Flight') pointer in O(1)
@@ -170,6 +170,6 @@ Restructuring into a contiguous **`capnstruct #[repr(C)]` binary layout** drops 
 Use `Schema.packEnvelope(row)` / `Schema.viewEnvelope(bytes)` in JS and `CapnBuilder::build_envelope_vec` / `Schema::parse_envelope` + `Schema::reader` in Rust for self-describing, forward- and backward-compatible schema evolution. Generated Rust readers (`*Reader<'a>`, `CapnSliceReader`, `CapnError`) compile cleanly under `#![no_std]` and `#![forbid(unsafe_code)]` (pass `{ unsafeSlice: false }` or `--no-unsafe-slice`) with no raw pointer casts and no alignment requirements on untrusted buffers.
 
 | Entrypoint | Minified | Minified + Gzip |
-| :--- | :--- | :--- |
-| `capnstruct` (Core Runtime + `CS01` Envelope Evolution + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 30.9 KB | **~11.2 KiB** (`10.7 KiB` schema core) |
-| `capnstruct/codegen` (Safe `#![forbid(unsafe_code)]` Rust Readers + `#[repr(C)]`/`#[repr(C, u8)]` + `CapnBuilder` + Go/TinyGo Codegen) | 68.7 KB | **~18.9 KiB** |
+| :-- | :-- | :-- |
+| `capnstruct` (Full Runtime + `produce()` + `CS01` Envelope Evolution + `StructArrayView` + `UnionArrayView` + `defineUnion` + `optStr` + `ref` + `slice` + `WasmArena` + `inWasm`) | 49.0 KB | **~16.6 KiB** (**11.7 KiB** Core without `produce`/`WasmArena`) |
+| `capnstruct/codegen` (Safe `#![forbid(unsafe_code)]` Rust Readers + `#[repr(C)]` / `#[repr(C, u8)]` + `CapnBuilder` + Go/TinyGo Codegen) | 71.7 KB | **~19.7 KiB** |

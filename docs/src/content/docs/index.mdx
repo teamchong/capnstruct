@@ -11,7 +11,7 @@ import LivePlayground from '../../components/LivePlayground.astro';
   <span class="cs-pill"><strong>0 FFI / IPC Copies</strong> (`Schema.inWasm()` &amp; `SharedArrayBuffer` Workers)</span>
   <span class="cs-pill"><strong>Safe Rust `#[repr(C)]`</strong> (`.as_str(arena)`, `.as_slice(arena)`, `.as_ref(arena)`)</span>
   <span class="cs-pill"><strong>Cyclic Graphs</strong> (`ref('Flight')` &amp; `slice(Waypoint)`)</span>
-  <span class="cs-pill"><strong>6.6 KiB Core</strong> + Rust `#[repr(C)]` &amp; Go / TinyGo WASM Codegen</span>
+  <span class="cs-pill"><strong>11.7 KiB</strong> Core (<strong>16.6 KiB</strong> w/ <code>produce()</code>) + Rust <code>#[repr(C)]</code> &amp; Go / TinyGo WASM Codegen</span>
 </div>
 
 <LivePlayground />
@@ -21,7 +21,7 @@ import LivePlayground from '../../components/LivePlayground.astro';
 | **[Getting Started](/getting-started/)**                               | `npm install capnstruct`, field descriptors (`u8`..`f64`, `str`, `slice`, `ref`), `.inWasm()` / `.shared()`, and `0`-allocation flyweight iteration    |
 | **[Use Cases &amp; Recipes](/pain-points/)**                           | Copy-pasteable recipes for Web Worker `SharedArrayBuffer`s, Rust WASM `Schema.inWasm()`, 100k-row virtual tables, and cyclic graphs                    |
 | **[Design &amp; Tradeoffs](/why-capnstruct/)**                         | Full Node V8 / Bun JSC / Rust `-O3` / Go / TinyGo benchmark suite, Apache Arrow &amp; FlatBuffers comparison, and when plain JS objects win            |
-| **[In-Place Mutation &amp; Tail Arena](/mutation-and-growth/)**        | How in-place `str`/`slice` mutation, tail bump-allocation, `.compact()`, and growable `.push()` / `.pop()` work under the hood                         |
+| **[Immutable `produce()`, Live Mutation &amp; Tail Arena](/mutation-and-growth/)** | Read-only default views, Immer-style `produce()`, explicit `mutView`/`mutArray` in-place mutation, `.compact()`, and `.push()` / `.pop()` |
 | **[Columnar Views &amp; Schema Evolution](/columnar-and-evolution/)**  | Zero-copy `TypedArray` column extraction (`.column()`) for WebGL / Apache Arrow and Cap'n-style forward/backward wire stride evolution                 |
 | **[WASM, Rust `#[repr(C)]` &amp; Go/TinyGo](/wasm-and-rust/)**         | `Schema.inWasm()`, `WasmArena` `memory.grow()` auto-rebinding, safe `.as_str()`/`.as_slice()`/`.as_ref()`, and `toRustReprC()` / `toGoStruct()` codegen |
 | **[API Reference &amp; Wire Format](/api-reference/)**                 | Binary wire format specification (`#[repr(C)]` + 8-byte relative tail descriptors) and complete `StructDef` / `StructView` / `StructArrayView` API     |

@@ -506,8 +506,8 @@ ${alw}impl CapnBuilder {
     ${v}fn str(&mut self, s: &str) -> CapnStr {
         let b = s.as_bytes();
         if b.is_empty() { return CapnStr { off: 0, len: 0 }; }
-        let o = self.alloc(b.len(), 1);
-        self.buf[o..o + b.len()].copy_from_slice(b);
+        let o = self.buf.len();
+        self.buf.extend_from_slice(b);
         CapnStr { off: (o - self.base) as u32, len: b.len() as u32 }
     }
     ${v}fn str_dedup(&mut self, s: &str) -> CapnStr {

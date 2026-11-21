@@ -2380,7 +2380,7 @@
 
       // 3. Web Worker structuredClone round-trip vs capnstruct in-place mutation
       const mutBuf = capn2.slice();
-      const mutView = TelemetryRow.array(mutBuf);
+      const mutView = TelemetryRow.mutArray(mutBuf);
       const t3J0 = performance.now();
       for (let it = 0; it < 4; it++) {
         const workerCopy = structuredClone(raw2);
@@ -2489,7 +2489,7 @@
     { id: 1, name: 'Ada Lovelace', scores: [10, 20, 30] },
     { id: 2, name: 'Alan Turing', scores: [40, 50] },
   ]);
-  const usersView = User.array(initialUsers);
+  const usersView = User.mutArray(initialUsers);
   let nextId = 3;
 
   function formatHexDump(bytes: Uint8Array, rowCount: number, stride: number): string {

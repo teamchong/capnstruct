@@ -25,16 +25,22 @@ import {
   installDevtoolsFormatter,
   isUnknownVariant,
   list,
+  mutStructView,
+  type MutStructArrayView,
+  type MutStructView,
   nullable,
   optStr,
   pack,
+  produce,
   ref,
   scaled,
   sentinel,
   slice,
   str,
   struct,
+  type StructArrayView,
   type StructDefLike,
+  type StructView,
   structView,
   toGoStruct,
   toRustReprC,
@@ -168,9 +174,9 @@ describe('capnstruct', () => {
 
       // Test on an intentionally unaligned byteOffset (offset = 1) inside an ArrayBuffer
       const rawBuf = new ArrayBuffer(128);
-      const view = structView(Entity, rawBuf, 1);
+      const view = mutStructView(Entity, rawBuf, 1);
       view.tag = 7;
-      view.setAll({
+      view.set({
         coords: [1.25, 2.5, 3.75],
         pos: { x: 10, y: 20 },
         history: [
@@ -191,7 +197,7 @@ describe('capnstruct', () => {
       expect(Array.from(view.ids)).toEqual([100n, 200n]);
 
       // Also test aligned access (offset = 8) where TypedArray view is zero-copy
-      const alignedView = Entity.view(rawBuf, 8);
+      const alignedView = Entity.mutView(rawBuf, 8);
       alignedView.set('coords', [9, 8, 7]);
       expect(alignedView.coords).toBeInstanceOf(Float32Array);
       alignedView.coords[1] = 42;
@@ -258,11 +264,13 @@ describe('capnstruct', () => {
       expect(r1.waypoints.length).toBe(0);
       expect(Array.from(r1.tags)).toEqual([99]);
 
-      // Supports in-place assignment to variable-length field when new UTF-8 string fits in existing slot
-      const prevByteLen = rows.bytes.byteLength;
-      r0.callsign = 'NEW';
-      expect(r0.callsign).toBe('NEW');
-      expect(rows.bytes.byteLength).toBe(prevByteLen);
+      // Supports in-place assignment to variable-length field on mutArray when new UTF-8 string fits in existing slot
+      const mutRows = FlightRow.mutArray(packed.slice());
+      const mutR0 = mutRows.at(0);
+      const prevByteLen = mutRows.bytes.byteLength;
+      mutR0.callsign = 'NEW';
+      expect(mutR0.callsign).toBe('NEW');
+      expect(mutRows.bytes.byteLength).toBe(prevByteLen);
     });
 
     it('supports nested variable-length slices of structs and strings', () => {
@@ -520,7 +528,7 @@ describe('capnstruct', () => {
 
       // Place raw 24-byte SpdSample binary shard directly via placeBytes
       const rawShard = new Uint8Array(24 * 2);
-      const rawSamples = SpdSample.array(rawShard);
+      const rawSamples = SpdSample.mutArray(rawShard);
       rawSamples.set(0, {
         fi: 0,
         t_ds: 100,
@@ -833,11 +841,9 @@ describe('capnstruct', () => {
         { id: 1, name: 'Alexander', scores: [10, 20, 30, 40] },
         { id: 2, name: 'Bob', scores: [5] },
       ]);
-      const users = User.array(packed);
+      const users = User.mutArray(packed);
       const initialBuf = users.buffer;
       const initialTailLen = packed.byteLength;
-
-      // 1. Shorter in-place overwrite: reuses existing byte range, 0 buffer growth
       const u0 = users.at(0);
       u0.name = 'Alex';
       expect(u0.name).toBe('Alex');
@@ -992,7 +998,7 @@ describe('capnstruct', () => {
       ]);
 
       // Read V1 bytes through V2 schema by passing PointV1 (or { stride: PointV1.size })
-      const v2Arr = PointV2.array(v1Bytes, PointV1);
+      const v2Arr = PointV2.mutArray(v1Bytes, PointV1);
       expect(v2Arr.length).toBe(2);
 
       const p0 = v2Arr.at(0);
@@ -1263,7 +1269,7 @@ describe('capnstruct', () => {
 
       const f32Weights = new Float32Array([0.5, 1.5, 2.5]);
       const packed = Bundle.pack([{ id: 9, pts: ptsView, weights: f32Weights }]);
-      const bView = Bundle.view(packed);
+      const bView = Bundle.mutView(packed);
       expect(bView.id).toBe(9);
       expect(bView.pts.toObjects()).toEqual([
         { x: 0, y: 0 },
@@ -1388,7 +1394,7 @@ describe('capnstruct', () => {
       expect(() => JSON.stringify(n1)).toThrow(TypeError);
 
       const packed = GraphNode.pack([n1, n2]);
-      const table = GraphNode.array(packed);
+      const table = GraphNode.mutArray(packed);
       expect(table.length).toBe(2);
 
       // Zero-copy O(1) cyclic traversal across arbitrary depth without allocating JS objects
@@ -1619,7 +1625,7 @@ describe('capnstruct', () => {
         [30, 40],
       ]);
       pts.push([50, 60]);
-      pts.at(0).setAll([15, 25]);
+      pts.at(0).set([15, 25]);
       expect(pts.toObjects()).toEqual([
         { t: 15, f: 25 },
         { t: 30, f: 40 },
@@ -2083,7 +2089,7 @@ pub mod safe_kernel {
       expect(faHdr.toObject()).toEqual({ tag: 1 });
 
       // 4. subarray().compact() clears stale _a parent link and live nested mutation compacts cleanly
-      const gSub = rfArr.subarray(1, 2);
+      const gSub = RefFirst.mutArray(rfBytes.slice()).subarray(1, 2);
       expect(RefFirst.array(gSub.compact()).at(0).name).toBe('child');
       const Method = defineStruct('Method', { id: u32, name: Inner, summary: str });
       const mv = Method.create({ id: 1, name: { words: ['get'] }, summary: 'Get' });
@@ -3973,6 +3979,559 @@ fn main() {
         expect(view.extra?.label).toBe('extra_item');
       } finally {
         rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('v0.6.0 Read-Only Default Views, Explicit mutView/mutArray, Immer-Style produce(), & UTF-8/Alignment Fast Paths', () => {
+    it('returns read-only views by default and enforces compile-time + runtime immutability', () => {
+      const TagUnion = defineUnion('RoTag', {
+        Num: u32,
+        Text: str,
+      });
+      const Inner = defineStruct('RoInner', { x: u32, label: str });
+      const Doc = defineStruct('RoDoc', {
+        id: u32,
+        name: str,
+        inner: Inner,
+        nums: slice(u32),
+        items: slice(Inner),
+        tags: slice(TagUnion),
+        fixed: fixedArray(u16, 3),
+        raw: fixedBytes(4),
+      });
+
+      const packed = Doc.pack([
+        {
+          id: 1,
+          name: 'alpha',
+          inner: { x: 10, label: 'in1' },
+          nums: [1, 2, 3],
+          items: [{ x: 100, label: 'a' }],
+          tags: [{ tag: 'Num', value: 7 }],
+          fixed: [10, 20, 30],
+          raw: new Uint8Array([1, 2, 3, 4]),
+        },
+        {
+          id: 2,
+          name: 'beta',
+          inner: { x: 20, label: 'in2' },
+          nums: [4, 5],
+          items: [{ x: 200, label: 'b' }],
+          tags: [{ tag: 'Text', value: 'hi' }],
+          fixed: [40, 50, 60],
+          raw: new Uint8Array([5, 6, 7, 8]),
+        },
+      ]);
+
+      const singlePacked = Doc.pack([
+        {
+          id: 9,
+          name: 'solo',
+          inner: { x: 99, label: 's' },
+          nums: [9],
+          items: [],
+          tags: [{ tag: 'Num', value: 42 }],
+          fixed: [1, 2, 3],
+          raw: new Uint8Array([9, 8, 7, 6]),
+        },
+      ]);
+
+      const v: StructView<typeof Doc.schema> = Doc.view(singlePacked);
+      const vFn = structView(Doc, singlePacked);
+      const arr: StructArrayView<typeof Doc.schema> = Doc.array(packed);
+      const sub = arr.subarray(0, 1);
+      const envBytes = Doc.packEnvelope({
+        id: 5,
+        name: 'env',
+        inner: { x: 50, label: 'e' },
+        nums: [5],
+        items: [],
+        tags: [],
+        fixed: [1, 2, 3],
+        raw: new Uint8Array([1, 1, 1, 1]),
+      });
+      const envView = Doc.viewEnvelope(envBytes);
+      const hdrView = Doc.viewHeader(singlePacked.slice(0, Doc.byteSize));
+
+      expect(v.readonly).toBe(true);
+      expect(vFn.readonly).toBe(true);
+      expect(arr.readonly).toBe(true);
+      expect(sub.readonly).toBe(true);
+      expect(arr.at(0).readonly).toBe(true);
+      expect(arr.at(0).inner.readonly).toBe(true);
+      expect(arr.at(0).items.readonly).toBe(true);
+      expect(arr.at(0).tags.readonly).toBe(true);
+      expect(envView.readonly).toBe(true);
+      expect(hdrView.readonly).toBe(true);
+
+      // Compile-time immutability checks (must fail tsc without @ts-expect-error)
+      const checkReadonlyTypes = () => {
+        // @ts-expect-error Cannot assign to read-only StructView field
+        v.id = 2;
+        // @ts-expect-error set() does not exist on read-only StructView
+        v.set({ id: 2 });
+        // @ts-expect-error compact() does not exist on read-only StructView
+        v.compact();
+        // @ts-expect-error Cannot assign to nested read-only struct field
+        v.inner.x = 5;
+        // @ts-expect-error push() does not exist on read-only StructArrayView
+        arr.push({ id: 3 });
+        // @ts-expect-error pop() does not exist on read-only StructArrayView
+        arr.pop();
+        // @ts-expect-error set() does not exist on read-only StructArrayView
+        arr.set(0, { id: 3 });
+        // @ts-expect-error setColumn() does not exist on read-only StructArrayView
+        arr.setColumn('id', [1, 2]);
+        // @ts-expect-error compact() does not exist on read-only StructArrayView
+        arr.compact();
+        // @ts-expect-error set() does not exist on read-only UnionArrayView
+        v.tags.set(0, { tag: 'Num', value: 1 });
+        // @ts-expect-error Cannot assign to subarray element field
+        sub.at(0).id = 99;
+      };
+      expect(typeof checkReadonlyTypes).toBe('function');
+
+      // Runtime immutability enforcement on every mutation path
+      expect(() => { (v as any).id = 2; }).toThrow(TypeError);
+      expect(() => { (v as any).name = 'changed'; }).toThrow(TypeError);
+      expect(() => { (v as any).set({ id: 2 }); }).toThrow(TypeError);
+      expect(() => { (v as any).compact(); }).toThrow(TypeError);
+      expect(() => { (v.inner as any).x = 5; }).toThrow(TypeError);
+      expect(() => { (v.tags as any).set(0, { tag: 'Num', value: 1 }); }).toThrow(TypeError);
+      expect(() => { (arr as any).set(0, { id: 3 }); }).toThrow(TypeError);
+      expect(() => { (arr as any).push({ id: 3 }); }).toThrow(TypeError);
+      expect(() => { (arr as any).pop(); }).toThrow(TypeError);
+      expect(() => { (arr as any).setColumn('id', [9, 8]); }).toThrow(TypeError);
+      expect(() => { (arr as any).compact(); }).toThrow(TypeError);
+      expect(() => { (arr.at(0) as any).id = 77; }).toThrow(TypeError);
+      expect(() => { (arr.at(0).items as any).push({ x: 1, label: 'z' }); }).toThrow(TypeError);
+      expect(() => { (sub.at(0) as any).id = 77; }).toThrow(TypeError);
+      expect(() => { (envView as any).id = 123; }).toThrow(TypeError);
+
+      // Explicit mutable constructors and views have readonly === false
+      const mv: MutStructView<typeof Doc.schema> = Doc.mutView(singlePacked.slice());
+      const ma: MutStructArrayView<typeof Doc.schema> = Doc.mutArray(packed.slice());
+      const mFn = mutStructView(Doc, singlePacked.slice());
+      const mc = Doc.create({ id: 1, name: 'c' });
+      const mal = Doc.alloc(2);
+      const msh = Doc.shared(2);
+      const mfr = Doc.from([{ id: 1, name: 'f' }]);
+      expect(mv.readonly).toBe(false);
+      expect(ma.readonly).toBe(false);
+      expect(mFn.readonly).toBe(false);
+      expect(mc.readonly).toBe(false);
+      expect(mal.readonly).toBe(false);
+      expect(msh.readonly).toBe(false);
+      expect(mfr.readonly).toBe(false);
+      expect(ma.subarray(0, 1).readonly).toBe(false);
+      expect(ma.at(0).inner.readonly).toBe(false);
+      expect(ma.at(0).tags.readonly).toBe(false);
+
+      mv.id = 999;
+      mv.inner.x = 777;
+      mv.tags.set(0, { tag: 'Text', value: 'mutated' });
+      expect(mv.id).toBe(999);
+      expect(mv.inner.x).toBe(777);
+      expect(mv.tags.at(0)).toEqual({ tag: 'Text', value: 'mutated' });
+
+      // WasmArena read-only view/viewArray vs mutable mutView/mutViewArray/alloc/allocOne/placeBytes.as
+      const arena = new WasmArena(new ArrayBuffer(65536), 64);
+      const one = arena.allocOne(Inner, { x: 11, label: 'arena' });
+      const roOne = arena.view(Inner, one.byteOffset);
+      const rwOne = arena.mutView(Inner, one.byteOffset);
+      expect(one.readonly).toBe(false);
+      expect(roOne.readonly).toBe(true);
+      expect(rwOne.readonly).toBe(false);
+      expect(() => { (roOne as any).x = 22; }).toThrow(TypeError);
+      rwOne.x = 33;
+      expect(roOne.x).toBe(33);
+
+      const many = arena.alloc(Inner, 2);
+      many.at(0).set({ x: 1, label: 'one' });
+      const roMany = arena.viewArray(Inner, many.byteOffset, 2);
+      const rwMany = arena.mutViewArray(Inner, many.byteOffset, 2);
+      expect(many.readonly).toBe(false);
+      expect(roMany.readonly).toBe(true);
+      expect(rwMany.readonly).toBe(false);
+      expect(() => { (roMany.at(0) as any).x = 9; }).toThrow(TypeError);
+      rwMany.at(0).x = 44;
+      expect(roMany.at(0).x).toBe(44);
+
+      const placed = arena.placeBytes(Inner.pack([{ x: 5, label: 'p' }]), Inner);
+      const placedArr = placed.as(Inner);
+      expect(placedArr.readonly).toBe(false);
+      placedArr.at(0).x = 55;
+      expect(placedArr.at(0).x).toBe(55);
+    });
+
+    it('supports Immer-style produce() no-op O(1) identity, mutable snapshot isolation, and inline fixed-size fast path', () => {
+      const Coord = defineStruct('ProdCoord', { lat: f64, lon: f64 });
+      const Stat = defineStruct('ProdStat', {
+        id: u32,
+        big: u64,
+        flag: bool,
+        opt: nullable(i32, -2147483648),
+        tag: fixedStr(4),
+        raw: fixedBytes(4),
+        fixedNums: fixedArray(u16, 3),
+        origin: Coord,
+        name: str,
+      });
+
+      const packed = Stat.pack([
+        {
+          id: 1,
+          big: 100n,
+          flag: false,
+          opt: null,
+          tag: 'AB',
+          raw: new Uint8Array([1, 2, 3, 4]),
+          fixedNums: [10, 20, 30],
+          origin: { lat: 1.5, lon: 2.5 },
+          name: 'keep-me',
+        },
+      ]);
+
+      // 1. No-op on read-only view returns exact same reference in O(1)
+      const ro = Stat.view(packed);
+      const same = produce(ro, () => {});
+      expect(same).toBe(ro);
+
+      // 2. No-op on mutable view returns an isolated read-only snapshot
+      const mut = Stat.mutView(packed.slice());
+      const snap = produce(mut, () => {});
+      expect(snap).not.toBe(mut);
+      expect(snap.readonly).toBe(true);
+      mut.id = 999;
+      expect(snap.id).toBe(1);
+
+      // 3. Inline fixed-size fast path patches only dirty fixed fields without mutating base
+      const next = produce(ro, (d) => {
+        d.id = 42;
+        d.big = 9007199254740993n;
+        d.flag = true;
+        d.opt = -7;
+        d.tag = 'WXYZ';
+        d.raw[1] = 88;
+        d.fixedNums[2] = 333;
+        d.origin.lat = 37.75;
+      });
+      expect(next).not.toBe(ro);
+      expect(next.readonly).toBe(true);
+      expect(next.id).toBe(42);
+      expect(next.big).toBe(9007199254740993n);
+      expect(next.flag).toBe(true);
+      expect(next.opt).toBe(-7);
+      expect(next.tag).toBe('WXYZ');
+      expect(Array.from(next.raw)).toEqual([1, 88, 3, 4]);
+      expect(Array.from(next.fixedNums)).toEqual([10, 20, 333]);
+      expect(next.origin.lat).toBe(37.75);
+      expect(next.origin.lon).toBe(2.5);
+      expect(next.name).toBe('keep-me');
+
+      // Base view is completely untouched
+      expect(ro.id).toBe(1);
+      expect(ro.big).toBe(100n);
+      expect(ro.flag).toBe(false);
+      expect(ro.opt).toBeNull();
+      expect(ro.tag).toBe('AB');
+      expect(Array.from(ro.raw)).toEqual([1, 2, 3, 4]);
+      expect(Array.from(ro.fixedNums)).toEqual([10, 20, 30]);
+      expect(ro.origin.lat).toBe(1.5);
+
+      // 4. Setting same value on primitive field is a true no-op on read-only view
+      const noopWrite = produce(ro, (d) => {
+        d.id = 1;
+        d.tag = 'AB';
+      });
+      expect(noopWrite).toBe(ro);
+    });
+
+    it('supports produce() variable-length, nested arrays, unions, replacement returns, currying, and revocation', () => {
+      const EventUnion = defineUnion('ProdEvt', {
+        Ping: null,
+        Score: u32,
+        Msg: str,
+      });
+      const Item = defineStruct('ProdItem', {
+        id: u32,
+        label: str,
+        note: optStr,
+        scores: slice(f32),
+        pair: fixedArray(u32, 2),
+        evt: EventUnion,
+        log: slice(EventUnion),
+      });
+      const Batch = defineStruct('ProdBatch', {
+        title: str,
+        items: slice(Item),
+        fixedItems: fixedArray(Item, 2),
+      });
+
+      const base = Batch.view(
+        Batch.pack([
+          {
+            title: 'v1',
+            items: [
+              {
+                id: 1,
+                label: 'first',
+                note: null,
+                scores: [1.5, 2.5],
+                pair: [10, 20],
+                evt: { tag: 'Ping' },
+                log: [{ tag: 'Score', value: 5 }],
+              },
+              {
+                id: 2,
+                label: 'second',
+                note: 'old',
+                scores: [3.5],
+                pair: [30, 40],
+                evt: { tag: 'Msg', value: 'hello' },
+                log: [],
+              },
+            ],
+            fixedItems: [
+              { id: 10, label: 'f0', note: null, scores: [], pair: [1, 2], evt: { tag: 'Ping' }, log: [] },
+              { id: 20, label: 'f1', note: 'n1', scores: [9], pair: [3, 4], evt: { tag: 'Score', value: 8 }, log: [] },
+            ],
+          },
+        ]),
+      );
+
+      let leakedDraft: any = null;
+      let leakedNested: any = null;
+      const updated = produce(base, (d) => {
+        leakedDraft = d;
+        leakedNested = d.items[0];
+        d.title = 'v2-longer-utf8-🚀';
+        d.items[0].label = 'first-edited';
+        d.items[0].note = 'added-note';
+        d.items[0].scores.push(4.5, 5.5);
+        d.items[0].pair[0] = 111;
+        d.items[0].evt = { tag: 'Msg', value: 'upgraded' };
+        d.items[0].log.push({ tag: 'Msg', value: 'logged' });
+        // Mutating union discriminant 'tag' in-place must throw
+        expect(() => { (d.items[1].evt as any).tag = 'Score'; }).toThrow(TypeError);
+        // Resizing a fixedArray must throw
+        expect(() => { d.fixedItems.push({ id: 30, label: 'x', note: null, scores: [], pair: [0, 0], evt: { tag: 'Ping' }, log: [] }); }).toThrow(TypeError);
+        expect(() => { d.fixedItems.length = 3; }).toThrow(TypeError);
+        // In-place mutation of fixedArray element works
+        d.fixedItems[1].label = 'f1-edited';
+        // Array structural operations on slice(struct)
+        d.items.push({
+          id: 3,
+          label: 'third',
+          note: null,
+          scores: [7],
+          pair: [50, 60],
+          evt: { tag: 'Score', value: 99 },
+          log: [{ tag: 'Ping' }],
+        });
+        d.items.splice(1, 1); // remove 'second'
+      });
+
+      expect(updated.readonly).toBe(true);
+      expect(updated.title).toBe('v2-longer-utf8-🚀');
+      expect(updated.items.length).toBe(2);
+      expect(updated.items.at(0).label).toBe('first-edited');
+      expect(updated.items.at(0).note).toBe('added-note');
+      expect(Array.from(updated.items.at(0).scores)).toEqual([1.5, 2.5, 4.5, 5.5]);
+      expect(Array.from(updated.items.at(0).pair)).toEqual([111, 20]);
+      expect(updated.items.at(0).evt).toEqual({ tag: 'Msg', value: 'upgraded' });
+      expect(updated.items.at(0).log.toObjects()).toEqual([
+        { tag: 'Score', value: 5 },
+        { tag: 'Msg', value: 'logged' },
+      ]);
+      expect(updated.items.at(1).id).toBe(3);
+      expect(updated.items.at(1).label).toBe('third');
+      expect(updated.fixedItems.at(1).label).toBe('f1-edited');
+
+      // Base remains intact
+      expect(base.title).toBe('v1');
+      expect(base.items.length).toBe(2);
+      expect(base.items.at(1).label).toBe('second');
+      expect(base.fixedItems.at(1).label).toBe('f1');
+
+      // Revoked drafts throw on read or write after produce() finishes
+      expect(() => leakedDraft.title).toThrow(TypeError);
+      expect(() => { leakedDraft.title = 'nope'; }).toThrow(TypeError);
+      expect(() => leakedNested.label).toThrow(TypeError);
+
+      // StructArrayView produce(): push, sort, splice, filter-like replacement, and curried producer
+      const Row = defineStruct('ProdRow', { id: u32, name: str });
+      const rows = Row.array(Row.pack([{ id: 3, name: 'c' }, { id: 1, name: 'a' }, { id: 2, name: 'b' }]));
+      const sorted = produce(rows, (d) => {
+        d.sort((a, b) => a.id - b.id);
+        d.push({ id: 4, name: 'd' });
+      });
+      expect(sorted.toObjects()).toEqual([
+        { id: 1, name: 'a' },
+        { id: 2, name: 'b' },
+        { id: 3, name: 'c' },
+        { id: 4, name: 'd' },
+      ]);
+      expect(rows.at(0).id).toBe(3);
+
+      // Replacement return values (object, tuple, iterable) and invalid return TypeError
+      const replacedSingle = produce(rows.at(0), () => ({ id: 99, name: 'replaced' }));
+      expect(replacedSingle.toObject()).toEqual({ id: 99, name: 'replaced' });
+      const replacedTuple = produce(rows.at(0), () => [77, 'tuple'] as const);
+      expect(replacedTuple.toObject()).toEqual({ id: 77, name: 'tuple' });
+      const replacedArr = produce(rows, () => [{ id: 10, name: 'ten' }]);
+      expect(replacedArr.toObjects()).toEqual([{ id: 10, name: 'ten' }]);
+      expect(() => produce(rows.at(0), () => 123 as any)).toThrow(TypeError);
+      expect(() => produce(rows, () => 123 as any)).toThrow(TypeError);
+      expect(() => produce({} as any, () => {})).toThrow(TypeError);
+
+      // Curried produce(recipe)
+      const bumpId = produce((d: typeof Row.$draft) => {
+        d.id += 100;
+      });
+      const bumped = bumpId(rows.at(1));
+      expect(bumped.id).toBe(101);
+      expect(bumped.name).toBe('a');
+      expect(rows.at(1).id).toBe(1);
+
+      // Subarray produce() returns a clean standalone view containing only the slice
+      const sub = rows.subarray(1, 2);
+      const subNoop = produce(sub, () => {});
+      expect(subNoop).toBe(sub);
+      const subMut = produce(sub, (d) => {
+        d[0].id = 55;
+      });
+      expect(subMut.length).toBe(1);
+      expect(subMut.at(0).toObject()).toEqual({ id: 55, name: 'a' });
+      expect(rows.at(1).id).toBe(1);
+      const mutSub = Row.mutArray(Row.pack([{ id: 1, name: 'x' }, { id: 2, name: 'y' }])).subarray(1, 2);
+      const mutSubSnap = produce(mutSub, () => {});
+      expect(mutSubSnap.readonly).toBe(true);
+      expect(mutSubSnap.length).toBe(1);
+      expect(mutSubSnap.at(0).toObject()).toEqual({ id: 2, name: 'y' });
+    });
+
+    it('preserves cyclic/diamond ref graphs, CS01 envelopes, and schema-evolved views across produce()', () => {
+      // 1. Cyclic & diamond ref graph preservation
+      const Node = defineStruct('ProdNode', (self) => ({
+        id: u32,
+        name: str,
+        left: ref(self),
+        right: ref(self),
+      }));
+      const sharedLeaf = Node.item({ id: 3, name: 'shared', left: null, right: null });
+      const rootItem = Node.item({ id: 1, name: 'root', left: sharedLeaf, right: sharedLeaf });
+      sharedLeaf.left = rootItem; // cycle + diamond
+      const graphView = Node.view(Node.pack([rootItem]));
+
+      const graphNext = produce(graphView, (d) => {
+        d.left!.name = 'shared-updated';
+        d.name = 'root-updated';
+      });
+      expect(graphNext.name).toBe('root-updated');
+      expect(graphNext.left?.name).toBe('shared-updated');
+      expect(graphNext.right?.name).toBe('shared-updated');
+      expect(graphNext.left?.left?.name).toBe('root-updated');
+      expect(graphView.left?.name).toBe('shared');
+
+      // Nulling out a ref
+      const graphCut = produce(graphView, (d) => {
+        d.right = null;
+      });
+      expect(graphCut.right).toBeNull();
+      expect(graphCut.left?.name).toBe('shared');
+
+      // 2. CS01 envelope round-trip for both fast-path fixed edits and variable-length edits
+      const EnvDoc = defineStruct('ProdEnvDoc', { ver: u32, title: str });
+      const envBytes = EnvDoc.packEnvelope({ ver: 1, title: 'orig' });
+      const envView = EnvDoc.viewEnvelope(envBytes);
+
+      const envFast = produce(envView, (d) => {
+        d.ver = 2;
+      });
+      expect(envFast.ver).toBe(2);
+      expect(envFast.title).toBe('orig');
+      expect(EnvDoc.viewEnvelope(envFast.bytes).toObject()).toEqual({ ver: 2, title: 'orig' });
+
+      const envVar = produce(envView, (d) => {
+        d.title = 'envelope-repacked-longer';
+      });
+      expect(envVar.ver).toBe(1);
+      expect(envVar.title).toBe('envelope-repacked-longer');
+      expect(EnvDoc.viewEnvelope(envVar.bytes).toObject()).toEqual({ ver: 1, title: 'envelope-repacked-longer' });
+
+      // 3. Schema evolution (V1 bytes viewed as V2) through produce()
+      const V1 = defineStruct('ProdV1', { x: f64 });
+      const V2 = defineStruct('ProdV2', { x: f64, y: f64, label: str });
+      const v1Bytes = V1.pack([{ x: 1.25 }, { x: 2.5 }]);
+      const v2View = V2.array(v1Bytes, V1);
+      const v2Next = produce(v2View, (d) => {
+        d[0].y = 9.5;
+        d[1].label = 'evolved';
+      });
+      expect(v2Next.toObjects()).toEqual([
+        { x: 1.25, y: 9.5, label: '' },
+        { x: 2.5, y: 0, label: 'evolved' },
+      ]);
+      expect(v2View.at(0).y).toBe(0);
+      expect(v2View.at(1).label).toBe('');
+    });
+
+    it('handles aligned and unaligned byteOffset reads and SWAR/SIMD UTF-8 decode boundaries cleanly', () => {
+      const Rec = defineStruct('AlignUtf8', {
+        a: u32,
+        b: i32,
+        c: f32,
+        d: u64,
+        e: f64,
+        s: str,
+      });
+
+      const strings = [
+        '',
+        'short',
+        '15-char-ascii!!',
+        '16-char-ascii!!!',
+        '32-character-pure-ascii-string!!',
+        '48-character-pure-ascii-string-for-swar-boundary',
+        '49-character-pure-ascii-string-exceeding-boundary',
+        'ascii-prefix-then-é-in-middle-of-32-bytes',
+        '🚀 emoji at start then ascii padding beyond sixteen bytes',
+        'prefix-longer-than-16-bytes-then-東京-日本語-🚀',
+      ];
+      const packed = Rec.pack(
+        strings.map((s, i) => ({
+          a: 0x80000000 + i,
+          b: -1000 - i,
+          c: i * 0.5,
+          d: BigInt(i) * 1_000_000_000_000n,
+          e: i * 1.25,
+          s,
+        })),
+      );
+
+      // Test byte offsets 0, 1, 2, 3 (aligned and all unaligned mod-4 offsets)
+      for (const offset of [0, 1, 2, 3]) {
+        const padded = new Uint8Array(packed.byteLength + offset + 4);
+        padded.set(packed, offset);
+        const view = Rec.array(padded.subarray(offset, offset + packed.byteLength));
+        expect(view.length).toBe(strings.length);
+        for (let i = 0; i < strings.length; i++) {
+          const row = view.at(i);
+          expect(row.a).toBe(0x80000000 + i);
+          expect(row.b).toBe(-1000 - i);
+          expect(row.c).toBe(i * 0.5);
+          expect(row.d).toBe(BigInt(i) * 1_000_000_000_000n);
+          expect(row.e).toBe(i * 1.25);
+          expect(row.s).toBe(strings[i]);
+        }
+        // produce() works on unaligned views too
+        const edited = produce(view, (d) => {
+          d[0].a = 123456;
+        });
+        expect(edited.at(0).a).toBe(123456);
+        expect(edited.at(strings.length - 1).s).toBe(strings[strings.length - 1]);
       }
     });
   });

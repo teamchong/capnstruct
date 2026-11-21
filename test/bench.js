@@ -682,7 +682,7 @@ const b4JsonMut = bench(
 );
 
 const mutBuf = capnTelemetryBytes.slice();
-const mutView = TelemetryRow.array(mutBuf);
+const mutView = TelemetryRow.mutArray(mutBuf);
 const b4CapnMut = bench(
   'capnstruct SharedArrayBuffer in-place',
   20,

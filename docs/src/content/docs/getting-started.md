@@ -9,7 +9,7 @@ description: "Install capnstruct, define #[repr(C)] schemas, pack binary buffers
 npm install capnstruct
 ```
 
-`capnstruct` ships native ES modules + TypeScript declarations (&lt; 6.7 KiB minified + gzipped, 0 dependencies) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
+`capnstruct` ships native ES modules + TypeScript declarations (`11.7 KiB` core / `16.6 KiB` full runtime minified + gzipped, 0 dependencies) and runs in Node.js, Cloudflare Workers, Bun, Deno, and browsers.
 
 ## 3-Line Hello World (Two-Call Mental Model)
 
